@@ -1,3 +1,3 @@
-module github.com/REPLACE_ME/matching-engine
+module github.com/sHyanorn/matching-engine
 
 go 1.24.7
