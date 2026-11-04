@@ -1,0 +1,46 @@
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+                     │   flip.txt   │                if.txt                 │
+                     │    sec/op    │    sec/op      vs base                │
+Find/100-4             7.058n ±  8%   13.640n ±  4%  +93.27% (p=0.000 n=10)
+Find/1000-4            28.68n ±  3%    33.10n ±  5%  +15.39% (p=0.000 n=10)
+Find/10000-4           50.34n ±  2%    55.80n ±  3%  +10.84% (p=0.000 n=10)
+ChurnNearTop/100-4     137.9n ±  8%    143.3n ±  7%        ~ (p=0.280 n=10)
+ChurnNearTop/1000-4    192.2n ±  4%    203.8n ±  3%   +5.98% (p=0.007 n=10)
+ChurnNearTop/10000-4   257.2n ±  7%    279.2n ±  4%   +8.57% (p=0.009 n=10)
+SweepBest/100-4        94.19n ± 14%   108.90n ±  5%  +15.62% (p=0.000 n=10)
+SweepBest/1000-4       112.8n ± 15%    130.0n ± 11%  +15.30% (p=0.004 n=10)
+SweepBest/10000-4      153.6n ±  6%    163.5n ± 10%        ~ (p=0.060 n=10)
+geomean                78.51n          92.07n        +17.28%
+
+                     │   flip.txt   │               if.txt                │
+                     │     B/op     │    B/op     vs base                 │
+Find/100-4             0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Find/1000-4            0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Find/10000-4           0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ChurnNearTop/100-4     48.00 ± 0%     48.00 ± 0%       ~ (p=1.000 n=10) ¹
+ChurnNearTop/1000-4    48.00 ± 0%     48.00 ± 0%       ~ (p=1.000 n=10) ¹
+ChurnNearTop/10000-4   48.00 ± 0%     48.00 ± 0%       ~ (p=1.000 n=10) ¹
+SweepBest/100-4        48.00 ± 0%     48.00 ± 0%       ~ (p=1.000 n=10) ¹
+SweepBest/1000-4       48.00 ± 0%     48.00 ± 0%       ~ (p=1.000 n=10) ¹
+SweepBest/10000-4      48.00 ± 0%     48.00 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                           ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+
+                     │   flip.txt   │               if.txt                │
+                     │  allocs/op   │ allocs/op   vs base                 │
+Find/100-4             0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Find/1000-4            0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Find/10000-4           0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ChurnNearTop/100-4     1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+ChurnNearTop/1000-4    1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+ChurnNearTop/10000-4   1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+SweepBest/100-4        1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+SweepBest/1000-4       1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+SweepBest/10000-4      1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                           ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean

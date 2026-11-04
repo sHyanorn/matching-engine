@@ -145,6 +145,9 @@ func (h *treeHarness) remove(p Price) {
 		h.tb.Fatalf("%s step %d: find(%d) returned a different node than insert", h.name, h.step, p)
 	}
 	h.tree.remove(n)
+	if n.left != nil || n.right != nil || n.parent != nil {
+		h.tb.Fatalf("%s step %d: removed level %d keeps its tree links", h.name, h.step, p)
+	}
 	delete(h.levels, p)
 	i := slices.Index(h.prices, p)
 	h.prices[i] = h.prices[len(h.prices)-1]
@@ -467,8 +470,13 @@ func TestLevelTreeInsertDuplicatePanics(t *testing.T) {
 	before := shape(tree.root)
 	func() {
 		defer func() {
-			if recover() == nil {
+			r := recover()
+			if r == nil {
 				t.Fatal("insert(7) of a present price did not panic")
+			}
+			// D014: panics on impossible internal states start with "book: ".
+			if s, ok := r.(string); !ok || !strings.HasPrefix(s, "book: ") {
+				t.Fatalf("panic value %#v does not start with %q (D014)", r, "book: ")
 			}
 		}()
 		tree.insert(7)
@@ -531,7 +539,8 @@ func TestCheckTreeCatchesCorruption(t *testing.T) {
 		{"black height", func(tr *levelTree) {
 			find(tr, func(n *levelNode) bool { return n.red && isLeaf(n) }).red = false
 		}},
-		{"order", func(tr *levelTree) { tr.root.price, tr.root.left.price = tr.root.left.price, tr.root.price }},
+		{"left subtree", func(tr *levelTree) { tr.root.price, tr.root.left.price = tr.root.left.price, tr.root.price }},
+		{"right subtree", func(tr *levelTree) { leftmost(tr.root.right).price = 0 }},
 		{"links", func(tr *levelTree) { tr.root.left.left.parent = tr.root }},
 		{"links", func(tr *levelTree) { tr.root.parent = tr.root.left }},
 		{"best", func(tr *levelTree) { tr.best = tr.root }},

@@ -105,10 +105,11 @@ func newLevelTree(s Side) levelTree {
 // One comparison without a branch serves both sides. On the ask side flip
 // is 0 and p^0 is p. On the bid side flip is -1 and p^-1 is ^p, which equals
 // -1-p: it reverses the order of every int64 and, unlike -p, cannot
-// overflow. Written as "if bids { return a > b }", the side test put a
-// second branch in every step of every tree descent: Find, SweepBest and
-// ChurnNearTop ran 4% to 18% slower, and Find over 100 levels took more
-// than twice as long (D004, bench-results/d004).
+// overflow. Written as an if on the side, the test put a second branch in
+// every step of every tree descent: Find ran 93% slower over 100 levels and
+// 11% to 15% slower over 1,000 and 10,000, while SweepBest and ChurnNearTop
+// ran 6% to 16% slower or within noise
+// (bench-results/d004/results/flip-vs-if.txt).
 func (t *levelTree) before(a, b Price) bool { return a^t.flip < b^t.flip }
 
 // find returns the node of the level at p, or nil if there is none.

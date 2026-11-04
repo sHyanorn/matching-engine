@@ -10,7 +10,7 @@ func TestDepth(t *testing.T) {
 	ts := int64(0)
 	add := func(id OrderID, s Side, p Price, q Qty) {
 		ts++
-		apply(t, b, gtc(id, s, p, q, ts))
+		apply(t, b, at(ts, limit(id, s, p, q)))
 	}
 	add(1, Buy, 99, 5)
 	add(2, Buy, 101, 3)
@@ -47,18 +47,26 @@ func TestDepth(t *testing.T) {
 		})
 	}
 
-	// Depth appends to dst and keeps what was there.
+	// Depth appends to dst and keeps what was there; when it has nothing to
+	// add, dst comes back unchanged.
 	dst := []Level{{1, 1, 1}}
 	if got := b.Depth(Sell, 1, dst); !slices.Equal(got, []Level{{1, 1, 1}, {103, 8, 2}}) {
 		t.Fatalf("Depth appended to dst as %v", got)
+	}
+	for _, tt := range tests {
+		if len(tt.want) == 0 {
+			if got := b.Depth(tt.side, tt.n, dst[:1]); !slices.Equal(got, dst[:1]) {
+				t.Fatalf("%s: Depth(%v, %d, %v) = %v, want dst unchanged", tt.name, tt.side, tt.n, dst[:1], got)
+			}
+		}
 	}
 
 	// A trade and a cancel are reflected at once: buy 5 @ 103 takes order 6
 	// (2) and 3 of order 7; then cancelling 3 leaves bid 99 with one order.
 	ts++
-	apply(t, b, gtc(9, Buy, 103, 5, ts))
+	apply(t, b, at(ts, limit(9, Buy, 103, 5)))
 	ts++
-	apply(t, b, cancelCmd(3, ts))
+	apply(t, b, at(ts, cancel(3)))
 	if got, want := b.Depth(Sell, 1, nil), []Level{{103, 3, 1}}; !slices.Equal(got, want) {
 		t.Fatalf("asks after trade = %v, want %v", got, want)
 	}
@@ -73,7 +81,7 @@ func TestDepthEmptyBookAndAllocations(t *testing.T) {
 		t.Fatalf("empty book depth = %v", got)
 	}
 	for id := OrderID(1); id <= 50; id++ {
-		b.Apply(gtc(id, Sell, 100+Price(id), 1, 0), nil)
+		b.Apply(limit(id, Sell, 100+Price(id), 1), nil)
 	}
 	dst := make([]Level, 0, 20)
 	if a := testing.AllocsPerRun(100, func() { dst = b.Depth(Sell, 20, dst[:0]) }); a != 0 {

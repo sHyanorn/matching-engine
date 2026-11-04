@@ -167,10 +167,14 @@ func (t TIF) String() string { return enumString(tifNames[:], t, "TIF") }
 // for how failures are reported.
 func ParseTIF(s string) (TIF, bool) { return parseEnum[TIF](tifNames[:], s) }
 
-// Order is the state of one order: the incoming order while its command is
-// applied, and each resting order the book holds. It is a plain value with no
-// pointers: the book embeds it in its internal queue node and hands out
-// copies, so callers can never alias book internals.
+// Order is the state of one order. The book builds one only when an order
+// comes to rest: an incoming order is matched straight from its Command, so
+// an order that fills at once or is canceled as an IOC remainder never has an
+// Order in the book. Code that follows orders over their whole life, such as
+// the engine's history or a test ledger, builds its own Orders from the
+// events. Order is a plain value with no pointers: the book embeds it in its
+// internal queue node and hands out copies, so callers can never alias book
+// internals.
 //
 // Resting orders are always Limit GTC, with RestedSeq > 0 and Remaining > 0.
 // An incoming order that does not rest, and a resting order that is filled

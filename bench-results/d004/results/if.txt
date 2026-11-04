@@ -1,0 +1,140 @@
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	87361396	        13.48 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	37170054	        31.77 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	18951517	        54.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 8771060	       143.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5605381	       206.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4254957	       290.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	10018424	       113.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 9620116	       143.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 6590185	       169.2 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	70909588	        14.13 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	36650247	        33.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	21248818	        55.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 8348082	       143.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5820306	       195.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4280616	       279.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	 9642321	       107.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 9849484	       128.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 8456968	       155.1 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	89108439	        13.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	37872799	        33.35 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	22311357	        54.33 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 7649600	       153.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5475423	       200.3 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4051896	       291.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	12193144	       107.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 9921902	       137.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 7575016	       207.2 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	85079572	        13.31 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	36958990	        33.90 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	21786054	        57.65 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 9116337	       144.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 6304845	       214.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4343904	       280.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	11840266	       110.3 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 9025021	       129.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 7350016	       160.1 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	84605834	        13.22 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	36733476	        32.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	21962310	        54.61 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 7703608	       136.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5282761	       210.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4504749	       276.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	11665525	       110.0 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 7313317	       137.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 7761368	       165.6 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	83514285	        13.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	35594157	        32.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	21675988	        56.77 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 9382843	       143.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5819565	       198.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4549285	       258.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	10835467	       103.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 9605203	       130.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 6980967	       163.3 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	84541632	        14.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	30285460	        34.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	22432894	        56.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 8913418	       156.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5969480	       206.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 3987516	       281.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	10606725	       122.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 7364598	       157.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 7075404	       177.8 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	86287846	        13.80 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	37286802	        31.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	21001556	        58.01 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 7032598	       142.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 5695864	       202.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4071493	       274.1 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	11270040	       107.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 8576732	       129.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 6930870	       163.7 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	85417514	        13.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	37649727	        34.10 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	19036597	        56.60 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 8954054	       138.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 6499804	       203.1 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4443766	       270.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	 9353566	       112.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	 7959459	       125.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 7071534	       147.6 ns/op	      48 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: d004
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkFind/100-4       	86737144	        12.98 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/1000-4      	35075056	        31.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/10000-4     	22604080	        53.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChurnNearTop/100-4         	 9406198	       130.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/1000-4        	 6055844	       204.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkChurnNearTop/10000-4       	 4284465	       278.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/100-4            	11112628	       105.5 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/1000-4           	10346421	       120.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkSweepBest/10000-4          	 8069004	       145.5 ns/op	      48 B/op	       1 allocs/op
+PASS
