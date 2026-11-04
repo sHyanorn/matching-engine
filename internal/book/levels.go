@@ -39,10 +39,13 @@ package book
 // the side is applied with a bit flip rather than an if (see before), because
 // the benchmarks measured the if as a clear cost on every descent.
 
-// priceLevel is one price on one side of the book.
+// priceLevel is one price on one side of the book: its resting orders in
+// time priority, as a FIFO queue (queue.go), and their aggregate.
 type priceLevel struct {
-	price    Price
-	totalQty Qty // sum of Remaining over the level's resting orders
+	price      Price
+	totalQty   Qty        // sum of Remaining over the level's orders
+	count      int        // number of orders in the queue
+	head, tail *orderNode // oldest and newest order; nil when the level is empty
 }
 
 // levelTree is the ordered set of price levels for one side of the book,
