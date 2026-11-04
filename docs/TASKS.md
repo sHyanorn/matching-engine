@@ -4,7 +4,7 @@
 
 ## M0 项目初始化
 - [x] 确认 go.mod 模块路径，加入 staticcheck 和 golangci-lint 配置
-- [ ] 定义核心类型：Order、Side、OrderType、TIF、Trade、Event、Command
+- [x] 定义核心类型：Order、Side、OrderType、TIF、Trade、Event、Command
 - [x] 写一个 Makefile：test、bench、fuzz、lint、run
 
 ## M1 订单簿核心
