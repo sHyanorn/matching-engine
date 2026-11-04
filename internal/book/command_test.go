@@ -76,6 +76,7 @@ func TestCommandValidate(t *testing.T) {
 		{"qty above max", with(limit, func(c *Command) { c.Qty = MaxQty + 1 }), ReasonInvalidQty},
 		{"qty max int64", with(limit, func(c *Command) { c.Qty = math.MaxInt64 }), ReasonInvalidQty},
 		{"market qty zero", with(market, func(c *Command) { c.Qty = 0 }), ReasonInvalidQty},
+		{"market qty above max", with(market, func(c *Command) { c.Qty = MaxQty + 1 }), ReasonInvalidQty},
 
 		{"cancel id zero", with(cancel, func(c *Command) { c.OrderID = 0 }), ReasonInvalidOrderID},
 		{"cancel with side", with(cancel, func(c *Command) { c.Side = Buy }), ReasonUnexpectedField},
@@ -83,6 +84,10 @@ func TestCommandValidate(t *testing.T) {
 		{"cancel with tif", with(cancel, func(c *Command) { c.TIF = GTC }), ReasonUnexpectedField},
 		{"cancel with price", with(cancel, func(c *Command) { c.Price = 1 }), ReasonUnexpectedField},
 		{"cancel with qty", with(cancel, func(c *Command) { c.Qty = -3 }), ReasonUnexpectedField},
+		{"cancel with unknown side", with(cancel, func(c *Command) { c.Side = 3 }), ReasonUnexpectedField},
+		{"cancel with unknown type", with(cancel, func(c *Command) { c.Type = 3 }), ReasonUnexpectedField},
+		{"cancel with unknown tif", with(cancel, func(c *Command) { c.TIF = 4 }), ReasonUnexpectedField},
+		{"cancel with negative price", with(cancel, func(c *Command) { c.Price = -1 }), ReasonUnexpectedField},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -94,8 +99,7 @@ func TestCommandValidate(t *testing.T) {
 }
 
 // When several fields are wrong, the first check in the documented order
-// wins, so the reason (and with it the replayed event stream) is
-// deterministic.
+// wins, so the reason, and with it the event stream, is deterministic.
 func TestCommandValidatePrecedence(t *testing.T) {
 	tests := []struct {
 		name string
@@ -144,8 +148,14 @@ func FuzzCommandValidate(f *testing.F) {
 		{Kind: CommandNewOrder, OrderID: 1, Side: Buy, Type: Limit, TIF: GTC, Price: 100, Qty: 10, Timestamp: 1},
 		{Kind: CommandNewOrder, OrderID: 2, Side: Sell, Type: Market, TIF: FOK, Qty: 5},
 		{Kind: CommandNewOrder, OrderID: 3, Side: Buy, Type: Limit, TIF: IOC, Price: MaxPrice + 1, Qty: math.MaxInt64},
+		// Valid orders at the upper bounds, so the mutator can step one field
+		// across a bound while the others stay valid.
+		{Kind: CommandNewOrder, OrderID: 4, Side: Sell, Type: Limit, TIF: GTC, Price: MaxPrice, Qty: MaxQty},
+		{Kind: CommandNewOrder, OrderID: 5, Side: Buy, Type: Market, TIF: IOC, Qty: MaxQty},
 		{Kind: CommandCancel, OrderID: 1},
 		{Kind: CommandCancel, OrderID: 1, Qty: 1},
+		{Kind: CommandCancel, OrderID: 1, Price: -1},
+		{Kind: CommandCancel, OrderID: 1, TIF: 9},
 		{},
 	} {
 		f.Add(uint8(c.Kind), uint8(c.Side), uint8(c.Type), uint8(c.TIF), uint64(c.OrderID), int64(c.Price), int64(c.Qty), c.Timestamp)

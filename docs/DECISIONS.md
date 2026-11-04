@@ -38,7 +38,7 @@
 
 ## D007 OrderID 和 Timestamp 由引擎在写日志前填入 Command
 - 日期：2026-11-04
-- 决定：OrderID 由引擎分配，在整个日志里跨交易对唯一，0 无效；book 只能发现与当前挂单重复的 ID。Timestamp 是调用方给的 int64（引擎用 Unix 纳秒），book 原样复制，从不比较。时间优先就是命令被应用的先后顺序。symbol 和 client_id 不进入 Command，由引擎和 API 层处理
+- 决定：客户端不传 OrderID。API 收到新单时先从引擎的分配器取下一个 ID（所有交易对共用一个计数器），再调用 Validate；被 400 拒掉的命令占用的 ID 直接跳过，ID 只要求唯一，不要求连续。0 无效；book 只能发现与当前挂单重复的 ID。Timestamp 是调用方给的 int64（引擎用 Unix 纳秒），book 原样复制，从不比较。时间优先就是命令被应用的先后顺序。symbol 和 client_id 不进入 Command，由引擎和 API 层处理
 - 理由：日志自包含，重放不依赖时钟或 book 内部计数器；`DELETE /v1/orders/{id}` 不带 symbol，所以 ID 必须跨交易对唯一；时钟回拨不影响撮合
 - 备选：由 book 分配 ID（跨交易对会冲突）；按时间戳排序（优先级受时钟质量影响）
 
@@ -50,7 +50,7 @@
 
 ## D009 Command.Validate 是唯一的无状态校验
 - 日期：2026-11-04
-- 决定：`Validate()` 返回 Reason，合法时为 ReasonNone，检查顺序固定。市价单必须是 IOC 或 FOK 且 Price 为 0；限价单 Price 在 [1, MaxPrice]；撤单只能带 OrderID 和 Timestamp。API 用它直接回 400，book 对每条命令再查一次
+- 决定：`Validate()` 返回 Reason，合法时为 ReasonNone，检查顺序固定。市价单必须是 IOC 或 FOK 且 Price 为 0；限价单 Price 在 [1, MaxPrice]；撤单只能带 OrderID 和 Timestamp。API 用它直接回 400，没通过的命令既不写日志也不应用；book 对每条命令再查一次。新单的 Kind 和 OrderID 由 API 自己填，所以新单出现 invalid_command 或 invalid_order_id 说明 API 有 bug，应回 500
 - 理由：两层共用一个函数，结论不会不一致；顺序固定保证多处出错时原因确定，重放结果稳定；每种意图只有一种合法表示，未使用的字段必须为 0，以后改单等功能可以启用这些字段而不影响旧日志
 - 备选：返回 error（会分配，调用方还要做类型断言）；市价单忽略 TIF 和 Price（日志不规范）
 
@@ -62,7 +62,7 @@
 
 ## D011 事件序列、档位总量和 Seq
 - 日期：2026-11-04
-- 决定：新单的事件序列是 Rejected，或 Accepted、若干 Trade、最后 Rested 或 Canceled；撤单是 Rejected 或 Canceled。改变挂单的事件（Trade、Rested、撤掉挂单的 Canceled）带上被改变档位的方向和事件之后的绝对总量。Seq 每个 book 从 1 开始，每个事件加 1，拒单也计入；Trade 的 Seq 就是成交序号。WebSocket 每个频道用引擎自己的连续计数器
+- 决定：新单的事件序列是 Rejected，或 Accepted、若干 Trade、最后 Rested 或 Canceled；撤单是 Rejected 或 Canceled；未知种类的命令是 `Rejected(invalid_command)`。数量守恒在每条命令的最后一个事件之后成立。改变挂单的事件（Trade、Rested、撤掉挂单的 Canceled）带上被改变档位的方向和事件之后的绝对总量。Seq 每个 book 从 1 开始，每个事件加 1，拒单也计入；Trade 的 Seq 就是成交序号。WebSocket 每个频道用引擎自己的连续计数器
 - 理由：只看事件流就能检查数量守恒；只有 book 能廉价地拿到档位总量，用绝对值时引擎按 (方向, 价格) 保留最后一个值就能生成 book_delta，不需要另建一份订单簿；频道只看到部分事件，直接用 Seq 会让客户端分不清真断档和被过滤的事件
 - 备选：单独的 BookDelta 事件（事件更多，Qty 字段一个名字两种含义）；事件不带档位信息（引擎要维护盘口镜像）
 

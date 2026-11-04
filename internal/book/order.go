@@ -1,9 +1,13 @@
 package book
 
-// OrderID identifies an order. The engine assigns it before the command is
-// logged, so replay sees the same IDs, and keeps IDs unique across symbols
-// for the life of the log, so that DELETE and GET /v1/orders/{id}, which name
-// no symbol, can be routed. Zero is never a valid ID.
+// OrderID identifies an order. Clients never send one: when the API receives
+// a new order it takes the next ID from the engine's allocator, one counter
+// shared by all symbols, and only then calls [Command.Validate]. The ID is
+// therefore in the Command before it is logged, so replay sees the same IDs,
+// and it is unique across symbols, so that DELETE and GET /v1/orders/{id},
+// which name no symbol, can be routed. An ID taken by a command that is then
+// refused with 400 is simply skipped: IDs must be unique, not gap-free. Zero
+// is never a valid ID.
 //
 // The book treats IDs as opaque: priority never depends on them, and it can
 // only detect a duplicate among the orders it currently holds. Reusing the ID
@@ -33,8 +37,10 @@ type Qty int64
 //     below 9.2e9 orders. The FOK pre-check sums level totals, so the same
 //     bound covers it.
 //
-// Raising a bound later keeps old command logs replayable, because every
-// command that was valid stays valid. Lowering one does not.
+// Raising a bound later keeps old command logs replayable: the engine never
+// logs a command that fails Validate, and every command that was valid stays
+// valid. Lowering a bound does not, and TestBoundsCannotOverflow fails if
+// either bound drops below 1e9.
 const (
 	MaxPrice Price = 1_000_000_000
 	MaxQty   Qty   = 1_000_000_000
@@ -161,20 +167,20 @@ func (t TIF) String() string { return enumString(tifNames[:], t, "TIF") }
 // for how failures are reported.
 func ParseTIF(s string) (TIF, bool) { return parseEnum[TIF](tifNames[:], s) }
 
-// Order is the state of one order in the book. It is a plain value with no
+// Order is the state of one order: the incoming order while its command is
+// applied, and each resting order the book holds. It is a plain value with no
 // pointers: the book embeds it in its internal queue node and hands out
 // copies, so callers can never alias book internals.
 //
-// The book holds only resting orders, which today are always Limit GTC. A
-// taker exists only while its command is applied, and an order that is
-// filled or canceled is forgotten; the engine keeps its history for
+// Resting orders are always Limit GTC, with RestedSeq > 0 and Remaining > 0.
+// An incoming order that does not rest, and a resting order that is filled
+// or canceled, is forgotten; the engine keeps its history for
 // GET /v1/orders/{id}. A snapshot of the book is its resting Orders, level by
 // level in queue order, plus the last Event.Seq.
 //
-// Quantities obey Qty = Filled + Remaining + canceled, where canceled is what
-// left the order without trading. It is 0 for every order the book holds
-// today, since a cancel removes the whole order; reducing an order's quantity
-// (a possible amend) would lower Remaining and leave Qty as submitted.
+// For every resting order Qty = Filled + Remaining, because a cancel removes
+// the whole order. The package documentation gives the form of SPEC §7's
+// quantity conservation that covers an order's whole life, cancels included.
 type Order struct {
 	ID        OrderID
 	Side      Side

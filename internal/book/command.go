@@ -21,8 +21,10 @@ func (k CommandKind) String() string {
 	return enumString(commandKindNames[:], k, "CommandKind")
 }
 
-// Command is the only input to the book, and exactly what the engine writes
-// to the command log. It is a fixed-size value made only of integers (no
+// Command is the only input to the book. The engine logs each Command it
+// applies verbatim, with OrderID and Timestamp already filled in, next to
+// what the engine itself needs to route it, such as the symbol. It is a
+// fixed-size value made only of integers (no
 // pointers, strings or interfaces), so it goes through a channel and into
 // the log without allocating, compares with ==, and is easy to build field by
 // field from fuzz input.
@@ -39,9 +41,9 @@ func (k CommandKind) String() string {
 // (amend reusing Price and Qty, say) can give such a field a meaning without
 // changing how old logs replay.
 //
-// Symbol and client_id are deliberately absent: routing belongs to the
-// engine and client data to the engine and API, which keeps Command free of
-// strings.
+// Symbol and client_id are deliberately absent: routing (the symbol) belongs
+// to the engine, which records it alongside the Command, and client data to
+// the engine and API, which keeps Command free of strings.
 type Command struct {
 	Kind    CommandKind
 	Side    Side
@@ -68,8 +70,9 @@ type Command struct {
 //
 // Validate knows nothing about book state: a valid new order can still be
 // rejected with [ReasonDuplicateOrderID] or [ReasonFOKUnfillable], and a
-// valid cancel with [ReasonUnknownOrder]. The API calls Validate to answer
-// 400 without a round trip to the engine. The book calls it again for every
+// valid cancel with [ReasonUnknownOrder]. The API calls Validate after the
+// engine has assigned the OrderID (see [OrderID]) and answers 400 without
+// logging or applying the command. The book calls it again for every
 // command, so the outcome never depends on who called it and arbitrary
 // (fuzz) input is safe.
 func (c Command) Validate() Reason {

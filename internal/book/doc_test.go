@@ -7,17 +7,20 @@ import (
 	"github.com/sHyanorn/matching-engine/internal/book"
 )
 
-// The API layer parses the wire names of a POST /v1/orders body, builds a
-// Command and validates it before the engine sees it. Parse failures are
-// ignored on purpose: the invalid zero value makes Validate report the
-// error, so a missing and a misspelled field get the same code.
+// The API layer parses the wire names of a POST /v1/orders body, takes the
+// next OrderID from the engine's allocator, builds a Command and validates it
+// before anything is logged. Parse failures are ignored on purpose: the
+// invalid zero value makes Validate report the error, so a missing and a
+// misspelled field get the same code.
 func ExampleCommand_Validate() {
+	var lastID book.OrderID
+	nextID := func() book.OrderID { lastID++; return lastID } // stands in for the engine's allocator
 	newOrder := func(side, typ, tif string, price book.Price, qty book.Qty) book.Command {
 		s, _ := book.ParseSide(side)
 		ty, _ := book.ParseOrderType(typ)
 		tf, _ := book.ParseTIF(tif)
 		return book.Command{
-			Kind: book.CommandNewOrder, OrderID: 1,
+			Kind: book.CommandNewOrder, OrderID: nextID(),
 			Side: s, Type: ty, TIF: tf, Price: price, Qty: qty,
 		}
 	}
