@@ -4,7 +4,9 @@
 //
 // The book is a deterministic state machine. It consumes [Command] values and
 // emits [Event] values; it never reads a clock, never draws random numbers
-// and never does I/O (CI enforces this with depguard, see D005). Everything
+// and never does I/O. CI guards against accidental dependencies by forbidding
+// imports of time, math/rand, crypto/rand, net and os (depguard, see D005).
+// Everything
 // that is not deterministic happens in internal/engine before a Command
 // reaches the book, so replaying the command log into a fresh book yields
 // exactly the same events, Seq for Seq.
@@ -14,8 +16,9 @@
 //   - book: the domain types and their wire names, stateless validation
 //     ([Command.Validate]), matching, and the meaning, order and numbering of
 //     events.
-//   - engine: OrderID allocation (unique across symbols for the life of the
-//     log), timestamps, the command log with its format version and replay,
+//   - engine: OrderID allocation (one counter shared by all symbols, called
+//     by the API before it validates a new order), timestamps, the command
+//     log with its format version and replay,
 //     client_id, order history and status after an order leaves the book,
 //     and the sequence numbers of WebSocket channels.
 //   - api: JSON shapes, parsing wire names with [ParseSide], [ParseOrderType]
@@ -29,6 +32,7 @@
 //	           |  Accepted(X) Trade(taker=X)* [ Rested(X) | Canceled(X, ioc_remainder) ]
 //	cancel X:     Rejected(X)
 //	           |  Canceled(X, user_cancel)
+//	any other X:  Rejected(X, invalid_command)
 //
 // Rejected means the command changed nothing. After Accepted, trades come
 // best price first and, within one price, in time priority (arrival order).
@@ -40,7 +44,8 @@
 // # Quantity conservation
 //
 // Every quantity movement is an explicit event field, so for every accepted
-// order X, at every point in the event stream:
+// order X, after the last event of every command (inside a command, a
+// taker's Remaining is not visible in the stream):
 //
 //	Accepted.Qty = Σ Trade.Qty with X as taker or maker
 //	             + Σ Canceled.Qty of X
@@ -56,8 +61,8 @@
 // Event.Seq is per book: 1, 2, 3, ... with no gaps, rejections included. A
 // trade's Seq is its trade number (SPEC §6.5), and a snapshot records the
 // last Seq it reflects. Seq is reproducible because the engine logs exactly
-// the commands it applies, in order; it may answer a command that fails
-// [Command.Validate] with 400 without logging or applying it. WebSocket
+// the commands it applies, in order, and never logs or applies a command
+// that fails [Command.Validate]; it answers such a command with 400. WebSocket
 // channels carry their own gap-free counters and quote Seq only for snapshot
 // alignment, because a channel sees only some of the book's events.
 //

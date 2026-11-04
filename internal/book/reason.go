@@ -16,8 +16,10 @@ const (
 
 	// Stateless rejections: returned by Command.Validate, in this order of
 	// precedence, and reported by EventRejected. An API answers them with
-	// 400 before the engine sees the command.
-
+	// 400 without logging or applying the command. For a new order the API
+	// itself sets Kind and OrderID, so invalid_command or invalid_order_id
+	// there means an API bug (500); for a cancel, invalid_order_id is the
+	// client's error (400).
 	ReasonInvalidCommand  Reason = 1 // Kind is not a known CommandKind
 	ReasonInvalidOrderID  Reason = 2 // OrderID is 0
 	ReasonInvalidSide     Reason = 3 // Side is not Buy or Sell
@@ -30,14 +32,12 @@ const (
 
 	// Stateful rejections: found by the book against its current state and
 	// reported by EventRejected. The command was valid and changed nothing.
-
 	ReasonDuplicateOrderID Reason = 10 // a new order reuses the ID of a resting order
 	ReasonUnknownOrder     Reason = 11 // a cancel names an ID that is not resting (never existed, filled or canceled)
 	ReasonFOKUnfillable    Reason = 12 // a FOK order cannot fill in full right now, so nothing traded
 
 	// Cancellations: reported by EventCanceled, whose Qty left the order
 	// without trading.
-
 	ReasonUserCancel   Reason = 13 // a CommandCancel removed a resting order
 	ReasonIOCRemainder Reason = 14 // the untraded part of an IOC or market order; it never rested
 )

@@ -32,12 +32,10 @@ func checkInputEnum[E inputEnum](t *testing.T, typeName string, names map[E]stri
 			t.Errorf("%s(%d).String() = %q, want %q", typeName, i, got, name)
 		}
 		got, ok := parse(name)
-		if want := E(0); valid {
-			want = v
-			if !ok || got != want {
-				t.Errorf("parse(%q) = %v, %v; want %v, true", name, got, ok, want)
-			}
-		} else if ok || got != want {
+		switch {
+		case valid && (!ok || got != v):
+			t.Errorf("parse(%q) = %v, %v; want %v, true", name, got, ok, v)
+		case !valid && (ok || got != 0):
 			t.Errorf("parse(%q) = %v, %v; want 0, false", name, got, ok)
 		}
 	}

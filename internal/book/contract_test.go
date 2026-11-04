@@ -113,7 +113,8 @@ func assertPlainData(t *testing.T, typ reflect.Type, path string) {
 }
 
 // TestBoundsCannotOverflow restates the argument in the MaxPrice and MaxQty
-// documentation, so raising a bound past it fails here.
+// documentation, so raising a bound past it fails here, and so does lowering
+// a bound, which would break replay of old logs.
 func TestBoundsCannotOverflow(t *testing.T) {
 	maxPrice, maxQty := int64(MaxPrice), int64(MaxQty)
 	const (
@@ -128,5 +129,13 @@ func TestBoundsCannotOverflow(t *testing.T) {
 	}
 	if maxPrice >= jsonExact {
 		t.Errorf("MaxPrice is not exact as a JSON number")
+	}
+	// Lowering a bound makes commands in old logs invalid, so replay would
+	// reject them (D012). Raising is safe up to the limits checked above.
+	if maxPrice < 1_000_000_000 {
+		t.Errorf("MaxPrice = %d was lowered below 1e9: old command logs would no longer replay (D012)", maxPrice)
+	}
+	if maxQty < 1_000_000_000 {
+		t.Errorf("MaxQty = %d was lowered below 1e9: old command logs would no longer replay (D012)", maxQty)
 	}
 }

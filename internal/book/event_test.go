@@ -28,19 +28,19 @@ func TestEventKindString(t *testing.T) {
 // are left out):
 //
 //	1-2   sell 1: 10 @ 100 GTC rests
-//	3-4   buy 2: 4 @ 100 GTC trades 4 with order 1
+//	3-4   buy 2: 3 @ 100 GTC trades 3 with order 1
 //	5     cancel 9 fails: no such order
 //	6-7   buy 3: 5 @ 99 GTC rests
-//	8-10  market buy 4: 8 IOC takes order 1's last 6, 2 are canceled
+//	8-10  market buy 4: 8 IOC takes order 1's last 7, 1 is canceled
 //	11    cancel 3 removes it, emptying the bid level at 99
 func sampleEvents() map[string]Event {
 	return map[string]Event{
 		"accepted":           {Seq: 1, Timestamp: 10, Kind: EventAccepted, OrderID: 1, Side: Sell, Price: 100, Qty: 10},
 		"rested":             {Seq: 2, Timestamp: 10, Kind: EventRested, OrderID: 1, Side: Sell, Price: 100, Qty: 10, LevelSide: Sell, LevelQty: 10},
-		"trade":              {Seq: 4, Timestamp: 11, Kind: EventTrade, OrderID: 2, MakerID: 1, Side: Buy, Price: 100, Qty: 4, LevelSide: Sell, LevelQty: 6},
+		"trade":              {Seq: 4, Timestamp: 11, Kind: EventTrade, OrderID: 2, MakerID: 1, Side: Buy, Price: 100, Qty: 3, LevelSide: Sell, LevelQty: 7},
 		"rejected":           {Seq: 5, Timestamp: 12, Kind: EventRejected, OrderID: 9, Reason: ReasonUnknownOrder},
-		"trade emptying":     {Seq: 9, Timestamp: 14, Kind: EventTrade, OrderID: 4, MakerID: 1, Side: Buy, Price: 100, Qty: 6, LevelSide: Sell, LevelQty: 0},
-		"canceled remainder": {Seq: 10, Timestamp: 14, Kind: EventCanceled, OrderID: 4, Side: Buy, Qty: 2, Reason: ReasonIOCRemainder},
+		"trade emptying":     {Seq: 9, Timestamp: 14, Kind: EventTrade, OrderID: 4, MakerID: 1, Side: Buy, Price: 100, Qty: 7, LevelSide: Sell, LevelQty: 0},
+		"canceled remainder": {Seq: 10, Timestamp: 14, Kind: EventCanceled, OrderID: 4, Side: Buy, Qty: 1, Reason: ReasonIOCRemainder},
 		"canceled resting":   {Seq: 11, Timestamp: 15, Kind: EventCanceled, OrderID: 3, Side: Buy, Price: 99, Qty: 5, Reason: ReasonUserCancel, LevelSide: Buy, LevelQty: 0},
 	}
 }
@@ -49,7 +49,7 @@ func TestEventTrade(t *testing.T) {
 	events := sampleEvents()
 
 	got, ok := events["trade"].Trade()
-	want := Trade{Seq: 4, Timestamp: 11, TakerID: 2, MakerID: 1, Price: 100, Qty: 4, TakerSide: Buy}
+	want := Trade{Seq: 4, Timestamp: 11, TakerID: 2, MakerID: 1, Price: 100, Qty: 3, TakerSide: Buy}
 	if !ok || got != want {
 		t.Errorf("Trade() = %+v, %v; want %+v, true", got, ok, want)
 	}
@@ -84,7 +84,7 @@ func TestEventLevelUpdate(t *testing.T) {
 	}{
 		{"accepted", LevelUpdate{}, false},
 		{"rested", LevelUpdate{Side: Sell, Price: 100, Qty: 10}, true},
-		{"trade", LevelUpdate{Side: Sell, Price: 100, Qty: 6}, true},
+		{"trade", LevelUpdate{Side: Sell, Price: 100, Qty: 7}, true},
 		{"rejected", LevelUpdate{}, false},
 		{"trade emptying", LevelUpdate{Side: Sell, Price: 100, Qty: 0}, true},
 		{"canceled remainder", LevelUpdate{}, false},
