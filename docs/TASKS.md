@@ -3,7 +3,7 @@
 完成一项就打勾。每个里程碑结束时所有测试必须通过。
 
 ## M0 项目初始化
-- [ ] 确认 go.mod 模块路径，加入 staticcheck 和 golangci-lint 配置
+- [x] 确认 go.mod 模块路径，加入 staticcheck 和 golangci-lint 配置
 - [ ] 定义核心类型：Order、Side、OrderType、TIF、Trade、Event、Command
 - [ ] 写一个 Makefile：test、bench、fuzz、lint、run
 

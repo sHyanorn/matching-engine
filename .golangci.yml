@@ -1,0 +1,48 @@
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - depguard
+    - errorlint
+    - exhaustive
+    - gocritic
+    - misspell
+    - nolintlint
+    - unconvert
+  settings:
+    depguard:
+      rules:
+        # CLAUDE.md: the matching core must not depend on network, time or
+        # randomness, so results are reproducible and replayable. Tests may
+        # use math/rand with a fixed seed for property tests.
+        book-purity:
+          files:
+            - "**/internal/book/**"
+            - "!$test"
+          deny:
+            - pkg: "time"
+              desc: "internal/book must not read the clock; the caller passes timestamps in"
+            - pkg: "math/rand"
+              desc: "internal/book must be deterministic"
+            - pkg: "crypto/rand"
+              desc: "internal/book must be deterministic"
+            - pkg: "net"
+              desc: "internal/book must not do any networking"
+            - pkg: "os"
+              desc: "internal/book must not touch the environment or files"
+    exhaustive:
+      default-signifies-exhaustive: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/sHyanorn/matching-engine
