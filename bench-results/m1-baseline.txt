@@ -1,0 +1,30 @@
+# M1 baseline: BenchmarkApply (internal/book/book_bench_test.go)
+# commit: 1b33378 + benchmark file; go version go1.24.7 linux/amd64; Intel(R) Xeon(R) Processor @ 2.80GHz, 4 vCPU cloud VM
+# command: go test -run='^$' -bench=BenchmarkApply -benchmem -count=10 ./internal/book
+# flow: GTC limits, prices normal around mid (sd 5 or 50 ticks), ~30% cancels; ns/op is per command
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.80GHz
+BenchmarkApply/sd=5-4         	 2761910	       398.2 ns/op	   2511080 cmds/s	         0.3671 trades/cmd	      69 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3442591	       483.2 ns/op	   2069666 cmds/s	         0.3671 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3190358	       408.6 ns/op	   2447431 cmds/s	         0.3672 trades/cmd	      67 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3197403	       433.7 ns/op	   2305978 cmds/s	         0.3671 trades/cmd	      67 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 2885565	       457.1 ns/op	   2187594 cmds/s	         0.3672 trades/cmd	      68 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3358015	       443.8 ns/op	   2253319 cmds/s	         0.3671 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3122347	       423.0 ns/op	   2364138 cmds/s	         0.3671 trades/cmd	      67 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3043010	       437.7 ns/op	   2284911 cmds/s	         0.3671 trades/cmd	      68 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3135954	       425.6 ns/op	   2349368 cmds/s	         0.3671 trades/cmd	      67 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4         	 3065260	       411.1 ns/op	   2432220 cmds/s	         0.3671 trades/cmd	      67 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3879846	       375.2 ns/op	   2664932 cmds/s	         0.5286 trades/cmd	      67 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 4172665	       415.0 ns/op	   2409494 cmds/s	         0.5286 trades/cmd	      69 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 4460416	       388.2 ns/op	   2575838 cmds/s	         0.5286 trades/cmd	      69 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3808179	       393.2 ns/op	   2543443 cmds/s	         0.5286 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3661234	       377.8 ns/op	   2647105 cmds/s	         0.5286 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3618021	       382.8 ns/op	   2612197 cmds/s	         0.5286 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3539256	       420.5 ns/op	   2377919 cmds/s	         0.5286 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3783397	       429.0 ns/op	   2331256 cmds/s	         0.5286 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 3680390	       405.7 ns/op	   2465098 cmds/s	         0.5286 trades/cmd	      66 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4        	 4038194	       385.7 ns/op	   2592536 cmds/s	         0.5286 trades/cmd	      69 B/op	       0 allocs/op
+PASS
+ok  	github.com/sHyanorn/matching-engine/internal/book	36.664s
