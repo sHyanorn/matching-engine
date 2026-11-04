@@ -16,7 +16,7 @@ func flow(seed uint64, n int, sd float64) []Command {
 	var nextID OrderID
 	for len(cmds) < n {
 		if nextID > 0 && r.IntN(100) < 30 {
-			cmds = append(cmds, cancelCmd(1+OrderID(r.Int64N(int64(nextID))), 0))
+			cmds = append(cmds, cancel(1+OrderID(r.Int64N(int64(nextID)))))
 			continue
 		}
 		nextID++
@@ -32,14 +32,13 @@ func flow(seed uint64, n int, sd float64) []Command {
 		} else {
 			p += 2
 		}
-		cmds = append(cmds, gtc(nextID, side, p, Qty(1+r.IntN(100)), 0))
+		cmds = append(cmds, limit(nextID, side, p, Qty(1+r.IntN(100))))
 	}
 	return cmds
 }
 
-// BenchmarkApply replays the flow through one book. Each pass over the flow
-// shifts every ID by the flow length, so IDs never collide with orders still
-// resting from earlier passes. ns/op is per command.
+// BenchmarkApply replays the flow, starting each pass from an empty book so
+// the workload does not depend on b.N. ns/op is per command.
 func BenchmarkApply(b *testing.B) {
 	for _, tc := range []struct {
 		name string
@@ -53,9 +52,12 @@ func BenchmarkApply(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				cmd := cmds[i%len(cmds)]
-				cmd.OrderID += OrderID(i / len(cmds) * len(cmds))
-				buf = bk.Apply(cmd, buf[:0])
+				if i > 0 && i%len(cmds) == 0 {
+					b.StopTimer()
+					bk = New()
+					b.StartTimer()
+				}
+				buf = bk.Apply(cmds[i%len(cmds)], buf[:0])
 				for _, e := range buf {
 					if e.Kind == EventTrade {
 						trades++

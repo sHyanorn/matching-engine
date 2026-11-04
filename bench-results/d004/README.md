@@ -30,11 +30,44 @@ Data behind decision D004 in `docs/DECISIONS.md`.
 | Benchmark | red-black tree | skip list | sorted slice |
 |---|---|---|---|
 | Find | 6.0 / 27.1 / 48.1 ns | 26.8 / 66.8 / 100.7 ns | see results |
-| ChurnNearTop | 126.5 / 183.1 / 249.5 ns | 159.2 / 240.6 / 404.7 ns | grows to ~3.4 µs |
+| ChurnNearTop | 126.5 / 183.1 / 249.5 ns | 159.2 / 240.6 / 404.7 ns | grows to ~3.6 µs |
 | SweepBest | 85.6 / 119.0 / 143.9 ns | 171.8 / 190.4 / 227.0 ns | grows to ~3.5 µs |
-| Walk20 | ~104 ns | ~89 ns (not significant in an interleaved rerun) | ~77 ns |
-| Memory per level (1M levels) | 48 B, 1 alloc | 58.7 B, 2 allocs | |
+| Walk20 | ~104 ns | ~89 ns (13-16% faster; not significant in the interleaved rerun below) | ~72 ns |
+| Memory per level (Build/10000 B/op and allocs/op ÷ 10,000) | 48 B, 1 alloc | 58.7 B, 2 allocs | |
 
 The prototype `Level` holds only a price and a total. The production
-`priceLevel` also holds the FIFO queue, so its per-level size is re-measured
-in `internal/book`.
+`priceLevel` also holds the FIFO queue (head, tail, count), so a level node
+in `internal/book` takes 80 B and 1 allocation
+(`BenchmarkLevelTreeBuild/10000`: 800,006 B/op, 10,000 allocs/op).
+
+## Interleaved rerun: red-black tree vs skip list
+
+`results/interleaved-rb.txt` and `results/interleaved-sl.txt` come from the
+two test binaries run alternately, 6 times each with `-test.benchtime=300ms`,
+to rule out drift between the separate runs above.
+`results/interleaved-rb-vs-sl.txt` is the benchstat table. Every write-heavy
+gap holds (the skip list is 22% to 328% slower on Find, ChurnNearTop and
+SweepBest); the skip list's Walk20 lead is not significant (p >= 0.065).
+
+## Comparator: bit flip vs if
+
+`levels.go` orders the bid side with `a^flip < b^flip` instead of an `if` on
+the side. The `if` variant replaces `before` in `prototypes/rb/rbtree.go`
+with:
+
+```go
+func (t *rbTree) before(a, b Price) bool {
+	if t.flip != 0 {
+		return a > b
+	}
+	return a < b
+}
+```
+
+`results/flip.txt` and `results/if.txt` are the two binaries run alternately,
+10 times each (`-test.bench='Find|SweepBest|ChurnNearTop' -test.benchmem`),
+on a later VM of the same type that reported a 2.80GHz Xeon.
+`results/flip-vs-if.txt` is the benchstat table: with the `if`, Find is 93%
+slower at P = 100 and 11% to 15% slower at 1,000 and 10,000; SweepBest and
+ChurnNearTop are 6% to 16% slower or within noise; the geometric mean is 17%
+slower.

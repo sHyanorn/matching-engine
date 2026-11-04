@@ -31,8 +31,8 @@ func New() *Book {
 // The events follow the grammar in the package documentation. A command that
 // fails [Command.Validate] produces one Rejected event and changes nothing
 // else, so Apply is safe on arbitrary input. Once out has grown large enough,
-// Apply allocates only when an order comes to rest (its node, and a level if
-// the price is new).
+// Apply allocates only when an order comes to rest: its node, a level if the
+// price is new, and now and then room for a larger ID map.
 //
 // The returned slice aliases out: the next call overwrites it, so a caller
 // that hands events to another goroutine must copy them first.
@@ -156,10 +156,10 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
 	return out, remaining
 }
 
-// available returns how much of cmd's quantity could trade right now: the
-// total resting on the opposite side at prices cmd crosses, counting from the
-// best price and stopping once cmd.Qty is reached. It is the FOK pre-check,
-// and it walks only the levels a fill would consume.
+// available returns the quantity resting on the opposite side at prices cmd
+// crosses, adding whole levels from the best price outward until the total
+// reaches at least cmd.Qty, so the result may exceed cmd.Qty. It is the FOK
+// pre-check, and it walks only the levels a fill would consume.
 func (b *Book) available(cmd Command) Qty {
 	var total Qty
 	for level := b.side(cmd.Side.Opposite()).best; level != nil && total < cmd.Qty; level = level.next() {

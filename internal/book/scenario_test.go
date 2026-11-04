@@ -91,6 +91,12 @@ func marketFOK(id OrderID, side Side, qty Qty) Command {
 // cancel returns a cancel of order id.
 func cancel(id OrderID) Command { return Command{Kind: CommandCancel, OrderID: id} }
 
+// at returns c with Timestamp ts.
+func at(ts int64, c Command) Command {
+	c.Timestamp = ts
+	return c
+}
+
 // Expected events of the command under test. Each sets Timestamp to cmdTS
 // and exactly the fields the Event field table gives its kind; every other
 // field stays zero.
@@ -656,8 +662,9 @@ func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error 
 		return nil // a fully filled order ends with its last trade
 	}
 
-	// What is left rests (GTC) or is canceled (IOC; a FOK order got here
-	// only if it filled).
+	// What is left rests (GTC) or is canceled (IOC, limit or market). A FOK
+	// order never gets here: it passed the crossable check above, so the
+	// makers covered its whole quantity and it returned as filled.
 	want := Event{Kind: EventCanceled, OrderID: c.OrderID, Side: c.Side, Price: c.Price, Qty: left, Reason: ReasonIOCRemainder}
 	if c.TIF == GTC {
 		k := l2Key{c.Side, c.Price}
