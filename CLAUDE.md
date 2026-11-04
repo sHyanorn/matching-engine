@@ -20,7 +20,7 @@
 go test -race ./...                 # 全部测试
 go test -bench=. -benchmem ./internal/book
 go test -fuzz=FuzzBook -fuzztime=30s ./internal/book
-go vet ./... && staticcheck ./...
+golangci-lint run ./...             # 静态检查，包含 govet 和 staticcheck
 go run ./cmd/engine                 # 启动服务
 go run ./cmd/loadgen -rate 50000    # 压测
 ```

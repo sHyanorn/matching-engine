@@ -23,3 +23,9 @@
 ## D004 价格档位有序结构
 - 日期：待定
 - 决定：红黑树或跳表，M1 开始时由 Claude Code 给出对比后决定
+
+## D005 静态检查统一用 golangci-lint
+- 日期：2026-11-04
+- 决定：用 golangci-lint v2（版本固定为 v2.5.0）统一做静态检查，staticcheck 作为其中一个检查器启用，不再单独安装；配置在 `.golangci.yml`
+- 理由：一个工具、一份配置、本地和 CI 版本一致；staticcheck 的规则一条不少。另外用 depguard 禁止 `internal/book` 的非测试代码导入 `time`、`math/rand`、`crypto/rand`、`net`、`os`，把"撮合核心不依赖时间、随机数和网络"这条规则交给 CI 自动检查
+- 备选：单独安装 staticcheck（多一个工具要维护版本，且没有导入限制）
