@@ -46,5 +46,5 @@ Check off each item when it is done. All tests must pass at the end of every mil
 ## M6 Presentation
 - [x] Dockerfile and docker compose
 - [ ] README (English version only): introduction, architecture diagram, performance table, GIF, quick start
-- [ ] Optional: simple web order book visualization
+- [x] Optional: simple web order book visualization
 - [ ] Tidy up DECISIONS.md so that every decision has a rationale

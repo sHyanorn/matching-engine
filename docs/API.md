@@ -114,6 +114,8 @@ A snapshot followed by its deltas reproduces the book. A client that falls behin
 
 ## Operations
 
+- `GET /`: a page that follows one symbol's book and trades over the stream; `/?symbol=ETH-USD` picks another.
+
 - `GET /healthz`: `200 {"status":"ok"}`, or `503 {"status":"shutting_down"}` once shutdown has begun. From then on new orders, cancels and WebSocket connections get `503 shutting_down`. Once a symbol's command log has failed, the answer is `200 {"status":"degraded","log_failed":["BTC-USD"]}`: that symbol takes no more orders or cancels until a restart, and the others serve as before.
 - `GET /metrics`: Prometheus metrics:
 

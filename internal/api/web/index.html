@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Order book</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#ffffff, #0d1117);
+  --fg: light-dark(#1f2328, #e6edf3);
+  --muted: light-dark(#59636e, #8b949e);
+  --line: light-dark(#d1d9e0, #262c36);
+  --bid: light-dark(#1a7f37, #3fb950);
+  --ask: light-dark(#cf222e, #f85149);
+  --bid-bar: color-mix(in srgb, var(--bid) 16%, transparent);
+  --ask-bar: color-mix(in srgb, var(--ask) 16%, transparent);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.01em; }
+#status { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+#status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+#status[data-state="live"]::before { background: var(--bid); }
+#status[data-state="down"]::before { background: var(--ask); }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 32px; align-items: start; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+th { height: 24px; padding: 0 8px; color: var(--muted); font-weight: 400; text-align: right; border-bottom: 1px solid var(--line); }
+td { height: 24px; padding: 0 8px; text-align: right; white-space: nowrap; overflow: hidden; }
+th:first-child, td:first-child { text-align: left; }
+#asks td:first-child { color: var(--ask); }
+#bids td:first-child { color: var(--bid); }
+#asks tr { background: linear-gradient(to left, var(--ask-bar) calc(var(--d, 0) * 100%), transparent 0); }
+#bids tr { background: linear-gradient(to left, var(--bid-bar) calc(var(--d, 0) * 100%), transparent 0); }
+.mid { display: flex; align-items: center; justify-content: space-between; height: 48px; padding: 0 8px; border-block: 1px solid var(--line); }
+#last { font-size: 18px; font-weight: 600; }
+#last[data-dir="up"] { color: var(--bid); }
+#last[data-dir="down"] { color: var(--ask); }
+#last[data-dir="up"]::after { content: " \25B2"; font-size: 11px; }
+#last[data-dir="down"]::after { content: " \25BC"; font-size: 11px; }
+#spread { color: var(--muted); }
+#tape td:nth-child(2)[data-side="buy"] { color: var(--bid); }
+#tape td:nth-child(2)[data-side="sell"] { color: var(--ask); }
+#tape td:nth-child(2)[data-side="buy"]::after { content: " \25B2"; font-size: 9px; }
+#tape td:nth-child(2)[data-side="sell"]::after { content: " \25BC"; font-size: 9px; }
+#tape td:first-child { color: var(--muted); }
+thead.sr th { height: 0; padding: 0; border: 0; font-size: 0; line-height: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="symbol"></h1>
+    <div id="status" role="status" aria-live="polite">Connecting</div>
+  </header>
+  <div class="panels">
+    <section aria-label="Order book">
+      <table id="asks"><caption>Asks</caption>
+        <thead><tr><th scope="col">Price</th><th scope="col">Size</th><th scope="col">Total</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="mid"><span id="last">&nbsp;</span><span id="spread"></span></div>
+      <table id="bids"><caption>Bids</caption>
+        <thead class="sr"><tr><th scope="col">Price</th><th scope="col">Size</th><th scope="col">Total</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+    <section aria-label="Recent trades">
+      <table id="tape"><caption>Recent trades</caption>
+        <thead><tr><th scope="col">Time</th><th scope="col">Price</th><th scope="col">Size</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+// Keeps a local book from book:SYMBOL (a snapshot, then deltas that give
+// each changed level's new total) and the tape from trades:SYMBOL, as
+// docs/API.md describes. Messages update the model; painting runs at most
+// every PAINT_MS and touches only cells whose text changed.
+const LEVELS = 14, TRADES = 30, PAINT_MS = 100; // the tape is as tall as the book
+const symbol = new URLSearchParams(location.search).get("symbol") || "BTC-USD";
+const num = new Intl.NumberFormat("en-US");
+const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+document.getElementById("symbol").textContent = symbol;
+document.title = symbol + " order book";
+
+// One side of the book: quantity by price, and the prices sorted best first.
+class Side {
+  constructor(sign) { this.sign = sign; this.qty = new Map(); this.keys = []; }
+  reset(levels) {
+    this.qty = new Map(levels.map(l => [l.price, l.qty]));
+    this.keys = levels.map(l => l.price).sort((a, b) => this.sign * (a - b));
+  }
+  set(price, qty) {
+    let lo = 0, hi = this.keys.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (this.sign * (this.keys[m] - price) < 0) lo = m + 1; else hi = m;
+    }
+    const found = this.keys[lo] === price;
+    if (qty === 0) {
+      if (found) { this.keys.splice(lo, 1); this.qty.delete(price); }
+      return;
+    }
+    if (!found) this.keys.splice(lo, 0, price);
+    this.qty.set(price, qty);
+  }
+}
+const asks = new Side(1), bids = new Side(-1);
+let trades = [], last = null, dir = "";
+
+// Rows are made once; each keeps the text it shows, so a paint writes only
+// what changed.
+function rows(tbody, n, cols) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const tr = tbody.insertRow();
+    const cells = Array.from({ length: cols }, () => tr.insertCell());
+    out.push({ tr, cells, text: new Array(cols).fill(""), d: "" });
+  }
+  return out;
+}
+const askRows = rows(document.querySelector("#asks tbody"), LEVELS, 3);
+const bidRows = rows(document.querySelector("#bids tbody"), LEVELS, 3);
+const tapeRows = rows(document.querySelector("#tape tbody"), TRADES, 3);
+const lastEl = document.getElementById("last"), spreadEl = document.getElementById("spread");
+
+function put(row, i, text) {
+  if (row.text[i] !== text) {
+    row.text[i] = text;
+    row.cells[i].textContent = text;
+  }
+}
+
+function paintSide(side, view, max) {
+  let total = 0;
+  view.forEach((row, i) => {
+    const price = side.keys[i];
+    if (price === undefined) {
+      put(row, 0, ""); put(row, 1, ""); put(row, 2, "");
+      if (row.d !== "0") { row.d = "0"; row.tr.style.setProperty("--d", "0"); }
+      return;
+    }
+    const qty = side.qty.get(price);
+    total += qty;
+    put(row, 0, num.format(price));
+    put(row, 1, num.format(qty));
+    put(row, 2, num.format(total));
+    const d = (total / max).toFixed(3);
+    if (row.d !== d) { row.d = d; row.tr.style.setProperty("--d", d); }
+  });
+}
+
+function depth(side) {
+  let t = 0;
+  for (let i = 0; i < LEVELS && i < side.keys.length; i++) t += side.qty.get(side.keys[i]);
+  return t;
+}
+
+function paint() {
+  const max = Math.max(depth(asks), depth(bids), 1);
+  paintSide(bids, bidRows, max);
+  paintSide(asks, askRows.slice().reverse(), max); // the best ask sits next to the middle
+  lastEl.textContent = last === null ? " " : num.format(last);
+  lastEl.dataset.dir = dir;
+  const spread = asks.keys.length && bids.keys.length ? asks.keys[0] - bids.keys[0] : null;
+  spreadEl.textContent = spread === null ? "" : "spread " + num.format(spread);
+  tapeRows.forEach((row, i) => {
+    const t = trades[i];
+    put(row, 0, t ? clock.format(t.time) : "");
+    put(row, 1, t ? num.format(t.price) : "");
+    put(row, 2, t ? num.format(t.qty) : "");
+    const side = t ? t.side : "";
+    if (row.cells[1].dataset.side !== side) row.cells[1].dataset.side = side;
+  });
+}
+
+let painted = 0, pending = false;
+function schedule() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(function frame(now) {
+    if (now - painted < PAINT_MS) { requestAnimationFrame(frame); return; }
+    painted = now;
+    pending = false;
+    paint();
+  });
+}
+
+// The connection: subscribe, apply messages, and on any gap or close
+// reconnect for a fresh snapshot, backing off up to 10 s.
+const statusEl = document.getElementById("status");
+function status(text, state) { statusEl.textContent = text; statusEl.dataset.state = state; }
+
+let backoff = 500;
+function connect() {
+  const url = new URL("/v1/stream", location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(url);
+  let bookSeq = 0, tradeSeq = 0;
+  const resync = () => ws.close();
+  ws.onopen = () => ws.send(JSON.stringify({ op: "subscribe", channels: ["book:" + symbol, "trades:" + symbol] }));
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    switch (m.type) {
+    case "book_snapshot":
+      bookSeq = m.seq;
+      asks.reset(m.asks); bids.reset(m.bids);
+      backoff = 500;
+      status("Live", "live");
+      break;
+    case "book_delta":
+      if (m.seq !== bookSeq + 1) return resync();
+      bookSeq = m.seq;
+      for (const c of m.changes) (c.side === "buy" ? bids : asks).set(c.price, c.qty);
+      break;
+    case "trade":
+      if (m.seq !== tradeSeq + 1) return resync();
+      tradeSeq = m.seq;
+      if (last !== null && m.price !== last) dir = m.price > last ? "up" : "down";
+      last = m.price;
+      trades.unshift({ time: new Date(m.ts / 1e6), price: m.price, qty: m.qty, side: m.taker_side });
+      if (trades.length > TRADES) trades.length = TRADES;
+      break;
+    case "error":
+      status(m.message, "down");
+      return;
+    default:
+      return;
+    }
+    schedule();
+  };
+  ws.onclose = () => {
+    status("Reconnecting", "down");
+    setTimeout(connect, backoff);
+    backoff = Math.min(backoff * 2, 10000);
+  };
+}
+connect();
+</script>
+</body>
+</html>

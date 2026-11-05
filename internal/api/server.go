@@ -3,6 +3,7 @@
 package api
 
 import (
+	"embed"
 	"io"
 	"log/slog"
 	"net/http"
@@ -80,6 +81,7 @@ func New(eng *engine.Engine, opts Options) *Server {
 	s.handle("GET /healthz", s.health)
 	s.mux.Handle("GET /metrics", promhttp.HandlerFor(s.metrics.reg, promhttp.HandlerOpts{}))
 	s.mux.HandleFunc("GET /v1/stream", s.stream) // long-lived: not timed
+	s.mux.HandleFunc("GET /{$}", page)
 	return s
 }
 
@@ -172,4 +174,13 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		b.Status = "degraded"
 	}
 	writeJSON(w, http.StatusOK, b)
+}
+
+//go:embed web/index.html
+var web embed.FS
+
+// page serves the order book page, which follows one symbol over the
+// stream (?symbol=, default BTC-USD).
+func page(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web, "web/index.html")
 }
