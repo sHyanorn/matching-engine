@@ -15,7 +15,8 @@ import (
 
 // An order that took effect before its log failed is reported with its ID
 // and events, and counted as accepted (D025). A later command is not
-// applied and gets the plain error.
+// applied and gets the plain error. The failure shows in /healthz and
+// /metrics.
 func TestAppliedOrderReportedWhenSyncFails(t *testing.T) {
 	e, err := engine.New(engine.Config{Symbols: []string{"A"}, DataDir: t.TempDir(), SyncInterval: -1})
 	if err != nil {
@@ -73,11 +74,16 @@ func TestAppliedOrderReportedWhenSyncFails(t *testing.T) {
 		t.Fatalf("cancel after the failure: %d %s, want 500 log_failed with no order or events", status, body)
 	}
 
+	// The failure shows in /healthz, which stays 200 (D029), and in a gauge.
+	if status, _, body := request("GET", "/healthz", ""); status != http.StatusOK || body != `{"status":"degraded","log_failed":["A"]}`+"\n" {
+		t.Errorf("/healthz after the failure: %d %s, want 200 degraded with A", status, body)
+	}
 	_, _, metrics := request("GET", "/metrics", "")
 	for _, want := range []string{
 		`matching_engine_orders_total{result="accepted",symbol="A"} 1`,
 		`matching_engine_orders_total{result="failed",symbol="A"} 0`,
 		`matching_engine_cancels_total{result="failed",symbol="A"} 1`,
+		`matching_engine_log_failed{symbol="A"} 1`,
 	} {
 		if !strings.Contains(metrics, want+"\n") {
 			t.Errorf("metrics lack %s", want)

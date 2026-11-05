@@ -58,6 +58,14 @@ func newMetrics(eng *engine.Engine) *metrics {
 		}, func() float64 {
 			n, _ := eng.QueueLen(s)
 			return float64(n)
+		}), prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "matching_engine_log_failed", Help: "1 once a symbol's command log has failed; it then accepts no commands.",
+			ConstLabels: prometheus.Labels{"symbol": s},
+		}, func() float64 {
+			if eng.LogErr(s) != nil {
+				return 1
+			}
+			return 0
 		}))
 	}
 	return m

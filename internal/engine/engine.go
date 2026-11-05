@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -84,6 +85,10 @@ type Config struct {
 	// known (D022).
 	History int
 
+	// Logger receives the engine's logs: a symbol's log failure, once
+	// (default: discarded).
+	Logger *slog.Logger
+
 	// onReplay, if set, receives the events of every command replayed
 	// from the logs by New. Tests use it to compare replays.
 	onReplay func(symbol string, evs []book.Event)
@@ -136,6 +141,9 @@ func (c *Config) setDefaults() error {
 	}
 	if c.Clock == nil {
 		c.Clock = func() int64 { return time.Now().UnixNano() }
+	}
+	if c.Logger == nil {
+		c.Logger = slog.New(slog.DiscardHandler)
 	}
 	return nil
 }
@@ -383,6 +391,20 @@ func (e *Engine) Symbols() []string {
 		s[i] = m.symbol
 	}
 	return s
+}
+
+// LogErr returns the error that stopped symbol's command log, which wraps
+// ErrLogFailed, or nil while the log works or if symbol is unknown. Once
+// set it stays until a restart: the symbol accepts no more commands.
+func (e *Engine) LogErr(symbol string) error {
+	m, ok := e.bySymbol[symbol]
+	if !ok {
+		return nil
+	}
+	if err := m.logErr.Load(); err != nil {
+		return *err
+	}
+	return nil
 }
 
 // QueueLen returns how many requests wait in symbol's queue.

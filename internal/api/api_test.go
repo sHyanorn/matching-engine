@@ -1560,12 +1560,16 @@ func TestMetrics(t *testing.T) {
 		"matching_engine_cancels_total":                 "counter",
 		"matching_engine_trades_total":                  "counter",
 		"matching_engine_queue_length":                  "gauge",
+		"matching_engine_log_failed":                    "gauge",
 		"matching_engine_http_request_duration_seconds": "histogram",
 		"matching_engine_ws_connections":                "gauge",
 	} {
 		if got := after.types[name]; got != typ {
 			t.Errorf("# TYPE %s is %q, want %q", name, got, typ)
 		}
+	}
+	if v, ok := after.values[sampleKey("matching_engine_log_failed", "symbol", btc)]; !ok || v != 0 {
+		t.Errorf("matching_engine_log_failed{symbol=%q} = %v (present %v), want 0", btc, v, ok)
 	}
 	if v := after.value("matching_engine_ws_connections"); v < 1 {
 		t.Errorf("matching_engine_ws_connections %v with a connection open, want >= 1", v)

@@ -54,6 +54,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		DataDir:      *data,
 		SyncInterval: *syncInterval,
 		QueueSize:    *queueSize,
+		Logger:       logger,
 	})
 	if err != nil {
 		return err

@@ -114,7 +114,7 @@ A snapshot followed by its deltas reproduces the book. A client that falls behin
 
 ## Operations
 
-- `GET /healthz`: `200 {"status":"ok"}`, or `503 {"status":"shutting_down"}` once shutdown has begun. From then on new orders, cancels and WebSocket connections get `503 shutting_down`.
+- `GET /healthz`: `200 {"status":"ok"}`, or `503 {"status":"shutting_down"}` once shutdown has begun. From then on new orders, cancels and WebSocket connections get `503 shutting_down`. Once a symbol's command log has failed, the answer is `200 {"status":"degraded","log_failed":["BTC-USD"]}`: that symbol takes no more orders or cancels until a restart, and the others serve as before.
 - `GET /metrics`: Prometheus metrics:
 
 | Metric | Type | Labels |
@@ -123,6 +123,7 @@ A snapshot followed by its deltas reproduces the book. A client that falls behin
 | `matching_engine_cancels_total` | counter | `symbol`, `result`: `canceled`, `unknown`, `finished`, `busy`, `failed` |
 | `matching_engine_trades_total` | counter | `symbol` |
 | `matching_engine_queue_length` | gauge | `symbol` |
+| `matching_engine_log_failed` | gauge | `symbol`; 1 once its command log has failed |
 | `matching_engine_http_request_duration_seconds` | histogram | `route`, `code` |
 | `matching_engine_ws_connections` | gauge | |
 
