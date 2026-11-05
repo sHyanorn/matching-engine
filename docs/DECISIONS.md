@@ -127,3 +127,21 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: The ID counter is reserved 65,536 values at a time in `<DataDir>/ids`, written to a temporary file, synced and renamed, before any ID of the block is issued. On startup the counter continues from the larger of the reservation and the highest ID in the logs
 - Rationale: A machine crash can lose the last unsynced log records, and with them the highest IDs the logs show. Without a reservation those IDs could be issued again, and a client holding an old ID could cancel someone else's order. A restart wastes at most one block
 - Alternatives: fsync before acknowledging every ID (slow); a random epoch per restart (shrinks the ID space and still needs persistence)
+
+## D022 Finished orders are kept in a bounded history
+- Date: 2026-11-05
+- Decision: Each symbol's goroutine tracks every order's status from the events. Resting orders are always known; the 100,000 most recently finished orders per symbol (`Config.History`) are kept in a ring buffer. Replay rebuilds both, client_id included
+- Rationale: `GET /v1/orders/{id}` can report how an order ended, and a cancel of a finished order can be told apart from an unknown one, with bounded memory
+- Alternatives: resting orders only (an order disappears the moment it fills); unbounded history (memory grows forever)
+
+## D023 Two dependencies for the network layer
+- Date: 2026-11-05
+- Decision: `github.com/coder/websocket` v1.8.15 for WebSocket and `github.com/prometheus/client_golang` v1.23.2 for metrics, pinned in go.mod. v1.23.2 is the newest client_golang release that supports Go 1.24. `internal/book` stays standard library only
+- Rationale: The standard library has no WebSocket server, and the exposition format and histogram semantics are easy to get subtly wrong by hand
+- Alternatives: hand-written WebSocket framing and metrics (more code, more protocol risk)
+
+## D024 A full queue is answered with 503
+- Date: 2026-11-05
+- Decision: `ErrBusy` maps to `503 Service Unavailable` with `Retry-After: 1`
+- Rationale: The server is overloaded; the client did nothing wrong, which 429 would imply
+- Alternatives: 429 Too Many Requests
