@@ -22,13 +22,46 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := run(ctx, os.Args[1:], os.Stdout)
-	stop()
+	var err error
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		err = healthcheck(os.Args[2:])
+	} else {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = run(ctx, os.Args[1:], os.Stdout)
+		stop()
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// healthcheck asks the engine listening on -addr for /healthz and fails
+// unless it answers 200, for container health checks: the image has no
+// shell or curl. A host left empty or unspecified means this machine.
+func healthcheck(args []string) error {
+	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	addr := fs.String("addr", ":8080", "the engine's listen address")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	host, port, err := net.SplitHostPort(*addr)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/healthz")
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close() // the status is all that is needed
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: /healthz answered %s", resp.Status)
+	}
+	return nil
 }
 
 // run starts the engine and the HTTP server and serves until ctx ends,

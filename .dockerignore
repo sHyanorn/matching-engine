@@ -1,0 +1,7 @@
+.git
+.github
+.claude
+bench-results
+coverage
+docs
+scripts

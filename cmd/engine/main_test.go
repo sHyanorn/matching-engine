@@ -516,3 +516,23 @@ func TestPprofServedApart(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthcheck(t *testing.T) {
+	in := start(t, t.TempDir())
+	addr := strings.TrimPrefix(in.base, "http://")
+	_, port, _ := net.SplitHostPort(addr)
+	for _, a := range []string{addr, ":" + port, "0.0.0.0:" + port} {
+		if err := healthcheck([]string{"-addr", a}); err != nil {
+			t.Errorf("healthcheck -addr %s against a running engine: %v", a, err)
+		}
+	}
+	if err := in.stop(t); err != nil {
+		t.Fatal(err)
+	}
+	if err := healthcheck([]string{"-addr", addr}); err == nil {
+		t.Error("healthcheck succeeded against a stopped engine")
+	}
+	if err := healthcheck([]string{"-addr", "nonsense"}); err == nil {
+		t.Error("healthcheck accepted an address without a port")
+	}
+}
