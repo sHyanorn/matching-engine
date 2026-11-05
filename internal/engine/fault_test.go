@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -305,5 +308,67 @@ func TestConcurrentCloseWaits(t *testing.T) {
 		if err := <-closed; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// lockedBuffer is a bytes.Buffer a logger on another goroutine can write.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// TestLogFailureReported fails an fsync, which runs on the idle tick or
+// with the first command. LogErr reports it and the logger gets it once,
+// without another command having to arrive; the other symbol is unaffected.
+func TestLogFailureReported(t *testing.T) {
+	var logs lockedBuffer
+	e, err := New(Config{
+		Symbols: []string{"A", "B"}, DataDir: t.TempDir(), SyncInterval: 5 * time.Millisecond,
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := e.Close(); !errors.Is(err, ErrLogFailed) {
+			t.Errorf("Close = %v, want ErrLogFailed", err)
+		}
+	})
+	injectFault(e, &faultyLog{limit: -1, syncErr: errInjected})
+	ctx := context.Background()
+	if e.LogErr("A") != nil || e.LogErr("X") != nil {
+		t.Fatal("LogErr is set before any failure")
+	}
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
+		t.Fatalf("first order: %v; a reply does not wait for the interval fsync", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); e.LogErr("A") == nil; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("LogErr(A) is still nil after the failed fsync")
+		}
+	}
+	if err := e.LogErr("A"); !errors.Is(err, ErrLogFailed) || !errors.Is(err, errInjected) {
+		t.Fatalf("LogErr(A) = %v, want ErrLogFailed wrapping the cause", err)
+	}
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); !errors.Is(err, ErrLogFailed) {
+		t.Fatalf("order after the failure: %v, want ErrLogFailed", err)
+	}
+	if _, err := e.PlaceOrder(ctx, limitOrder("B", book.Buy, 100, 1)); err != nil || e.LogErr("B") != nil {
+		t.Fatalf("symbol B: order %v, LogErr %v; want both nil", err, e.LogErr("B"))
+	}
+	if got := logs.String(); strings.Count(got, `"level":"ERROR"`) != 1 || !strings.Contains(got, `"symbol":"A"`) {
+		t.Fatalf("logs %q, want one error for A", got)
 	}
 }

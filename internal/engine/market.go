@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
@@ -62,6 +64,7 @@ type market struct {
 
 	maxBatch     int
 	clock        func() int64
+	logger       *slog.Logger
 	syncInterval time.Duration // < 0: fsync after every batch
 	book         *book.Book
 	file         logFile
@@ -76,6 +79,8 @@ type market struct {
 	lastSync time.Time // of the last fsync
 	failed   error     // a log write or fsync failed (wraps ErrLogFailed); no command is logged after it
 	closeErr error     // set by shutdown, read by Engine.Close after run returns
+
+	logErr atomic.Pointer[error] // failed, for other goroutines
 }
 
 // openMarket opens symbol's command log in cfg.DataDir, creating it if it
@@ -90,6 +95,7 @@ func openMarket(symbol string, index int, cfg Config) (m *market, maxSeq uint64,
 		in:           make(chan *request, cfg.QueueSize),
 		maxBatch:     cfg.MaxBatch,
 		clock:        cfg.Clock,
+		logger:       cfg.Logger,
 		syncInterval: cfg.SyncInterval,
 		book:         book.New(),
 		orders:       newOrderTracker(symbol, cfg.History),
@@ -282,7 +288,7 @@ func (m *market) process(batch []*request) {
 		}
 		switch {
 		case err != nil:
-			m.failed = fmt.Errorf("%w: %s: write: %w", ErrLogFailed, m.symbol, err)
+			m.fail("write", err)
 		case m.syncInterval < 0 || time.Since(m.lastSync) >= m.syncInterval:
 			if err := m.sync(); err != nil && m.syncInterval < 0 {
 				syncErr = err
@@ -324,18 +330,27 @@ func (m *market) process(batch []*request) {
 	}
 }
 
-// sync flushes the log to stable storage. A failure is kept in m.failed:
-// nothing is logged after it, since its durability could not be promised.
+// sync flushes the log to stable storage. A failure is kept in m.failed.
 func (m *market) sync() error {
 	m.dirty = false
 	m.lastSync = time.Now()
 	if err := m.file.Sync(); err != nil {
-		if m.failed == nil {
-			m.failed = fmt.Errorf("%w: %s: fsync: %w", ErrLogFailed, m.symbol, err)
-		}
+		m.fail("fsync", err)
 		return m.failed
 	}
 	return nil
+}
+
+// fail records the first failed write or fsync of the log: nothing is
+// logged after it, since its durability could not be promised (D017).
+func (m *market) fail(op string, err error) {
+	if m.failed != nil {
+		return
+	}
+	m.failed = fmt.Errorf("%w: %s: %s: %w", ErrLogFailed, m.symbol, op, err)
+	failed := m.failed
+	m.logErr.Store(&failed)
+	m.logger.Error("command log failed; the symbol accepts no more commands", "symbol", m.symbol, "err", err)
 }
 
 // shutdown runs when the loop ends: it ends every subscription, then

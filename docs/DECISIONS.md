@@ -169,3 +169,9 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: `New` takes an exclusive lock on `<DataDir>/LOCK` before reading or writing anything there, and `Close` releases it after the logs are closed; a second engine gets `ErrDataDirInUse`. The lock is flock on Linux, macOS, the BSDs and illumos, and LockFileEx on Windows (via `golang.org/x/sys`, already a dependency of client_golang); other platforms run unlocked. The file is never removed, and a closed engine no longer reserves IDs
 - Rationale: Two engines on one directory interleave their writes and reserve the same IDs, so a replay builds a book neither had, and a second start can truncate records the first had applied as a torn tail. flock conflicts between two opens in one process too, so a test can check it. Kafka (a lock file per log directory), etcd (its WAL files) and bbolt (its database file) keep a second instance out the same way
 - Alternatives: fcntl locks (do not conflict within one process); no lock (relies on the operator)
+
+## D029 A failed command log is reported; the process keeps running
+- Date: 2026-11-05
+- Decision: The first failed write or fsync of a symbol's log is logged at error level, sets `matching_engine_log_failed{symbol}` to 1, and makes `/healthz` answer `200 {"status":"degraded","log_failed":[...]}`. The symbol refuses commands until a restart (D017); the process does not exit
+- Rationale: Before, the failure showed only in client replies. Kafka likewise takes one failed log directory offline, keeps serving the others and exports the count. A 503 would make a load balancer drop the healthy symbols too, Docker does not restart an unhealthy container, and a restart would not fix a full or failing disk
+- Alternatives: exit the process, as etcd and PostgreSQL do (stops every symbol); 503 from /healthz

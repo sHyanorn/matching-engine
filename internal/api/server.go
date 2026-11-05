@@ -148,10 +148,26 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+type healthBody struct {
+	Status    string   `json:"status"`
+	LogFailed []string `json:"log_failed,omitempty"`
+}
+
+// health reports shutdown with 503. A symbol whose log failed makes the
+// status "degraded" but keeps 200: the other symbols still serve (D029).
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	if s.stopping.Load() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "shutting_down"})
+		writeJSON(w, http.StatusServiceUnavailable, healthBody{Status: "shutting_down"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	b := healthBody{Status: "ok"}
+	for _, sym := range s.eng.Symbols() {
+		if s.eng.LogErr(sym) != nil {
+			b.LogFailed = append(b.LogFailed, sym)
+		}
+	}
+	if b.LogFailed != nil {
+		b.Status = "degraded"
+	}
+	writeJSON(w, http.StatusOK, b)
 }
