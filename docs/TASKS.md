@@ -20,7 +20,7 @@
 - [x] IOC 和 FOK
 - [x] 不变量检查函数 `book.CheckInvariants()`
 - [x] 属性测试：10 万条随机命令，每步检查不变量
-- [ ] 模糊测试 `FuzzBook`
+- [x] 模糊测试 `FuzzBook`
 
 ## M3 引擎层
 - [ ] 每个交易对一个 goroutine 的事件循环
