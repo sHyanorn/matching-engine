@@ -378,3 +378,53 @@ func TestDeviceNamesAsSymbols(t *testing.T) {
 		}
 	}
 }
+
+func TestDataDirLocked(t *testing.T) {
+	dir := t.TempDir()
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Config{Symbols: []string{"A", "B"}, DataDir: dir}); !errors.Is(err, ErrDataDirInUse) {
+		t.Fatalf("second New on the directory: %v, want ErrDataDirInUse", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "B.log")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("B.log after the refused start: %v, want none", err)
+	}
+	if _, err := e.PlaceOrder(context.Background(), limitOrder("A", book.Buy, 100, 1)); err != nil {
+		t.Fatalf("order after the refused start: %v", err)
+	}
+	mustClose(t, e)
+	e, err = New(Config{Symbols: []string{"A", "B"}, DataDir: dir})
+	if err != nil {
+		t.Fatalf("New after Close: %v", err)
+	}
+	mustClose(t, e)
+}
+
+// A PlaceOrder after Close must not extend the ID reservation: the
+// directory is unlocked by then, and another engine may own the ids file.
+func TestNoReservationAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for range idBlock { // invalid orders take IDs without being logged
+		if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 0)); err == nil {
+			t.Fatal("an order of qty 0 was accepted")
+		}
+	}
+	mustClose(t, e)
+	before, err := os.ReadFile(filepath.Join(dir, "ids"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); !errors.Is(err, ErrClosed) {
+		t.Fatalf("PlaceOrder after Close: %v, want ErrClosed", err)
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "ids")); !slices.Equal(after, before) {
+		t.Fatal("a closed engine rewrote the ID reservation")
+	}
+}

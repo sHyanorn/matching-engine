@@ -164,3 +164,8 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Rationale: Windows opens a directory read-only and cannot flush it, so the engine could not start. The log has one writer, which writes at the end after replay. A machine crash on Windows may lose a log or ID reservation just created or renamed; the guarantees of D016 and D021 hold fully on Linux and macOS. Pebble and RocksDB make the same trade
 - Alternatives: support only Linux and macOS (the engine would not run on a Windows laptop)
 
+## D028 One engine per data directory
+- Date: 2026-11-05
+- Decision: `New` takes an exclusive lock on `<DataDir>/LOCK` before reading or writing anything there, and `Close` releases it after the logs are closed; a second engine gets `ErrDataDirInUse`. The lock is flock on Linux, macOS, the BSDs and illumos, and LockFileEx on Windows (via `golang.org/x/sys`, already a dependency of client_golang); other platforms run unlocked. The file is never removed, and a closed engine no longer reserves IDs
+- Rationale: Two engines on one directory interleave their writes and reserve the same IDs, so a replay builds a book neither had, and a second start can truncate records the first had applied as a torn tail. flock conflicts between two opens in one process too, so a test can check it. Kafka (a lock file per log directory), etcd (its WAL files) and bbolt (its database file) keep a second instance out the same way
+- Alternatives: fcntl locks (do not conflict within one process); no lock (relies on the operator)
