@@ -1,7 +1,6 @@
 package book
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -9,99 +8,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// checkTree checks every invariant documented on levelTree and returns the
-// first violation it finds, or nil. It costs O(P).
-func checkTree(t *levelTree) error {
-	if t.root != nil {
-		if t.root.parent != nil {
-			return errors.New("links: root has a parent")
-		}
-		if t.root.red {
-			return errors.New("root is red")
-		}
-	}
-
-	// One recursive pass checks order against the bounds inherited from the
-	// ancestors (property 1), red-red (4), black heights (5) and child links
-	// (6), and records the in-order sequence and the height.
-	inorder := make([]*levelNode, 0, t.size)
-	height := 0
-	var check func(n, lo, hi *levelNode, depth int) (blackHeight int, err error)
-	check = func(n, lo, hi *levelNode, depth int) (int, error) {
-		if n == nil {
-			height = max(height, depth)
-			return 0, nil
-		}
-		if lo != nil && !t.before(lo.price, n.price) {
-			return 0, fmt.Errorf("order: %d is in the right subtree of %d", n.price, lo.price)
-		}
-		if hi != nil && !t.before(n.price, hi.price) {
-			return 0, fmt.Errorf("order: %d is in the left subtree of %d", n.price, hi.price)
-		}
-		if (n.left != nil && n.left.parent != n) || (n.right != nil && n.right.parent != n) {
-			return 0, fmt.Errorf("links: a child of %d has the wrong parent", n.price)
-		}
-		if n.red && (isRed(n.left) || isRed(n.right)) {
-			return 0, fmt.Errorf("red node %d has a red child", n.price)
-		}
-		lh, err := check(n.left, lo, n, depth+1)
-		if err != nil {
-			return 0, err
-		}
-		inorder = append(inorder, n)
-		rh, err := check(n.right, n, hi, depth+1)
-		if err != nil {
-			return 0, err
-		}
-		if lh != rh {
-			return 0, fmt.Errorf("black height: %d has %d on the left, %d on the right", n.price, lh, rh)
-		}
-		if !n.red {
-			lh++
-		}
-		return lh, nil
-	}
-	if _, err := check(t.root, nil, nil, 0); err != nil {
-		return err
-	}
-
-	if t.size != len(inorder) {
-		return fmt.Errorf("size is %d, tree has %d nodes", t.size, len(inorder))
-	}
-	var leftmostNode *levelNode
-	if len(inorder) > 0 {
-		leftmostNode = inorder[0]
-	}
-	if t.best != leftmostNode {
-		return fmt.Errorf("best is %v, leftmost is %v", priceOf(t.best), priceOf(leftmostNode))
-	}
-	// Implied by properties 4 and 5; checked directly because it is the
-	// O(log P) claim itself.
-	if float64(height) > 2*math.Log2(float64(t.size+1)) {
-		return fmt.Errorf("height %d exceeds 2*log2(%d+1)", height, t.size)
-	}
-	// next uses parent links, not recursion, so compare the walk from best
-	// with the in-order sequence node by node.
-	i := 0
-	for n := t.best; n != nil; n = n.next() {
-		if i >= len(inorder) || n != inorder[i] {
-			return fmt.Errorf("next: visit %d is %d, not the in-order node", i, n.price)
-		}
-		i++
-	}
-	if i != len(inorder) {
-		return fmt.Errorf("next: visited %d levels, tree has %d", i, len(inorder))
-	}
-	return nil
-}
-
-func priceOf(n *levelNode) any {
-	if n == nil {
-		return nil
-	}
-	return n.price
-}
 
 // treeHarness applies operations to a tree, checks every invariant after
 // each one, and remembers every node handed out so it can check that each
@@ -173,7 +79,7 @@ func (h *treeHarness) randomPresent(r *rand.Rand) Price { return h.prices[r.IntN
 func (h *treeHarness) after(op string, p Price) {
 	h.tb.Helper()
 	h.step++
-	if err := checkTree(&h.tree); err != nil {
+	if err := h.tree.check(); err != nil {
 		h.tb.Fatalf("%s step %d, after %s(%d): %v", h.name, h.step, op, p, err)
 	}
 	if h.tree.size != len(h.levels) {
@@ -355,7 +261,7 @@ func TestLevelTreeEmpty(t *testing.T) {
 		if tree.size != 0 || tree.best != nil || tree.find(1) != nil {
 			t.Fatalf("%v: new tree is not empty", side)
 		}
-		if err := checkTree(&tree); err != nil {
+		if err := tree.check(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -431,7 +337,7 @@ func TestLevelTreeKnownShapes(t *testing.T) {
 	// relinks node 5 into the root and runs the delete fixup on 6's left.
 	five := asc.find(5)
 	asc.remove(asc.find(4))
-	if err := checkTree(&asc); err != nil {
+	if err := asc.check(); err != nil {
 		t.Fatal(err)
 	}
 	if asc.root != five {
@@ -481,7 +387,7 @@ func TestLevelTreeInsertDuplicatePanics(t *testing.T) {
 		}()
 		tree.insert(7)
 	}()
-	if err := checkTree(&tree); err != nil {
+	if err := tree.check(); err != nil {
 		t.Fatal(err)
 	}
 	if shape(tree.root) != before {
@@ -489,7 +395,7 @@ func TestLevelTreeInsertDuplicatePanics(t *testing.T) {
 	}
 }
 
-// TestCheckTreeCatchesCorruption makes sure checkTree is not vacuous: each
+// TestCheckTreeCatchesCorruption makes sure levelTree.check is not vacuous: each
 // deliberate corruption of a valid tree must be reported, with the right
 // complaint.
 func TestCheckTreeCatchesCorruption(t *testing.T) {
@@ -500,7 +406,7 @@ func TestCheckTreeCatchesCorruption(t *testing.T) {
 		for p := Price(1); p <= 30; p++ {
 			tree.insert(p)
 		}
-		if err := checkTree(&tree); err != nil {
+		if err := tree.check(); err != nil {
 			t.Fatal(err)
 		}
 		return &tree
@@ -544,14 +450,15 @@ func TestCheckTreeCatchesCorruption(t *testing.T) {
 		{"links", func(tr *levelTree) { tr.root.left.left.parent = tr.root }},
 		{"links", func(tr *levelTree) { tr.root.parent = tr.root.left }},
 		{"best", func(tr *levelTree) { tr.best = tr.root }},
+		{"best is <nil>", func(tr *levelTree) { tr.best = nil }},
 		{"size", func(tr *levelTree) { tr.size++ }},
 	}
 	for _, c := range cases {
 		tree := fresh()
 		c.corrupt(tree)
-		err := checkTree(tree)
+		err := tree.check()
 		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("corruption %q: checkTree returned %v", c.want, err)
+			t.Errorf("corruption %q: check returned %v", c.want, err)
 		}
 	}
 }
