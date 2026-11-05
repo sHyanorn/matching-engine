@@ -176,7 +176,7 @@ func (s *Server) getBook(w http.ResponseWriter, r *http.Request) {
 // object into v, and writes the error if it fails. The object's keys must
 // be in fields, exactly, and appear once: encoding/json alone would match
 // "QTY" to qty and let a repeated key override an earlier one.
-func decodeBody(w http.ResponseWriter, r *http.Request, v any, fields map[string]bool) bool {
+func decodeBody(w http.ResponseWriter, r *http.Request, v any, fields map[string]uint) bool {
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err == nil {
 		err = checkKeys(data, fields)
@@ -201,47 +201,104 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any, fields map[string
 }
 
 // checkKeys checks that data is one JSON object whose keys are in fields
-// and unique.
-func checkKeys(data []byte, fields map[string]bool) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+// and unique. json.Valid checks the syntax first, so the scan only has to
+// find where each key and value ends. Decoding each value with a
+// json.Decoder instead built a syntax error after every number, which
+// json.Decoder discards, and cost the engine about 9% of its CPU under
+// load (bench-results/m5-opt).
+func checkKeys(data []byte, fields map[string]uint) error {
+	if !json.Valid(data) {
+		return json.Unmarshal(data, new(any)) // the syntax error
+	}
+	i := skipSpace(data, 0)
+	if data[i] != '{' {
 		return errors.New("body must be a JSON object")
 	}
-	seen := make(map[string]bool, len(fields))
-	for dec.More() {
-		t, err := dec.Token()
-		if err != nil {
-			return err
+	var seen uint64
+	for i = skipSpace(data, i+1); data[i] != '}'; {
+		end := stringEnd(data, i)
+		bit, known := fields[string(data[i+1:end-1])]
+		if !known && bytes.IndexByte(data[i:end], '\\') >= 0 {
+			bit, known = fields[jsonString(data[i:end])]
 		}
-		key, _ := t.(string)
 		switch {
-		case !fields[key]:
-			return fmt.Errorf("unknown field %q", key)
-		case seen[key]:
-			return fmt.Errorf("repeated field %q", key)
+		case !known:
+			return fmt.Errorf("unknown field %q", jsonString(data[i:end]))
+		case seen&(1<<bit) != 0:
+			return fmt.Errorf("repeated field %q", jsonString(data[i:end]))
 		}
-		seen[key] = true
-		var value json.RawMessage
-		if err := dec.Decode(&value); err != nil {
-			return err
+		seen |= 1 << bit
+		colon := skipSpace(data, end)
+		i = skipSpace(data, valueEnd(data, skipSpace(data, colon+1)))
+		if data[i] == ',' {
+			i = skipSpace(data, i+1)
 		}
-	}
-	if _, err := dec.Token(); err != nil { // the closing brace
-		return err
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return errors.New("body must hold exactly one JSON object")
 	}
 	return nil
 }
 
-// jsonNames returns the JSON names of a struct's fields.
-func jsonNames(v any) map[string]bool {
+// jsonString decodes a valid JSON string.
+func jsonString(quoted []byte) string {
+	var s string
+	_ = json.Unmarshal(quoted, &s) // valid, so it decodes
+	return s
+}
+
+// skipSpace returns the index of the first byte at or after i that is not
+// JSON whitespace.
+func skipSpace(data []byte, i int) int {
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// stringEnd returns the index just past the valid JSON string at data[i].
+func stringEnd(data []byte, i int) int {
+	for i++; data[i] != '"'; i++ {
+		if data[i] == '\\' {
+			i++
+		}
+	}
+	return i + 1
+}
+
+// valueEnd returns the index just past the valid JSON value at data[i].
+func valueEnd(data []byte, i int) int {
+	switch data[i] {
+	case '"':
+		return stringEnd(data, i)
+	case '{', '[':
+		for depth := 0; ; i++ {
+			switch data[i] {
+			case '"':
+				i = stringEnd(data, i) - 1
+			case '{', '[':
+				depth++
+			case '}', ']':
+				if depth--; depth == 0 {
+					return i + 1
+				}
+			}
+		}
+	}
+	for ; i < len(data); i++ { // a number, true, false or null
+		switch data[i] {
+		case ',', '}', ']', ' ', '\t', '\n', '\r':
+			return i
+		}
+	}
+	return i
+}
+
+// jsonNames maps the JSON names of a struct's fields to distinct bits, for
+// checkKeys.
+func jsonNames(v any) map[string]uint {
 	t := reflect.TypeOf(v)
-	names := make(map[string]bool, t.NumField())
+	names := make(map[string]uint, t.NumField())
 	for i := range t.NumField() {
 		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
-		names[name] = true
+		names[name] = uint(i)
 	}
 	return names
 }
