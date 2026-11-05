@@ -47,14 +47,24 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 		}},
 		{"side sell in a buy level", func(b *Book) { order(b, 1).Side = Sell }},
 		{"price 100 in the level at 99", func(b *Book) { order(b, 1).Price = 100 }},
-		{"only Limit GTC orders rest", func(b *Book) { order(b, 1).TIF = IOC }},
+		{"a limit ioc order is resting", func(b *Book) { order(b, 1).TIF = IOC }},
+		{"a market gtc order is resting", func(b *Book) { order(b, 1).Type = Market }},
 		{"Remaining 0 is not positive", func(b *Book) { order(b, 1).Remaining = 0 }},
 		{"Filled 1 + Remaining 5 != Qty 5", func(b *Book) { order(b, 1).Filled = 1 }},
+		{"Filled -1 + Remaining 6 != Qty 5", func(b *Book) {
+			// Keep the level total in step, so the order check fires first.
+			o := order(b, 1)
+			o.Filled, o.Remaining = -1, o.Qty+1
+			o.level.totalQty++
+		}},
 		{"time priority broken", func(b *Book) {
 			o1, o2 := order(b, 1), order(b, 2)
 			o1.RestedSeq, o2.RestedSeq = o2.RestedSeq, o1.RestedSeq
 		}},
+		{"time priority broken, RestedSeq 2 after 2", func(b *Book) { order(b, 2).RestedSeq = order(b, 1).RestedSeq }},
+		{"RestedSeq 0 outside 1..LastSeq", func(b *Book) { order(b, 1).RestedSeq = 0 }},
 		{"outside 1..LastSeq", func(b *Book) { order(b, 6).RestedSeq = b.seq + 1 }},
+		{"sell levels: size is -1, tree has 2 nodes", func(b *Book) { b.asks.size = -1 }},
 		{"the ID map does not point at the queued order", func(b *Book) { b.orders[2] = order(b, 1) }},
 		{"ID map holds 7 orders, the queues 6", func(b *Book) { b.orders[999] = order(b, 1) }},
 		{"sell levels: root is red", func(b *Book) { b.asks.root.red = true }},
@@ -62,6 +72,14 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 			// A well-formed bid level above the best ask.
 			l := b.bids.insert(200)
 			o := &orderNode{Order: Order{ID: 7, Side: Buy, Type: Limit, TIF: GTC, Price: 200, Qty: 1, Remaining: 1, RestedSeq: b.seq}}
+			l.pushBack(o)
+			b.orders[7] = o
+		}},
+		{"book is crossed: best bid 101, best ask 101", func(b *Book) {
+			// A well-formed bid level exactly at the best ask: SPEC §7 wants
+			// the best bid strictly below it.
+			l := b.bids.insert(101)
+			o := &orderNode{Order: Order{ID: 7, Side: Buy, Type: Limit, TIF: GTC, Price: 101, Qty: 1, Remaining: 1, RestedSeq: b.seq}}
 			l.pushBack(o)
 			b.orders[7] = o
 		}},
@@ -73,6 +91,21 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("corruption %q: CheckInvariants returned %v", c.want, err)
 		}
+	}
+}
+
+// TestCheckInvariantsCatchesSwappedSides builds a book whose trees order
+// each side the wrong way. Each tree is valid under its own comparator, so
+// only the raw price-order check can see that the best bid is really the
+// worst, and that the book below is crossed (bid 101 against ask 100).
+func TestCheckInvariantsCatchesSwappedSides(t *testing.T) {
+	b := &Book{bids: newLevelTree(Sell), asks: newLevelTree(Buy), orders: map[OrderID]*orderNode{}}
+	for _, c := range []Command{limit(1, Buy, 99, 5), limit(2, Buy, 101, 5), limit(3, Sell, 100, 5)} {
+		b.Apply(c, nil)
+	}
+	const want = "buy levels: 101 comes after 99"
+	if err := b.CheckInvariants(); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("CheckInvariants = %v, want an error containing %q", err, want)
 	}
 }
 
