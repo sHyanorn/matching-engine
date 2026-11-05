@@ -199,3 +199,9 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: `GET /` serves one static page, embedded in the binary, with no framework or build step. It keeps a local book from `book:SYMBOL` and the tape from `trades:SYMBOL`, applies messages as they arrive and repaints at most 10 times a second, writing only cells whose text changed, into rows made once. A sequence gap or a closed connection leads to a reconnect and a fresh snapshot, with backoff up to 10 s
 - Rationale: The book holds absolute totals, so any number of deltas between paints collapse into one state, and a paint touches a bounded number of cells at any message rate. One recovery path covers gaps, slow-consumer closes and restarts. dYdX, Serum and OpenDAX lay out their books the same way: asks above, bids below, cumulative depth bars
 - Alternatives: canvas rendering (scaling, theming and accessibility to handle by hand); a framework and a build step (tooling a single page does not need)
+
+## D034 CI actions are pinned by commit SHA
+- Date: 2026-11-05
+- Decision: Every action in `.github/workflows/ci.yml` is referenced by the full commit SHA of a release, with the release tag in a comment. Each pin is the commit its major tag pointed to, so CI runs the same code as before
+- Rationale: A tag can be moved to other code; a SHA cannot. GitHub's security hardening guide and the OpenSSF Scorecard recommend full SHAs, and the Docker images are already pinned by digest (D032)
+- Alternatives: major tags such as `@v4` (follow whatever the tag points to)
