@@ -6,12 +6,14 @@ BENCH    ?= .
 COUNT    ?= 1
 FUZZ     ?= FuzzBook
 FUZZTIME ?= 30s
+OUT      ?= bench-results/e2e
+RATES    ?=
 
 .DEFAULT_GOAL := help
-.PHONY: help test cover bench fuzz lint fmt run
+.PHONY: help test cover bench fuzz e2e lint fmt run
 
 help: ## Show available targets
-	@grep -E '^[a-z]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
 
 test: ## Run all tests with the race detector
 	$(GO) test -race ./...
@@ -26,6 +28,9 @@ bench: ## Run order book benchmarks (BENCH, COUNT)
 
 fuzz: ## Fuzz the order book (FUZZ, FUZZTIME)
 	$(GO) test -run='^$$' -fuzz='^$(FUZZ)$$' -fuzztime=$(FUZZTIME) $(BOOK)
+
+e2e: ## Measure end-to-end latency with loadgen into OUT (RATES)
+	scripts/e2e.sh $(OUT) $(RATES)
 
 lint: ## Run golangci-lint (includes govet and staticcheck)
 	golangci-lint run ./...
