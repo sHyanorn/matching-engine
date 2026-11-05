@@ -1584,7 +1584,7 @@ var m2Scenarios = []scenario{
 		wantGone: []OrderID{3},
 	},
 
-	// Conservation per order over a mix of every kind of exit.
+	// More market, IOC and FOK cases, added with M2.
 	{
 		name:  "market sell fills the resting bids at one price in FIFO order",
 		setup: []Command{limit(1, Buy, 100, 3), limit(2, Buy, 100, 4), limit(3, Buy, 99, 5)},
@@ -1645,6 +1645,7 @@ var m2Scenarios = []scenario{
 			5: {Accepted: 7, Traded: 7},
 		},
 	},
+	// Conservation per order over a mix of every kind of exit.
 	{
 		name: "conservation holds per order across IOC, market and cancel",
 		setup: []Command{

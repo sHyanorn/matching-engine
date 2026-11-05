@@ -28,18 +28,20 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # a failure in one target must not cancel the other
+      matrix:
+        target: [FuzzBook, FuzzCommandValidate]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Fuzz FuzzBook
-        run: go test -run='^$' -fuzz='^FuzzBook$' -fuzztime=30s ./internal/book
-      - name: Fuzz FuzzCommandValidate
-        run: go test -run='^$' -fuzz='^FuzzCommandValidate$' -fuzztime=30s ./internal/book
+      - name: Fuzz ${{ matrix.target }}
+        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s ./internal/book
       - name: Upload failing inputs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-failures
+          name: fuzz-failures-${{ matrix.target }}
           path: internal/book/testdata/fuzz

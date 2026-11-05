@@ -175,15 +175,17 @@ func TestApplyRandomGTC(t *testing.T) {
 // output buffer has grown: a taker that fully fills against a resting maker
 // and a cancel, each both when the level survives and when it empties and
 // is removed from the tree, plus an IOC remainder, a rejected FOK and a
-// market fill. Resting a new order allocates its node by design. Every measured call is checked to take the intended path, because
-// AllocsPerRun rounds down: a path taken by only some calls could hide one
-// allocation per call.
+// market fill. Resting a new order allocates its node by design. Every
+// measured call is checked to take the intended path (the number and kind
+// of its events), because AllocsPerRun rounds down: a path taken by only
+// some calls could hide one allocation per call.
 func TestApplyAllocations(t *testing.T) {
 	const runs = 200 // AllocsPerRun makes runs+1 calls, the first a warm-up
 	tests := []struct {
 		name    string
 		resting func(id OrderID) Command // resting order id, for id 1..runs+2
 		op      func(i OrderID) Command  // measured command i, for i 1..runs+1
+		events  int                      // number of events op emits
 		want    EventKind                // kind of op's last event
 		// empties says whether op's last event reports LevelQty 0: it
 		// emptied a level, or (IOC remainder, FOK rejection) touched none.
@@ -193,12 +195,14 @@ func TestApplyAllocations(t *testing.T) {
 			name:    "full fill, level stays",
 			resting: func(id OrderID) Command { return limit(id, Sell, 100, 1) },
 			op:      func(i OrderID) Command { return limit(1_000_000+i, Buy, 100, 1) },
+			events:  2,
 			want:    EventTrade,
 		},
 		{
 			name:    "full fill sweeps the best level",
 			resting: func(id OrderID) Command { return limit(id, Sell, 100+Price(id), 1) },
 			op:      func(i OrderID) Command { return limit(1_000_000+i, Buy, MaxPrice, 1) },
+			events:  2,
 			want:    EventTrade,
 			empties: true,
 		},
@@ -206,6 +210,7 @@ func TestApplyAllocations(t *testing.T) {
 			name:    "cancel, level stays",
 			resting: func(id OrderID) Command { return limit(id, Buy, 50, 1) },
 			op:      cancel,
+			events:  1,
 			want:    EventCanceled,
 		},
 		{
@@ -214,6 +219,7 @@ func TestApplyAllocations(t *testing.T) {
 			name:    "IOC trades, then its remainder is canceled",
 			resting: func(id OrderID) Command { return limit(id, Sell, 100+Price(id), 1) },
 			op:      func(i OrderID) Command { return ioc(1_000_000+i, Buy, 100+Price(i), 2) },
+			events:  3,
 			want:    EventCanceled,
 			empties: true,
 		},
@@ -221,6 +227,7 @@ func TestApplyAllocations(t *testing.T) {
 			name:    "FOK that cannot fill is rejected",
 			resting: func(id OrderID) Command { return limit(id, Sell, 100, 1) },
 			op:      func(i OrderID) Command { return fok(1_000_000+i, Buy, 100, 1_000_000) },
+			events:  1,
 			want:    EventRejected,
 			empties: true,
 		},
@@ -228,6 +235,7 @@ func TestApplyAllocations(t *testing.T) {
 			name:    "market order fills in full",
 			resting: func(id OrderID) Command { return limit(id, Buy, 100, 1) },
 			op:      func(i OrderID) Command { return market(1_000_000+i, Sell, 1) },
+			events:  2,
 			want:    EventTrade,
 		},
 		{
@@ -237,6 +245,7 @@ func TestApplyAllocations(t *testing.T) {
 			name:    "cancel removes an inner level",
 			resting: func(id OrderID) Command { return limit(id, Buy, 1+Price(id*37%(runs+2)), 1) },
 			op:      cancel,
+			events:  1,
 			want:    EventCanceled,
 			empties: true,
 		},
@@ -255,7 +264,7 @@ func TestApplyAllocations(t *testing.T) {
 				i++
 				buf = b.Apply(tt.op(i), buf[:0])
 				last := buf[len(buf)-1]
-				if last.Kind != tt.want || (last.LevelQty == 0) != tt.empties {
+				if len(buf) != tt.events || last.Kind != tt.want || (last.LevelQty == 0) != tt.empties {
 					t.Fatalf("call %d took the wrong path: %s", i, formatEvents(buf))
 				}
 			})
@@ -288,6 +297,9 @@ func TestAvailable(t *testing.T) {
 		{"buy stops at its limit", fok(20, Buy, 101, 100), 10},
 		{"buy below the best ask finds nothing", fok(20, Buy, 99, 1), 0},
 		{"buy at the best ask exactly", fok(20, Buy, 100, 5), 5},
+		{"buy reaching its qty exactly with deeper levels crossing", fok(20, Buy, 102, 5), 5},
+		{"market buy reaching its qty exactly at the best level", marketFOK(20, Buy, 5), 5},
+		{"sell reaching its qty exactly with deeper levels crossing", fok(20, Sell, 1, 4), 4},
 		{"market buy counts every level it needs", marketFOK(20, Buy, 100), 15},
 		{"market buy needing one level", marketFOK(20, Buy, 1), 5},
 		{"sell stops at its limit", fok(20, Sell, 98, 100), 8},
