@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -43,6 +44,14 @@ type response struct {
 	err    error
 }
 
+// logFile is what a market needs from its open log once replay is done.
+// Tests substitute failing implementations.
+type logFile interface {
+	io.Writer
+	Sync() error
+	Close() error
+}
+
 // market is one symbol: its book, its command log and the goroutine that
 // owns both. Every field below in is touched only by that goroutine once
 // run has started.
@@ -55,22 +64,23 @@ type market struct {
 	clock        func() int64
 	syncInterval time.Duration // < 0: fsync after every batch
 	book         *book.Book
-	file         *os.File
+	file         logFile
 	batch        []*request
 	logBuf       []byte
+	recEnds      []int        // end offset in logBuf of each command's record
 	out          []book.Event // reused output buffer for book.Apply
 	subs         []*Subscription
 
 	dirty    bool      // written since the last fsync
 	lastSync time.Time // of the last fsync
-	failed   error     // a log write or fsync failed; no command is applied after it
+	failed   error     // a log write or fsync failed (wraps ErrLogFailed); no command is logged after it
 	closeErr error     // set by shutdown, read by Engine.Close after run returns
 }
 
 // openMarket opens symbol's command log in cfg.DataDir, creating it if it
 // does not exist, and replays it into a fresh book. A torn last record is
 // truncated away. It returns the market and the highest order-ID counter
-// value found in the log.
+// value of a logged new order.
 func openMarket(symbol string, index int, cfg Config) (*market, uint64, error) {
 	m := &market{
 		symbol:       symbol,
@@ -83,7 +93,10 @@ func openMarket(symbol string, index int, cfg Config) (*market, uint64, error) {
 		lastSync:     time.Now(),
 	}
 	path := filepath.Join(cfg.DataDir, symbol+".log")
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	if err := createLog(path, symbol, index); err != nil {
+		return nil, 0, err
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -96,8 +109,50 @@ func openMarket(symbol string, index int, cfg Config) (*market, uint64, error) {
 	return m, maxSeq, nil
 }
 
-// replay writes the header to an empty log, or checks the header of an
-// existing one and applies every record to the book.
+// createLog creates a log holding only its header, unless path exists. The
+// header goes to a temporary file that is synced and then renamed into
+// place, so a crash never leaves a log with a partial header.
+func createLog(path, symbol string, index int) error {
+	if _, err := os.Stat(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	tmp := path + ".tmp"
+	err := writeFileSync(tmp, appendHeader(nil, symbol, index))
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp) // best effort; err is the one to report
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// writeFileSync writes data to a new or truncated file and fsyncs it.
+func writeFileSync(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
+}
+
+// syncDir fsyncs a directory, so the entries created in it survive a
+// machine crash.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(d.Sync(), d.Close())
+}
+
+// replay checks the log's header and applies every record to the book. An
+// empty file, which only an older engine could have left, gets a header.
 func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event)) (uint64, error) {
 	info, err := f.Stat()
 	if err != nil {
@@ -119,10 +174,13 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 		if r := c.Validate(); r != book.ReasonNone {
 			return fmt.Errorf("logged command is invalid: %v", r) // the engine never logs one
 		}
-		if symbolIndexOf(c.OrderID) != m.index && c.Kind == book.CommandNewOrder {
-			return fmt.Errorf("order %d was issued for another symbol", c.OrderID)
+		if c.Kind == book.CommandNewOrder {
+			// Only new orders consume IDs; a cancel may name any ID.
+			if symbolIndexOf(c.OrderID) != m.index {
+				return fmt.Errorf("order %d was issued for another symbol", c.OrderID)
+			}
+			maxSeq = max(maxSeq, seqOf(c.OrderID))
 		}
-		maxSeq = max(maxSeq, seqOf(c.OrderID))
 		m.out = m.book.Apply(c, m.out[:0])
 		if observe != nil {
 			observe(m.symbol, slices.Clone(m.out))
@@ -149,8 +207,8 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 
 // run is the market's event loop. It takes the next request, then up to
 // maxBatch-1 more that are already queued, and processes the batch in
-// arrival order. While idle it fsyncs pending log writes on schedule. It
-// returns once the queue is closed and drained.
+// arrival order. While idle it fsyncs pending log writes every
+// syncInterval. It returns once the queue is closed and drained.
 func (m *market) run() {
 	defer m.shutdown()
 	var tick <-chan time.Time
@@ -173,8 +231,8 @@ func (m *market) run() {
 				return
 			}
 		case <-tick:
-			if m.dirty && time.Since(m.lastSync) >= m.syncInterval {
-				m.sync()
+			if m.dirty {
+				_ = m.sync() // a failure is kept in m.failed
 			}
 		}
 	}
@@ -201,30 +259,50 @@ func (m *market) drain() bool {
 // to the log with one write before any of them is applied (write-ahead);
 // then every request is handled in arrival order, so a query sees the book
 // as the commands before it left it.
+//
+// The book applies exactly the commands whose records are wholly in the
+// log, so it always equals what replaying the log gives. After a failed or
+// short write, the commands that did not reach the log, and every command
+// after them, fail with ErrLogFailed and are never applied. A failed fsync
+// leaves the batch in the file, so the batch is applied; when every batch
+// is fsynced (syncInterval < 0) its callers also get the error, because
+// durability was promised and is unknown.
 func (m *market) process(batch []*request) {
-	m.logBuf = m.logBuf[:0]
+	m.logBuf, m.recEnds = m.logBuf[:0], m.recEnds[:0]
 	for _, r := range batch {
 		if r.kind == reqCommand {
 			r.cmd.Timestamp = m.clock()
 			m.logBuf = appendRecord(m.logBuf, logRecord{cmd: r.cmd, clientID: r.clientID})
+			m.recEnds = append(m.recEnds, len(m.logBuf))
 		}
 	}
+	logged := 0 // commands of this batch whose records are wholly in the log
+	var syncErr error
 	if len(m.logBuf) > 0 && m.failed == nil {
-		if _, err := m.file.Write(m.logBuf); err != nil {
-			m.failed = fmt.Errorf("engine: %s: writing command log: %w", m.symbol, err)
-		} else {
+		n, err := m.file.Write(m.logBuf)
+		for logged < len(m.recEnds) && m.recEnds[logged] <= n {
+			logged++
+		}
+		if n > 0 {
 			m.dirty = true
-			if m.syncInterval < 0 || time.Since(m.lastSync) >= m.syncInterval {
-				m.sync()
+		}
+		switch {
+		case err != nil:
+			m.failed = fmt.Errorf("%w: %s: write: %w", ErrLogFailed, m.symbol, err)
+		case m.syncInterval < 0 || time.Since(m.lastSync) >= m.syncInterval:
+			if err := m.sync(); err != nil && m.syncInterval < 0 {
+				syncErr = err
 			}
 		}
 	}
 
+	cmd := 0
 	for _, r := range batch {
 		var resp response
 		switch r.kind {
 		case reqCommand:
-			if m.failed != nil {
+			cmd++
+			if cmd > logged {
 				resp.err = m.failed
 				break
 			}
@@ -232,6 +310,7 @@ func (m *market) process(batch []*request) {
 			// One copy, since m.out is overwritten by the next Apply,
 			// shared read-only by the caller and every subscriber.
 			resp.events = slices.Clone(m.out)
+			resp.err = syncErr
 			m.publish(resp.events)
 		case reqDepth:
 			resp.depth = Depth{
@@ -250,14 +329,18 @@ func (m *market) process(batch []*request) {
 	}
 }
 
-// sync flushes the log to stable storage. A failure stops the market from
-// applying further commands: their durability could not be promised.
-func (m *market) sync() {
-	if err := m.file.Sync(); err != nil && m.failed == nil {
-		m.failed = fmt.Errorf("engine: %s: syncing command log: %w", m.symbol, err)
-	}
+// sync flushes the log to stable storage. A failure is kept in m.failed:
+// nothing is logged after it, since its durability could not be promised.
+func (m *market) sync() error {
 	m.dirty = false
 	m.lastSync = time.Now()
+	if err := m.file.Sync(); err != nil {
+		if m.failed == nil {
+			m.failed = fmt.Errorf("%w: %s: fsync: %w", ErrLogFailed, m.symbol, err)
+		}
+		return m.failed
+	}
+	return nil
 }
 
 // shutdown runs when the loop ends: it ends every subscription, then
@@ -268,7 +351,7 @@ func (m *market) shutdown() {
 	}
 	m.subs = nil
 	if m.dirty {
-		m.sync()
+		_ = m.sync() // a failure is kept in m.failed
 	}
 	m.closeErr = errors.Join(m.failed, m.file.Close())
 }

@@ -121,7 +121,8 @@ func decodePayload(p []byte) (logRecord, error) {
 // offset just past the last good record and whether the file ends in a
 // torn record, one a crash cut short: a record that runs past the end of
 // the file, the last record failing its checksum, or a tail of zero bytes
-// (left by some file systems). Any other damage is ErrCorruptLog, because
+// wherever it starts (left by some file systems). Any other damage is
+// ErrCorruptLog, because
 // records after it could not be trusted to be the ones that were applied.
 func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good int64, torn bool, err error) {
 	br := bufio.NewReader(r)
@@ -154,7 +155,9 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 			return off, false, err
 		}
 		if crc32.Checksum(p[:n], castagnoli) != binary.LittleEndian.Uint32(p[n:]) {
-			if end == size {
+			// The last record, or one where a zero tail begins, was cut
+			// short by a crash.
+			if end == size || zeros(br) {
 				return off, true, nil
 			}
 			return corrupt("checksum mismatch")

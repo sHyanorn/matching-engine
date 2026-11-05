@@ -47,13 +47,18 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 // TestFullQueueReturnsBusy stalls symbol A's goroutine, fills A's queue and
 // checks that further orders and cancels on A get ErrBusy at once, that
-// queries on A wait instead, that symbol B is unaffected, and that every
-// queued order is applied once A resumes.
+// queries, subscriptions and unsubscribing on A wait instead, that symbol B
+// is unaffected, and that every queued order is applied once A resumes.
 func TestFullQueueReturnsBusy(t *testing.T) {
 	ctx := context.Background()
 	const queue = 4
 	g := newGateClock()
 	e := newTestEngine(t, Config{Symbols: []string{"A", "B"}, QueueSize: queue, MaxBatch: 1, Clock: g.Now})
+
+	sub, err := e.Subscribe(ctx, "A", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// The first order on A blocks A's goroutine inside its clock call.
 	g.armed.Store(true)
@@ -95,15 +100,39 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 		t.Fatalf("order on B while A is stalled: %v", err)
 	}
 
-	// A query waits for room rather than failing, bounded by its context.
-	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-	defer cancel()
-	if _, err := e.Depth(short, "A", 1); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("query on a full queue: err = %v, want it to wait until its deadline", err)
+	// Queries and subscriptions wait for room rather than failing, bounded
+	// by their context. (Errorf, so the test still releases A and fails
+	// rather than hangs.)
+	for name, call := range map[string]func(context.Context) error{
+		"Depth":     func(c context.Context) error { _, err := e.Depth(c, "A", 1); return err },
+		"Order":     func(c context.Context) error { _, _, err := e.Order(c, makeOrderID(1, a.index)); return err },
+		"Subscribe": func(c context.Context) error { _, err := e.Subscribe(c, "A", 1); return err },
+	} {
+		short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		if err := call(short); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s on a full queue: err = %v, want it to wait until its deadline", name, err)
+		}
+		cancel()
+	}
+	unsubscribed := make(chan struct{})
+	go func() { sub.Close(); close(unsubscribed) }()
+	select {
+	case <-unsubscribed:
+		t.Error("Subscription.Close returned while A's queue was full")
+	case <-time.After(20 * time.Millisecond):
 	}
 
 	close(g.release)
 	wg.Wait()
+	<-unsubscribed
+	for {
+		if _, ok := receive(t, sub); !ok {
+			break
+		}
+	}
+	if sub.Err() != nil {
+		t.Errorf("closed subscription ended with %v", sub.Err())
+	}
 	if got := applied.Load(); got != queue+1 {
 		t.Fatalf("%d orders applied after A resumed, want %d", got, queue+1)
 	}
