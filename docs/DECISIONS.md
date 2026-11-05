@@ -124,7 +124,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D021 Order IDs are reserved durably in blocks
 - Date: 2026-11-05
-- Decision: The ID counter is reserved 65,536 values at a time in `<DataDir>/ids`, written to a temporary file, synced and renamed, before any ID of the block is issued. On startup the counter continues from the larger of the reservation and the highest ID in the logs
+- Decision: The ID counter is reserved 65,536 values at a time in `<DataDir>/ids`, written to a temporary file, synced and renamed, before any ID of the block is issued. On startup the counter continues from the larger of the reservation and the highest ID in the logs. D027 covers Windows
 - Rationale: A machine crash can lose the last unsynced log records, and with them the highest IDs the logs show. Without a reservation those IDs could be issued again, and a client holding an old ID could cancel someone else's order. A restart wastes at most one block
 - Alternatives: fsync before acknowledging every ID (slow); a random epoch per restart (shrinks the ID space and still needs persistence)
 
@@ -190,7 +190,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D032 A distroless image with a built-in health check
 - Date: 2026-11-05
-- Decision: The image builds the engine and loadgen with `CGO_ENABLED=0` in `golang:1.24.7` and runs them on `gcr.io/distroless/static-debian13:nonroot`, both pinned by digest. The engine has a `healthcheck` subcommand that GETs `/healthz`, which compose uses. Compose keeps the data in a named volume, publishes the port on 127.0.0.1 only, and allows 20 s to stop, more than the engine's 10 s shutdown timeout. loadgen runs from the same image under the `load` profile
+- Decision: The image builds the engine and loadgen with `CGO_ENABLED=0` in `golang:1.24.7` and runs them on `gcr.io/distroless/static-debian13:nonroot`, both pinned by digest. The engine has a `healthcheck` subcommand that GETs `/healthz`, which compose uses. Compose keeps the data in a named volume, publishes the port on 127.0.0.1 only, and allows 35 s to stop, more than the engine's worst case: 10 s for HTTP requests, then up to 20 s to close stalled WebSocket connections. loadgen runs from the same image under the `load` profile
 - Rationale: The image holds two static binaries and no shell, about 30 MB. With no curl in it, the binary checks itself, as Traefik's `healthcheck` command does. A named volume is owned by the image's user and avoids slow bind mounts from a Windows file system. The API has no authentication, so it is not published beyond the host
 - Alternatives: an Alpine base with curl (a shell and more packages to patch); a bind-mounted data directory (permissions and speed depend on the host)
 
