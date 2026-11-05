@@ -84,8 +84,9 @@ type market struct {
 	logErr atomic.Pointer[error] // failed, for other goroutines
 
 	// With syncInterval > 0 the fsyncs run on a helper goroutine, so
-	// commands do not wait for them (D031): syncs wakes it, and it
-	// reports a failure in syncErr, which the market takes up.
+	// commands do not wait for them (D031): syncs wakes it, it calls
+	// file.Sync and onSync, and it reports a failure in syncErr, which the
+	// market takes up. So file and onSync must not change while run runs.
 	syncs   chan struct{}
 	synced  chan struct{} // closed when the helper has stopped
 	syncErr atomic.Pointer[error]

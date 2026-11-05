@@ -203,9 +203,9 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any, fields map[string
 // checkKeys checks that data is one JSON object whose keys are in fields
 // and unique. json.Valid checks the syntax first, so the scan only has to
 // find where each key and value ends. Decoding each value with a
-// json.Decoder instead built a syntax error after every number, which
-// json.Decoder discards, and cost the engine about 9% of its CPU under
-// load (bench-results/m5-opt).
+// json.Decoder instead built a syntax error after every key and scalar
+// value, which json.Decoder discards, and cost the engine about 9% of its
+// CPU under load (bench-results/m5-opt).
 func checkKeys(data []byte, fields map[string]uint) error {
 	if !json.Valid(data) {
 		return json.Unmarshal(data, new(any)) // the syntax error
