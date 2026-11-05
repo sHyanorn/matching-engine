@@ -40,7 +40,10 @@ jobs:
     strategy:
       fail-fast: false # a failure in one target must not cancel the other
       matrix:
-        target: [FuzzBook, FuzzCommandValidate]
+        include:
+          - { target: FuzzBook, pkg: internal/book }
+          - { target: FuzzCommandValidate, pkg: internal/book }
+          - { target: FuzzCheckKeys, pkg: internal/api }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -51,14 +54,14 @@ jobs:
       # so every run saves a new one and restores the latest.
       - name: Locate the corpus
         id: corpus
-        run: echo "dir=$(go env GOCACHE)/fuzz/github.com/sHyanorn/matching-engine/internal/book/${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+        run: echo "dir=$(go env GOCACHE)/fuzz/github.com/sHyanorn/matching-engine/${{ matrix.pkg }}/${{ matrix.target }}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         with:
           path: ${{ steps.corpus.outputs.dir }}
           key: fuzz-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-${{ matrix.target }}-
       - name: Fuzz ${{ matrix.target }}
-        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s ./internal/book
+        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s ./${{ matrix.pkg }}
       - uses: actions/cache/save@v4
         if: always()
         with:
@@ -69,4 +72,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-failures-${{ matrix.target }}
-          path: internal/book/testdata/fuzz
+          path: ${{ matrix.pkg }}/testdata/fuzz

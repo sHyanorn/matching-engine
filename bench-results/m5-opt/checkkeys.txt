@@ -1,0 +1,30 @@
+# checkKeys: json.Decoder tokens (before) against a scan after json.Valid (after)
+# go1.24.7 linux/amd64; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPU cloud VM
+# command: go test -run='^$' -bench=BenchmarkCheckKeys -benchmem -count=10 ./internal/api
+# compare: benchstat -col /impl checkkeys.txt
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/api
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkCheckKeys/tokens-4         	  196504	      6049 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  203227	      5955 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  228496	      5897 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  235294	      5678 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  221054	      5535 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  215260	      5593 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  228819	      5378 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  241248	      5534 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  230692	      6099 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/tokens-4         	  225490	      6242 ns/op	    2160 B/op	      79 allocs/op
+BenchmarkCheckKeys/scan-4           	 2448223	       502.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2373338	       516.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2456761	       498.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2574829	       519.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2488833	       465.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2463996	       474.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2197135	       550.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 1997245	       585.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2050868	       539.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCheckKeys/scan-4           	 2556212	       501.0 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/sHyanorn/matching-engine/internal/api	25.028s
