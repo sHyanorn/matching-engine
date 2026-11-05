@@ -1,0 +1,81 @@
+# M5 core baseline: BenchmarkApply, BenchmarkApplyDeep, BenchmarkRestingOrders (internal/book/book_bench_test.go)
+# go1.24.7 linux/amd64; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPU cloud VM
+# command: go test -run='^$' -bench='^(BenchmarkApply|BenchmarkApplyDeep|BenchmarkRestingOrders)$' -benchmem -count=10 ./internal/book
+# flow: internal/flow, 65,536 commands per pass; ns/op is per command (per book of 1M orders for RestingOrders).
+# allocs/cmd counts every allocation; Go's allocs/op truncates to an integer.
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApply/sd=5-4      	 5390325	       224.4 ns/op	         0.5945 allocs/cmd	   4455730 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 5437690	       222.7 ns/op	         0.5945 allocs/cmd	   4489795 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 5303942	       215.6 ns/op	         0.5944 allocs/cmd	   4638729 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 5799123	       221.7 ns/op	         0.5945 allocs/cmd	   4510040 cmds/s	         0.3680 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 5433456	       219.0 ns/op	         0.5944 allocs/cmd	   4565972 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 5623436	       213.9 ns/op	         0.5944 allocs/cmd	   4675984 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 6265275	       228.7 ns/op	         0.5945 allocs/cmd	   4371631 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 4994439	       239.0 ns/op	         0.5945 allocs/cmd	   4184643 cmds/s	         0.3680 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 4783254	       239.9 ns/op	         0.5945 allocs/cmd	   4168633 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=5-4      	 5213859	       245.5 ns/op	         0.5945 allocs/cmd	   4074010 cmds/s	         0.3681 trades/cmd	      73 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4992063	       243.7 ns/op	         0.6838 allocs/cmd	   4104139 cmds/s	         0.5281 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4693063	       252.8 ns/op	         0.6838 allocs/cmd	   3955928 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4766635	       252.9 ns/op	         0.6837 allocs/cmd	   3953650 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4896222	       245.3 ns/op	         0.6837 allocs/cmd	   4077357 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 5140238	       235.2 ns/op	         0.6838 allocs/cmd	   4251663 cmds/s	         0.5281 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 5432491	       219.6 ns/op	         0.6837 allocs/cmd	   4553530 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 6066033	       224.8 ns/op	         0.6837 allocs/cmd	   4448669 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4734834	       259.6 ns/op	         0.6838 allocs/cmd	   3852666 cmds/s	         0.5281 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4772851	       239.9 ns/op	         0.6837 allocs/cmd	   4167607 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 4841362	       241.0 ns/op	         0.6837 allocs/cmd	   4149086 cmds/s	         0.5282 trades/cmd	      70 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5700049	       236.4 ns/op	         0.5923 allocs/cmd	   4230647 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 4542124	       234.0 ns/op	         0.5923 allocs/cmd	   4272763 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5211154	       233.2 ns/op	         0.5923 allocs/cmd	   4288458 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5475063	       238.0 ns/op	         0.5923 allocs/cmd	   4200835 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5105925	       238.1 ns/op	         0.5922 allocs/cmd	   4200472 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5485762	       230.3 ns/op	         0.5923 allocs/cmd	   4342921 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5143638	       253.1 ns/op	         0.5923 allocs/cmd	   3950469 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5286716	       246.0 ns/op	         0.5923 allocs/cmd	   4065136 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 5401693	       240.0 ns/op	         0.5923 allocs/cmd	   4166739 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 4969767	       233.0 ns/op	         0.5923 allocs/cmd	   4292259 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 5219961	       244.1 ns/op	         0.6825 allocs/cmd	   4096391 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4747567	       253.7 ns/op	         0.6825 allocs/cmd	   3942155 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4979937	       251.7 ns/op	         0.6825 allocs/cmd	   3973593 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4729224	       245.0 ns/op	         0.6826 allocs/cmd	   4082042 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4786230	       229.5 ns/op	         0.6825 allocs/cmd	   4357965 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 5461116	       216.7 ns/op	         0.6825 allocs/cmd	   4613879 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4895474	       223.1 ns/op	         0.6825 allocs/cmd	   4481968 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4833159	       247.4 ns/op	         0.6825 allocs/cmd	   4041705 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 4802047	       229.6 ns/op	         0.6825 allocs/cmd	   4355306 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 5694363	       257.5 ns/op	         0.6825 allocs/cmd	   3883904 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 4273148	       303.8 ns/op	         0.5923 allocs/cmd	   3291320 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 4082163	       267.2 ns/op	         0.5923 allocs/cmd	   3741828 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 3746227	       279.6 ns/op	         0.5923 allocs/cmd	   3576031 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 3718526	       302.2 ns/op	         0.5923 allocs/cmd	   3309152 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 4628025	       265.8 ns/op	         0.5923 allocs/cmd	   3762788 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 4662421	       279.6 ns/op	         0.5923 allocs/cmd	   3577003 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 3882028	       298.5 ns/op	         0.5923 allocs/cmd	   3350521 cmds/s	         0.3681 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 3960802	       271.1 ns/op	         0.5923 allocs/cmd	   3688562 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 4155770	       281.8 ns/op	         0.5923 allocs/cmd	   3548127 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 4409343	       280.8 ns/op	         0.5923 allocs/cmd	   3561012 cmds/s	         0.3680 trades/cmd	      55 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 3892305	       341.6 ns/op	         0.6825 allocs/cmd	   2927078 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 3798937	       344.7 ns/op	         0.6825 allocs/cmd	   2901330 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 3886065	       362.7 ns/op	         0.6825 allocs/cmd	   2757193 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 4219876	       283.7 ns/op	         0.6825 allocs/cmd	   3525195 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 4280444	       332.8 ns/op	         0.6825 allocs/cmd	   3004758 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 4155997	       288.2 ns/op	         0.6825 allocs/cmd	   3469327 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 3814750	       334.2 ns/op	         0.6826 allocs/cmd	   2992322 cmds/s	         0.5281 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 3926103	       334.1 ns/op	         0.6825 allocs/cmd	   2992843 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 3849427	       308.7 ns/op	         0.6825 allocs/cmd	   3239869 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 4203148	       300.6 ns/op	         0.6826 allocs/cmd	   3326269 cmds/s	         0.5282 trades/cmd	      61 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       2	 570697968 ns/op	       134.0 B/order	       127.8 MiB	       570.7 ns/order	171660376 B/op	 1010200 allocs/op
+BenchmarkRestingOrders-4                      	       2	 563612850 ns/op	       133.9 B/order	       127.7 MiB	       563.6 ns/order	171715720 B/op	 1010205 allocs/op
+BenchmarkRestingOrders-4                      	       2	 567311348 ns/op	       134.0 B/order	       127.8 MiB	       567.3 ns/order	171697112 B/op	 1010202 allocs/op
+BenchmarkRestingOrders-4                      	       2	 532859219 ns/op	       134.0 B/order	       127.8 MiB	       532.9 ns/order	171697352 B/op	 1010204 allocs/op
+BenchmarkRestingOrders-4                      	       2	 546998821 ns/op	       133.9 B/order	       127.7 MiB	       547.0 ns/order	171660328 B/op	 1010199 allocs/op
+BenchmarkRestingOrders-4                      	       2	 558519952 ns/op	       133.9 B/order	       127.7 MiB	       558.5 ns/order	171697256 B/op	 1010203 allocs/op
+BenchmarkRestingOrders-4                      	       2	 570047872 ns/op	       133.9 B/order	       127.7 MiB	       570.0 ns/order	171623304 B/op	 1010194 allocs/op
+BenchmarkRestingOrders-4                      	       2	 560129920 ns/op	       133.9 B/order	       127.7 MiB	       560.1 ns/order	171641864 B/op	 1010197 allocs/op
+BenchmarkRestingOrders-4                      	       2	 514276251 ns/op	       133.9 B/order	       127.7 MiB	       514.3 ns/order	171641912 B/op	 1010198 allocs/op
+BenchmarkRestingOrders-4                      	       2	 594403592 ns/op	       134.0 B/order	       127.8 MiB	       594.4 ns/order	171715768 B/op	 1010206 allocs/op
+PASS
+ok  	github.com/sHyanorn/matching-engine/internal/book	195.132s

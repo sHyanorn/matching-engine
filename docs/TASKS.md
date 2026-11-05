@@ -37,7 +37,7 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Integration tests
 
 ## M5 Performance
-- [ ] Matching core benchmarks
+- [x] Matching core benchmarks
 - [ ] `cmd/loadgen` reproducible order flow generator
 - [ ] End-to-end latency measurement
 - [ ] pprof analysis and at least one data-backed optimization (e.g. object pooling to reduce allocations)
