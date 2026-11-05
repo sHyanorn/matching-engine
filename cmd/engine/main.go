@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -53,7 +54,8 @@ func healthcheck(args []string) error {
 		host = "127.0.0.1"
 	}
 	client := http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/healthz")
+	u := url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/healthz"} // escapes an IPv6 zone
+	resp, err := client.Get(u.String())
 	if err != nil {
 		return err
 	}
