@@ -17,7 +17,7 @@
 
 ## M2 完整订单类型与正确性
 - [x] 市价单
-- [ ] IOC 和 FOK
+- [x] IOC 和 FOK
 - [ ] 不变量检查函数 `book.CheckInvariants()`
 - [ ] 属性测试：10 万条随机命令，每步检查不变量
 - [ ] 模糊测试 `FuzzBook`
