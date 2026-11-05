@@ -553,6 +553,10 @@ func compareL2Key(a, b l2Key) int {
 // price first and, within a price, by RestedSeq, each trade taking the
 // smaller of what the taker and the maker have left. Seq and Timestamp are
 // checked by the caller, so the expected events copy them.
+//
+// The property and fuzz tests pass before from a restingModel, built from
+// the event stream alone, so neither the expected makers nor their time
+// priority are taken from the book under test.
 func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error {
 	if len(evs) == 0 {
 		return errors.New("no events")
@@ -614,19 +618,16 @@ func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error 
 		}
 	})
 
-	_, dup := before[c.OrderID]
-	if evs[0].Kind == EventRejected {
-		why := evs[0].Reason
-		if why == ReasonDuplicateOrderID && dup || why == ReasonFOKUnfillable && c.TIF == FOK && crossable < c.Qty {
-			return only(rejected(why))
-		}
-		return fmt.Errorf("valid order rejected with %v (ID resting: %v, crossable qty %d)", why, dup, crossable)
-	}
-	if dup {
-		return errors.New("accepted a new order whose ID is resting")
+	// Stateful checks, in the book's fixed order: a resting ID wins over an
+	// unfillable FOK, so the reason is deterministic.
+	if _, dup := before[c.OrderID]; dup {
+		return only(rejected(ReasonDuplicateOrderID))
 	}
 	if c.TIF == FOK && crossable < c.Qty {
-		return fmt.Errorf("accepted a FOK order of %d with only %d crossable", c.Qty, crossable)
+		return only(rejected(ReasonFOKUnfillable))
+	}
+	if evs[0].Kind == EventRejected {
+		return fmt.Errorf("valid order rejected with %v (crossable qty %d)", evs[0].Reason, crossable)
 	}
 	if err := match(evs[0], Event{Kind: EventAccepted, OrderID: c.OrderID, Side: c.Side, Price: c.Price, Qty: c.Qty}); err != nil {
 		return err
@@ -1538,6 +1539,16 @@ var m2Scenarios = []scenario{
 			2: {ID: 2, Side: Sell, Type: Limit, TIF: GTC, Price: 103, Qty: 10, Remaining: 10, Timestamp: setupTS(1), RestedSeq: 4},
 		},
 		wantGone: []OrderID{3},
+	},
+	{
+		name:     "FOK that reuses a resting id and cannot fill is rejected as a duplicate",
+		setup:    []Command{limit(1, Sell, 100, 2)},
+		cmd:      fok(1, Buy, 100, 5),
+		want:     []Event{evRejected(3, 1, ReasonDuplicateOrderID)},
+		wantAsks: []Level{lvl(100, 2, 1)},
+		wantOrders: map[OrderID]Order{
+			1: {ID: 1, Side: Sell, Type: Limit, TIF: GTC, Price: 100, Qty: 2, Remaining: 2, Timestamp: setupTS(0), RestedSeq: 2},
+		},
 	},
 	{
 		name: "FOK into an empty book is rejected",

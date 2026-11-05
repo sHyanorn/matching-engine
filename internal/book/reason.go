@@ -32,6 +32,8 @@ const (
 
 	// Stateful rejections: found by the book against its current state and
 	// reported by EventRejected. The command was valid and changed nothing.
+	// A new order is checked for a resting duplicate ID before the FOK
+	// pre-check, so a FOK that is both gets duplicate_order_id.
 	ReasonDuplicateOrderID Reason = 10 // a new order reuses the ID of a resting order
 	ReasonUnknownOrder     Reason = 11 // a cancel names an ID that is not resting (never existed, filled or canceled)
 	ReasonFOKUnfillable    Reason = 12 // a FOK order cannot fill in full right now, so nothing traded
