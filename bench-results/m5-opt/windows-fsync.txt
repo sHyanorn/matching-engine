@@ -1,0 +1,5 @@
+# fsync on GitHub Actions runners (https://github.com/sHyanorn/matching-engine/actions/runs/42018679150)
+# A throwaway test appended 100-byte records to a file: 100 times write+Sync, timing Sync; 2000 writes alone;
+# then for 2 s one write every 100 µs while another goroutine called Sync in a loop, timing each write.
+ubuntu-latest (go test -race):  sync p50 184.714µs p90 1.293058ms max 5.324678ms | write alone p50 2.776µs p99 23.494µs max 76.342µs | write during syncs n=1692 p50 15.048µs p90 22.973µs p99 955.14µs max 29.717136ms
+windows-latest (go test):       sync p50 18.9448ms p90 37.8008ms max 76.5372ms | write alone p50 0s p99 0s max 658.2µs | write during syncs n=77 p50 23.255ms p90 45.7108ms p99 53.4846ms max 61.5095ms
