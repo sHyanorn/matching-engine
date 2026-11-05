@@ -535,4 +535,8 @@ func TestHealthcheck(t *testing.T) {
 	if err := healthcheck([]string{"-addr", "nonsense"}); err == nil {
 		t.Error("healthcheck accepted an address without a port")
 	}
+	// A zoned IPv6 address must reach the dial, not fail to parse as a URL.
+	if err := healthcheck([]string{"-addr", "[fe80::1%lo]:1"}); err == nil || strings.Contains(err.Error(), "invalid URL escape") {
+		t.Errorf("healthcheck -addr [fe80::1%%lo]:1: %v, want a dial error", err)
+	}
 }

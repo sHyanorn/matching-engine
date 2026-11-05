@@ -11,9 +11,11 @@ services:
       timeout: 3s
       start_period: 30s
       start_interval: 1s
-    # Longer than the engine's -shutdown-timeout (10s), so a stop never
-    # cuts its final fsync short.
-    stop_grace_period: 20s
+    # Longer than the engine's worst-case shutdown: up to -shutdown-timeout
+    # (10s) for HTTP requests, then up to 20s for stalled WebSocket clients
+    # (the 10s write timeout, then the close frame's 5s and the handshake's
+    # 5s).
+    stop_grace_period: 35s
 
   loadgen:
     image: matching-engine
