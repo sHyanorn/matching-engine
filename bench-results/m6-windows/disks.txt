@@ -1,0 +1,34 @@
+# Durable writes on GitHub Actions runners, from throwaway tests run in CI
+# Go's clock on Windows advances once per clock tick, so durations below a tick read as 0s.
+
+## Write-through (os.O_SYNC, FILE_FLAG_WRITE_THROUGH on Windows) against write+Sync, by write size: https://github.com/sHyanorn/matching-engine/actions/runs/42022938243
+test-windows: size 100: plain p50 0s p90 0s p99 0s max 31.2136ms (9337/s) | write-through p50 28.4383ms p90 44.2414ms p99 70.0918ms max 92.2147ms (38/s) | write+Sync p50 6.5371ms p90 21.1615ms p99 112.8359ms max 122.7517ms (79/s)
+test-windows: size 4096: plain p50 0s p90 0s p99 402.9µs max 842.5µs (125886/s) | write-through p50 29.8955ms p90 33.4442ms p99 44.8142ms max 48.6609ms (37/s) | write+Sync p50 30.1596ms p90 32.8674ms p99 35.388ms max 44.3488ms (36/s)
+test-windows: size 16384: plain p50 0s p90 0s p99 545.8µs max 729.1µs (91430/s) | write-through p50 3.8988ms p90 27.9945ms p99 32.0906ms max 46.0749ms (117/s) | write+Sync p50 3.4447ms p90 4.6269ms p99 7.1988ms max 14.4852ms (267/s)
+test-windows: write-through+Sync 4096: p50 5.1185ms p90 6.1021ms p99 10.3247ms max 12.0586ms (188/s)
+test: size 100: plain p50 2.916µs p90 5.41µs p99 10.099µs max 30.637µs (263972/s) | write-through p50 288.414µs p90 1.56513ms p99 3.989392ms max 6.12611ms (1697/s) | write+Sync p50 245.283µs p90 538.255µs p99 1.473187ms max 2.055385ms (2936/s)
+test: size 4096: plain p50 5.68µs p90 8.957µs p99 23.755µs max 35.768µs (135336/s) | write-through p50 393.864µs p90 1.002651ms p99 6.312671ms max 46.216918ms (1136/s) | write+Sync p50 369.266µs p90 791.45µs p99 1.591148ms max 3.584837ms (1928/s)
+test: size 16384: plain p50 20.098µs p90 24.607µs p99 48.171µs max 2.468754ms (29432/s) | write-through p50 419.441µs p90 909.144µs p99 3.731344ms max 10.59542ms (1645/s) | write+Sync p50 482.46µs p90 1.162293ms p99 2.106098ms max 2.672108ms (1563/s)
+test: write-through+Sync 4096: p50 311.868µs p90 449.195µs p99 1.137584ms max 2.136468ms (2682/s)
+
+## The runner's system disk (temp dir) against its local disk (RUNNER_TEMP), and writes during a loop of Sync: https://github.com/sHyanorn/matching-engine/actions/runs/42023246775
+test: /tmp/TestDisks2437448135/001
+test: sync: n 100 p50 147.068µs p90 184.564µs p99 240.707µs max 483.951µs
+test: write-through 4KB: n 100 p50 221.078µs p90 256.6µs p99 315.307µs max 4.834805ms
+test: same file during syncs: n 1449 p50 7.731µs p90 77.335µs p99 3.928923ms max 80.980064ms
+test: other file during syncs: n 1732 p50 9.053µs p90 75.542µs p99 721.809µs max 16.411802ms
+test: /home/runner/work/_temp/diag2538063389
+test: sync: n 100 p50 153.347µs p90 186.096µs p99 642.832µs max 2.355711ms
+test: write-through 4KB: n 100 p50 226.676µs p90 269.459µs p99 351.782µs max 3.071081ms
+test: same file during syncs: n 1784 p50 10.065µs p90 69.333µs p99 407.784µs max 10.037826ms
+test: other file during syncs: n 1631 p50 6.109µs p90 9.814µs p99 67.871µs max 87.529333ms
+test-windows: C:\Users\RUNNER~1\AppData\Local\Temp\TestDisks1970842949\001
+test-windows: sync: n 100 p50 31.1537ms p90 42.7662ms p99 50.0959ms max 79.2826ms
+test-windows: write-through 4KB: n 100 p50 25.9884ms p90 35.4069ms p99 44.8886ms max 46.4457ms
+test-windows: same file during syncs: n 153 p50 14.3157ms p90 27.2542ms p99 30.2763ms max 41.9811ms
+test-windows: other file during syncs: n 3559 p50 0s p90 0s p99 0s max 20.4187ms
+test-windows: D:\a\_temp\diag1119657272
+test-windows: sync: n 100 p50 0s p90 470µs p99 648.3µs max 754.9µs
+test-windows: write-through 4KB: n 100 p50 0s p90 452µs p99 744.8µs max 748.3µs
+test-windows: same file during syncs: n 3479 p50 0s p90 0s p99 0s max 31.8238ms
+test-windows: other file during syncs: n 3639 p50 0s p90 0s p99 0s max 15.5471ms

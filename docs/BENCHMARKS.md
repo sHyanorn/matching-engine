@@ -91,7 +91,7 @@ The book allocates 0.6 times per command, but `Book.Apply` is 1.4% to 2% of the 
 
 ## On Windows
 
-All the figures above are from Linux. On GitHub's Windows runners an fsync takes 19 ms at the median, against 0.2 ms on its Linux runners, and writes to the file wait while it runs ([`windows-fsync.txt`](../bench-results/m5-opt/windows-fsync.txt)). With fsyncs every 10 ms, requests there wait tens of milliseconds whether or not the fsync runs beside the matching goroutine.
+All the figures above are from Linux. On GitHub's Windows runners the cost of an fsync depends on the disk ([`disks.txt`](../bench-results/m6-windows/disks.txt)). On the runner's system disk an fsync takes 31 ms at the median, a write-through write 26 ms, and writes to the file being flushed wait meanwhile; there, requests wait tens of milliseconds. On its local disk both take under 1 ms, as on Linux, and that is the case of a laptop's SSD. Writes to another file do not wait for a flush on either disk.
 
 ## Measuring again
 
