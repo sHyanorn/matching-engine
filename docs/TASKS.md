@@ -39,8 +39,8 @@ Check off each item when it is done. All tests must pass at the end of every mil
 ## M5 Performance
 - [x] Matching core benchmarks
 - [x] `cmd/loadgen` reproducible order flow generator
-- [ ] End-to-end latency measurement
-- [ ] pprof analysis and at least one data-backed optimization (e.g. object pooling to reduce allocations)
+- [x] End-to-end latency measurement
+- [x] pprof analysis and at least one data-backed optimization (e.g. object pooling to reduce allocations)
 - [ ] Write `docs/BENCHMARKS.md`, with charts
 
 ## M6 Presentation

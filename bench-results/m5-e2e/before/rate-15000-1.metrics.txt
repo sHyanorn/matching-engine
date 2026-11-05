@@ -1,0 +1,272 @@
+# HELP go_gc_duration_seconds A summary of the wall-time pause (stop-the-world) duration in garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 6.9742e-05
+go_gc_duration_seconds{quantile="0.25"} 0.000158542
+go_gc_duration_seconds{quantile="0.5"} 0.00022502
+go_gc_duration_seconds{quantile="0.75"} 0.00033302
+go_gc_duration_seconds{quantile="1"} 0.008542958
+go_gc_duration_seconds_sum 0.053155488
+go_gc_duration_seconds_count 135
+# HELP go_gc_gogc_percent Heap size target percentage configured by the user, otherwise 100. This value is set by the GOGC environment variable, and the runtime/debug.SetGCPercent function. Sourced from /gc/gogc:percent.
+# TYPE go_gc_gogc_percent gauge
+go_gc_gogc_percent 100
+# HELP go_gc_gomemlimit_bytes Go runtime memory limit configured by the user, otherwise math.MaxInt64. This value is set by the GOMEMLIMIT environment variable, and the runtime/debug.SetMemoryLimit function. Sourced from /gc/gomemlimit:bytes.
+# TYPE go_gc_gomemlimit_bytes gauge
+go_gc_gomemlimit_bytes 9.223372036854776e+18
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 10
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.24.7"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated in heap and currently in use. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 6.6964872e+07
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated in heap until now, even if released already. Equals to /gc/heap/allocs:bytes.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 3.575170912e+09
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table. Equals to /memory/classes/profiling/buckets:bytes.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 1.481245e+06
+# HELP go_memstats_frees_total Total number of heap objects frees. Equals to /gc/heap/frees:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 6.0054479e+07
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata. Equals to /memory/classes/metadata/other:bytes.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 4.1106e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and currently in use, same as go_memstats_alloc_bytes. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 6.6964872e+07
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used. Equals to /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 4.2975232e+07
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 7.2892416e+07
+# HELP go_memstats_heap_objects Number of currently allocated objects. Equals to /gc/heap/objects:objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 446736
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS. Equals to /memory/classes/heap/released:bytes.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 4.022272e+06
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes + /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 1.15867648e+08
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.7938716786699655e+09
+# HELP go_memstats_mallocs_total Total number of heap objects allocated, both live and gc-ed. Semantically a counter version for go_memstats_heap_objects gauge. Equals to /gc/heap/allocs:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 6.0501215e+07
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures. Equals to /memory/classes/metadata/mcache/inuse:bytes.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 4832
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system. Equals to /memory/classes/metadata/mcache/inuse:bytes + /memory/classes/metadata/mcache/free:bytes.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 15704
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures. Equals to /memory/classes/metadata/mspan/inuse:bytes.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 989600
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system. Equals to /memory/classes/metadata/mspan/inuse:bytes + /memory/classes/metadata/mspan/free:bytes.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 1.76256e+06
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place. Equals to /gc/heap/goal:bytes.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 1.19097186e+08
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations. Equals to /memory/classes/other:bytes.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 1.141659e+06
+# HELP go_memstats_stack_inuse_bytes Number of bytes obtained from system for stack allocator in non-CGO environments. Equals to /memory/classes/heap/stacks:bytes.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 1.572864e+06
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator. Equals to /memory/classes/heap/stacks:bytes + /memory/classes/os-stacks:bytes.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 1.572864e+06
+# HELP go_memstats_sys_bytes Number of bytes obtained from system. Equals to /memory/classes/total:byte.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 1.2595228e+08
+# HELP go_sched_gomaxprocs_threads The current runtime.GOMAXPROCS setting, or the number of operating system threads that can execute user-level Go code simultaneously. Sourced from /sched/gomaxprocs:threads.
+# TYPE go_sched_gomaxprocs_threads gauge
+go_sched_gomaxprocs_threads 4
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 13
+# HELP matching_engine_cancels_total Cancel requests by outcome.
+# TYPE matching_engine_cancels_total counter
+matching_engine_cancels_total{result="busy",symbol="BTC-USD"} 0
+matching_engine_cancels_total{result="canceled",symbol="BTC-USD"} 59333
+matching_engine_cancels_total{result="failed",symbol="BTC-USD"} 0
+matching_engine_cancels_total{result="finished",symbol="BTC-USD"} 86987
+matching_engine_cancels_total{result="unknown",symbol="BTC-USD"} 33547
+# HELP matching_engine_http_request_duration_seconds HTTP request handling time.
+# TYPE matching_engine_http_request_duration_seconds histogram
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="5e-05"} 43409
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0001"} 49542
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0002"} 52862
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0004"} 54715
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0008"} 57193
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0016"} 58470
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0032"} 59031
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0064"} 59273
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0128"} 59311
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0256"} 59322
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.0512"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.1024"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.2048"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.4096"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="0.8192"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="1.6384"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="DELETE /v1/orders/{id}",le="+Inf"} 59333
+matching_engine_http_request_duration_seconds_sum{code="200",route="DELETE /v1/orders/{id}"} 8.394022388000051
+matching_engine_http_request_duration_seconds_count{code="200",route="DELETE /v1/orders/{id}"} 59333
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="5e-05"} 63
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0001"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0002"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0004"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0008"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0016"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0032"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0064"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0128"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0256"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.0512"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.1024"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.2048"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.4096"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="0.8192"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="1.6384"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="GET /healthz",le="+Inf"} 65
+matching_engine_http_request_duration_seconds_sum{code="200",route="GET /healthz"} 0.0007656350000000001
+matching_engine_http_request_duration_seconds_count{code="200",route="GET /healthz"} 65
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="5e-05"} 230251
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0001"} 327019
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0002"} 365419
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0004"} 384722
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0008"} 403779
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0016"} 413862
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0032"} 417894
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0064"} 419649
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0128"} 419973
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0256"} 420044
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.0512"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.1024"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.2048"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.4096"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="0.8192"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="1.6384"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="200",route="POST /v1/orders",le="+Inf"} 420088
+matching_engine_http_request_duration_seconds_sum{code="200",route="POST /v1/orders"} 69.232636197
+matching_engine_http_request_duration_seconds_count{code="200",route="POST /v1/orders"} 420088
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="5e-05"} 25647
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0001"} 28281
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0002"} 29827
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0004"} 30809
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0008"} 32183
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0016"} 32943
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0032"} 33336
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0064"} 33487
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0128"} 33536
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0256"} 33542
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.0512"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.1024"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.2048"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.4096"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="0.8192"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="1.6384"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="404",route="DELETE /v1/orders/{id}",le="+Inf"} 33547
+matching_engine_http_request_duration_seconds_sum{code="404",route="DELETE /v1/orders/{id}"} 4.989484666000021
+matching_engine_http_request_duration_seconds_count{code="404",route="DELETE /v1/orders/{id}"} 33547
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="5e-05"} 66822
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0001"} 74016
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0002"} 77925
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0004"} 80447
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0008"} 84022
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0016"} 85851
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0032"} 86580
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0064"} 86930
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0128"} 86974
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0256"} 86983
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.0512"} 86987
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.1024"} 86987
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.2048"} 86987
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.4096"} 86987
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="0.8192"} 86987
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="1.6384"} 86987
+matching_engine_http_request_duration_seconds_bucket{code="409",route="DELETE /v1/orders/{id}",le="+Inf"} 86987
+matching_engine_http_request_duration_seconds_sum{code="409",route="DELETE /v1/orders/{id}"} 10.86132508599998
+matching_engine_http_request_duration_seconds_count{code="409",route="DELETE /v1/orders/{id}"} 86987
+# HELP matching_engine_log_failed 1 once a symbol's command log has failed; it then accepts no commands.
+# TYPE matching_engine_log_failed gauge
+matching_engine_log_failed{symbol="BTC-USD"} 0
+# HELP matching_engine_log_fsync_duration_seconds Time to fsync a symbol's command log.
+# TYPE matching_engine_log_fsync_duration_seconds histogram
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="5e-05"} 0
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0001"} 0
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0002"} 37
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0004"} 296
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0008"} 3808
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0016"} 4397
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0032"} 4502
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0064"} 4547
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0128"} 4552
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0256"} 4553
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.0512"} 4554
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.1024"} 4554
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.2048"} 4554
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.4096"} 4554
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="0.8192"} 4554
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="1.6384"} 4554
+matching_engine_log_fsync_duration_seconds_bucket{symbol="BTC-USD",le="+Inf"} 4554
+matching_engine_log_fsync_duration_seconds_sum{symbol="BTC-USD"} 3.3230877010000075
+matching_engine_log_fsync_duration_seconds_count{symbol="BTC-USD"} 4554
+# HELP matching_engine_orders_total New orders by outcome.
+# TYPE matching_engine_orders_total counter
+matching_engine_orders_total{result="accepted",symbol="BTC-USD"} 420088
+matching_engine_orders_total{result="busy",symbol="BTC-USD"} 0
+matching_engine_orders_total{result="failed",symbol="BTC-USD"} 0
+matching_engine_orders_total{result="invalid",symbol="BTC-USD"} 0
+matching_engine_orders_total{result="rejected",symbol="BTC-USD"} 0
+# HELP matching_engine_queue_length Requests waiting in a symbol's queue.
+# TYPE matching_engine_queue_length gauge
+matching_engine_queue_length{symbol="BTC-USD"} 0
+# HELP matching_engine_trades_total Executions.
+# TYPE matching_engine_trades_total counter
+matching_engine_trades_total{symbol="BTC-USD"} 219562
+# HELP matching_engine_ws_connections Open WebSocket connections.
+# TYPE matching_engine_ws_connections gauge
+matching_engine_ws_connections 0
+# HELP matching_engine_ws_disconnects_total Closed WebSocket connections by cause.
+# TYPE matching_engine_ws_disconnects_total counter
+matching_engine_ws_disconnects_total{reason="client"} 1
+matching_engine_ws_disconnects_total{reason="shutdown"} 0
+matching_engine_ws_disconnects_total{reason="slow_consumer_bytes"} 0
+matching_engine_ws_disconnects_total{reason="slow_consumer_updates"} 0
+matching_engine_ws_disconnects_total{reason="slow_consumer_write"} 0
+matching_engine_ws_disconnects_total{reason="write_failed"} 0
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 64.16
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 20000
+# HELP process_network_receive_bytes_total Number of bytes received by the process over the network.
+# TYPE process_network_receive_bytes_total counter
+process_network_receive_bytes_total 1.9545801573e+10
+# HELP process_network_transmit_bytes_total Number of bytes sent by the process over the network.
+# TYPE process_network_transmit_bytes_total counter
+process_network_transmit_bytes_total 1.9663690526e+10
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 9
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 1.28774144e+08
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.79387163771e+09
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 2.169552896e+09
+# HELP process_virtual_memory_max_bytes Maximum amount of virtual memory available in bytes.
+# TYPE process_virtual_memory_max_bytes gauge
+process_virtual_memory_max_bytes 1.8446744073709552e+19

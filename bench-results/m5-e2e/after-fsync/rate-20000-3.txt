@@ -1,0 +1,9 @@
+BTC-USD: target 20000/s, achieved 20000/s over 30s after 10s warmup, 64 connections
+cancel_canceled 59463, cancel_finished 59211, cancel_skipped 3, cancel_unknown 61510, order_rested 301354, order_traded 118459
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+order to trade push     118459      391     2420    11564    19188    26103    29461
+request to reply        599997      355     2103    10444    17849    24987    33434
+service time            599997      280     1183     5716    11097    16705    24178
+send lag                599997       29      561     6755    13832    19906    23445
+loadgen hiccup           26322       40      253     2147     5201     8115    11268
+valid
