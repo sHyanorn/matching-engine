@@ -1,7 +1,10 @@
 package api
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 
 	"github.com/sHyanorn/matching-engine/internal/engine"
 )
@@ -9,12 +12,13 @@ import (
 // metrics are the Prometheus metrics of docs/API.md, in a registry of
 // their own. Labels take only configured symbols, never client input.
 type metrics struct {
-	reg     *prometheus.Registry
-	orders  *prometheus.CounterVec
-	cancels *prometheus.CounterVec
-	trades  *prometheus.CounterVec
-	latency *prometheus.HistogramVec
-	streams prometheus.Gauge
+	reg      *prometheus.Registry
+	orders   *prometheus.CounterVec
+	cancels  *prometheus.CounterVec
+	trades   *prometheus.CounterVec
+	latency  *prometheus.HistogramVec
+	streams  prometheus.Gauge
+	wsClosed *prometheus.CounterVec
 }
 
 var (
@@ -22,7 +26,7 @@ var (
 	cancelResults = []string{"canceled", "unknown", "finished", "busy", "failed"}
 )
 
-func newMetrics(eng *engine.Engine) *metrics {
+func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 	m := &metrics{
 		reg: prometheus.NewRegistry(),
 		orders: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -41,8 +45,21 @@ func newMetrics(eng *engine.Engine) *metrics {
 		streams: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "matching_engine_ws_connections", Help: "Open WebSocket connections.",
 		}),
+		wsClosed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "matching_engine_ws_disconnects_total", Help: "Closed WebSocket connections by cause.",
+		}, []string{"reason"}),
 	}
-	m.reg.MustRegister(m.orders, m.cancels, m.trades, m.latency, m.streams)
+	m.reg.MustRegister(m.orders, m.cancels, m.trades, m.latency, m.streams, m.wsClosed,
+		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	for _, c := range closeCauses {
+		m.wsClosed.WithLabelValues(c.label)
+	}
+	if fsync != nil {
+		m.reg.MustRegister(fsync.h)
+		for _, s := range eng.Symbols() {
+			fsync.h.WithLabelValues(s)
+		}
+	}
 	for _, s := range eng.Symbols() {
 		// Every series exists from the start, at 0.
 		for _, r := range orderResults {
@@ -69,4 +86,22 @@ func newMetrics(eng *engine.Engine) *metrics {
 		}))
 	}
 	return m
+}
+
+// FsyncTimes is a histogram of how long the fsyncs of each symbol's command
+// log take. Pass its Observe as engine.Config.OnSync and the FsyncTimes as
+// Options.FsyncTimes, and /metrics serves it.
+type FsyncTimes struct{ h *prometheus.HistogramVec }
+
+// NewFsyncTimes returns an empty FsyncTimes.
+func NewFsyncTimes() *FsyncTimes {
+	return &FsyncTimes{h: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "matching_engine_log_fsync_duration_seconds", Help: "Time to fsync a symbol's command log.",
+		Buckets: prometheus.ExponentialBuckets(0.00005, 2, 16), // 50µs to about 1.6s
+	}, []string{"symbol"})}
+}
+
+// Observe records one fsync of symbol's log. It is safe for concurrent use.
+func (f *FsyncTimes) Observe(symbol string, took time.Duration) {
+	f.h.WithLabelValues(symbol).Observe(took.Seconds())
 }

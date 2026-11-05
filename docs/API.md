@@ -124,7 +124,11 @@ A snapshot followed by its deltas reproduces the book. A client that falls behin
 | `matching_engine_trades_total` | counter | `symbol` |
 | `matching_engine_queue_length` | gauge | `symbol` |
 | `matching_engine_log_failed` | gauge | `symbol`; 1 once its command log has failed |
+| `matching_engine_log_fsync_duration_seconds` | histogram | `symbol` |
 | `matching_engine_http_request_duration_seconds` | histogram | `route`, `code` |
 | `matching_engine_ws_connections` | gauge | |
+| `matching_engine_ws_disconnects_total` | counter | `reason`: `client`, `shutdown`, `write_failed`, and for slow consumers `slow_consumer_updates`, `slow_consumer_bytes`, `slow_consumer_write` |
+
+The Go runtime and process metrics (`go_*`, `process_*`) are served too.
 
 `rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands not applied because of a log failure or shutdown. A command that took effect counts as `accepted`, `rejected` or its cancel result even if its log then failed. Requests that name no configured symbol, such as a cancel of an ID the engine never issued, are not counted.
