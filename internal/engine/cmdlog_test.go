@@ -3,7 +3,10 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"hash/crc32"
 	"math"
 	"os"
 	"path/filepath"
@@ -114,6 +117,21 @@ func TestLogDamage(t *testing.T) {
 		d[at] ^= 0x40
 		return d
 	}
+	zero := func(from, to int64) []byte { // zero bytes [from, to)
+		d := slices.Clone(data)
+		clear(d[from:to])
+		return d
+	}
+	// badIDLen makes the first record's client_id length byte disagree
+	// with its payload length, under a valid checksum.
+	badIDLen := func() []byte {
+		d := slices.Clone(data)
+		p := d[starts[0]+4 : starts[1]-4]
+		p[payloadFixed-1]--
+		binary.LittleEndian.PutUint32(d[starts[1]-4:], crc32.Checksum(p, castagnoli))
+		return d
+	}
+	end := int64(len(data))
 	for _, tc := range []struct {
 		name string
 		data []byte
@@ -126,6 +144,10 @@ func TestLogDamage(t *testing.T) {
 		{"payload of the last record", flip(int64(len(data)) - 6), true, starts[3]},
 		{"zero-filled tail", append(slices.Clone(data), make([]byte, 300)...), true, int64(len(data))},
 		{"zeros then data", append(append(slices.Clone(data), make([]byte, 8)...), 1), false, int64(len(data))},
+		{"zero tail from inside a record", zero(starts[1]+10, end), true, starts[1]},
+		{"zero tail from inside a length", zero(starts[2]+1, end), true, starts[2]},
+		{"zeros inside, data after", zero(starts[1]+10, starts[3]), false, starts[1]},
+		{"client_id length", badIDLen(), false, starts[0]},
 	} {
 		_, good, torn, err := decodeLog(t, tc.data)
 		switch {
@@ -140,8 +162,8 @@ func TestLogDamage(t *testing.T) {
 }
 
 // TestEngineRestart closes an engine and opens a new one on the same data
-// directory: books, IDs and client data survive, and new IDs continue
-// after the old ones.
+// directory: books and sequence numbers survive, and new IDs are above
+// every ID issued before.
 func TestEngineRestart(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -183,7 +205,7 @@ func TestEngineRestart(t *testing.T) {
 		}
 	}
 	r, err := e2.PlaceOrder(ctx, limitOrder("A", book.Buy, 1, 1))
-	if err != nil || seqOf(r.OrderID) != seqOf(last)+1 {
+	if err != nil || seqOf(r.OrderID) <= seqOf(last) {
 		t.Fatalf("first ID after restart = %d (counter %d), last before %d (counter %d), err %v", r.OrderID, seqOf(r.OrderID), last, seqOf(last), err)
 	}
 }
@@ -267,5 +289,136 @@ func mustClose(t *testing.T, e *Engine) {
 	t.Helper()
 	if err := e.Close(); err != nil {
 		t.Error(err)
+	}
+}
+
+// TestLogFormatGolden pins the on-disk format byte for byte. The expected
+// bytes were produced by an independent implementation of the layout
+// documented in cmdlog.go. Any change here needs a new logVersion.
+func TestLogFormatGolden(t *testing.T) {
+	recs := []logRecord{
+		{cmd: book.Command{Kind: book.CommandNewOrder, Side: book.Sell, Type: book.Limit, TIF: book.IOC, OrderID: makeOrderID(7, 3), Price: 100, Qty: 5, Timestamp: -2}, clientID: "c-1"},
+		{cmd: book.Command{Kind: book.CommandNewOrder, Side: book.Buy, Type: book.Market, TIF: book.FOK, OrderID: makeOrderID(8, 3), Qty: 9, Timestamp: 1730000000000000000}},
+	}
+	buf := appendHeader(nil, "A", 3)
+	for _, r := range recs {
+		buf = appendRecord(buf, r)
+	}
+	const want = "4d45434d444c4f470100030001412800000001020102030700000000000064000000000000000500000000000000feffffffffffffff03632d31f6d76ffc250000000101020303080000000000000000000000000000090000000000000000006d85d531021800afdb0d44"
+	if got := hex.EncodeToString(buf); got != want {
+		t.Fatalf("log bytes changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// writeLog writes a log for symbol "A" at index 0 holding recs to dir.
+func writeLog(t *testing.T, dir string, recs ...logRecord) {
+	t.Helper()
+	data := appendHeader(nil, "A", 0)
+	for _, r := range recs {
+		data = appendRecord(data, r)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "A.log"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRestartCounterFromNewOrdersOnly restores the ID counter from a log
+// with no ID reservation: it is the highest counter of a logged new order,
+// even when the last record is a cancel of a lower ID or names an ID far
+// above anything issued.
+func TestRestartCounterFromNewOrdersOnly(t *testing.T) {
+	ctx := context.Background()
+	order := func(seq uint64) logRecord {
+		return logRecord{cmd: book.Command{Kind: book.CommandNewOrder, OrderID: makeOrderID(seq, 0), Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1, Timestamp: 1}}
+	}
+	cancelOf := func(id book.OrderID) logRecord {
+		return logRecord{cmd: book.Command{Kind: book.CommandCancel, OrderID: id, Timestamp: 2}}
+	}
+	for _, tc := range []struct {
+		name string
+		recs []logRecord
+		want uint64 // counter of the next ID
+	}{
+		{"cancel of a lower ID last", []logRecord{order(1), order(2), cancelOf(makeOrderID(1, 0))}, 3},
+		{"cancel of a huge ID", []logRecord{order(1), cancelOf(makeOrderID(1<<50, 0)), cancelOf(0xFFFFFFFFFFFFFF00)}, 2},
+	} {
+		dir := t.TempDir()
+		writeLog(t, dir, tc.recs...)
+		e, err := New(Config{Symbols: []string{"A"}, DataDir: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 90, 1))
+		if err != nil || seqOf(r.OrderID) != tc.want {
+			t.Errorf("%s: next ID has counter %d, err %v; want %d", tc.name, seqOf(r.OrderID), err, tc.want)
+		}
+		mustClose(t, e)
+	}
+}
+
+// TestIDsNotReusedAfterLostTail loses the end of a log, as a machine crash
+// before fsync would, and checks that IDs issued before the crash are not
+// issued again: the reservation in DataDir/ids outlives the log tail.
+func TestIDsNotReusedAfterLostTail(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	cfg := Config{Symbols: []string{"A"}, DataDir: dir}
+	e, _ := New(cfg)
+	path := filepath.Join(dir, "A.log")
+	issued := map[book.OrderID]bool{}
+	var keep int64
+	for i := range 10 {
+		if i == 3 {
+			info, _ := os.Stat(path)
+			keep = info.Size()
+		}
+		r, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		issued[r.OrderID] = true
+	}
+	mustClose(t, e)
+	if err := os.Truncate(path, keep); err != nil { // the last 7 orders are lost
+		t.Fatal(err)
+	}
+	e2, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mustClose(t, e2)
+	for range 20 {
+		r, err := e2.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1))
+		if err != nil || issued[r.OrderID] {
+			t.Fatalf("ID %d reissued after a lost tail (err %v)", r.OrderID, err)
+		}
+	}
+}
+
+func TestIDStoreRefusesCorruption(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ids"), []byte("garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Config{Symbols: []string{"A"}, DataDir: dir}); !errors.Is(err, ErrCorruptLog) {
+		t.Fatalf("New with a corrupt ids file: err = %v", err)
+	}
+}
+
+// TestLeftoverTempLog starts from a directory where a crash interrupted
+// the creation of a log: only the temporary file exists. New replaces it.
+func TestLeftoverTempLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "A.log.tmp"), make([]byte, 7), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustClose(t, e)
+	data, _ := os.ReadFile(filepath.Join(dir, "A.log"))
+	if !bytes.Equal(data, appendHeader(nil, "A", 0)) {
+		t.Fatalf("A.log = %x, want just a header", data)
 	}
 }

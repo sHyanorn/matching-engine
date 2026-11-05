@@ -185,12 +185,24 @@ func TestInvalidAndUnknownRequests(t *testing.T) {
 	if _, err := e.CancelOrder(ctx, makeOrderID(1, 7)); !errors.Is(err, ErrUnknownOrder) {
 		t.Fatalf("cancel with no such symbol index: err = %v", err)
 	}
-	r, err := e.CancelOrder(ctx, makeOrderID(99, 1))
-	if err != nil || len(r.Events) != 1 || r.Events[0].Reason != book.ReasonUnknownOrder {
-		t.Fatalf("cancel of a never-issued ID: %+v, %v", r, err)
+	// IDs the engine cannot have issued never reach a book: counter 0, a
+	// counter not reached yet, and a symbol index at or past the last one.
+	for _, id := range []book.OrderID{makeOrderID(0, 1), makeOrderID(99, 1), makeOrderID(1, 2)} {
+		if _, err := e.CancelOrder(ctx, id); !errors.Is(err, ErrUnknownOrder) {
+			t.Fatalf("cancel of never-issued ID %d: err = %v", id, err)
+		}
+		if _, found, err := e.Order(ctx, id); found || err != nil {
+			t.Fatalf("Order of never-issued ID %d: %v, %v", id, found, err)
+		}
 	}
-	if _, found, err := e.Order(ctx, makeOrderID(1, 9)); found || err != nil {
-		t.Fatalf("Order with no such symbol index: %v, %v", found, err)
+	if d, _ := e.Depth(ctx, "B", 1); d.LastSeq != 0 {
+		t.Fatalf("B's LastSeq = %d after cancels of never-issued IDs", d.LastSeq)
+	}
+	// An issued ID that is not resting reaches its book and is rejected.
+	placed, _ := e.PlaceOrder(ctx, NewOrder{Symbol: "B", Side: book.Buy, Type: book.Limit, TIF: book.IOC, Price: 1, Qty: 1})
+	r, err := e.CancelOrder(ctx, placed.OrderID)
+	if err != nil || len(r.Events) != 1 || r.Events[0].Reason != book.ReasonUnknownOrder {
+		t.Fatalf("cancel of an issued but not resting ID: %+v, %v", r, err)
 	}
 	if _, err := e.Depth(ctx, "Z", 1); !errors.Is(err, ErrUnknownSymbol) {
 		t.Fatalf("depth of unknown symbol: err = %v", err)
@@ -270,7 +282,15 @@ func TestConcurrentClients(t *testing.T) {
 	}
 }
 
+// TestCloseDrainsAndRefuses races Close against 50 concurrent orders, 20
+// times: every order is either applied or refused with ErrClosed.
 func TestCloseDrainsAndRefuses(t *testing.T) {
+	for range 20 {
+		closeDuringTraffic(t)
+	}
+}
+
+func closeDuringTraffic(t *testing.T) {
 	e, err := New(Config{Symbols: []string{"A"}, QueueSize: 64, DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)

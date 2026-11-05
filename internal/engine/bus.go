@@ -64,6 +64,12 @@ func (e *Engine) Subscribe(ctx context.Context, symbol string, buffer int) (*Sub
 	s := &Subscription{C: ch, ch: ch, engine: e, market: m}
 	resp, err := e.send(ctx, m, &request{kind: reqSubscribe, sub: s}, orWait)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The subscribe may already be queued: queue an unsubscribe
+			// after it, without waiting. It is a no-op if the subscribe
+			// never was.
+			go s.Close()
+		}
 		return nil, err
 	}
 	s.FromSeq = resp.depth.LastSeq

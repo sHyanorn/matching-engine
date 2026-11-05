@@ -94,13 +94,13 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D016 One command log per symbol
 - Date: 2026-11-05
-- Decision: Each symbol's goroutine owns one append-only file, `<DataDir>/<symbol>.log`. The header holds a format version, the symbol and its index; each record holds the command's fixed fields and client_id, prefixed by its length and followed by a CRC-32C. On startup a torn last record is truncated; damage anywhere else stops the engine
+- Decision: Each symbol's goroutine owns one append-only file, `<DataDir>/<symbol>.log`. The header holds a format version, the symbol and its index; each record holds the command's fixed fields and client_id, prefixed by its length and followed by a CRC-32C. On startup a torn last record, or a zero-filled tail, is truncated; damage anywhere else stops the engine. A new log is created by writing its header to a temporary file, syncing it and renaming it into place
 - Rationale: No lock or shared writer between symbols, and each book replays independently. The checksum tells a crash-truncated tail, which is safe to drop, from real corruption, which is not
 - Alternatives: one shared log (needs a lock or a writer goroutine); no checksum (silent corruption)
 
 ## D017 Log durability: write before apply, fsync every 10 ms
 - Date: 2026-11-05
-- Decision: Each batch of commands is written to the OS in one write before any of them is applied. The log is fsynced every `SyncInterval` (10 ms by default) and on shutdown; a negative interval fsyncs after every batch
+- Decision: Each batch of commands is written to the OS in one write before any of them is applied, and the book applies exactly the commands whose records were written in full. The log is fsynced every `SyncInterval` (10 ms by default) and on shutdown; a negative interval fsyncs after every batch. After a failed write or fsync the symbol accepts no more commands (`ErrLogFailed`)
 - Rationale: A process crash loses nothing; a machine crash loses at most the last interval. An fsync per batch costs milliseconds on cloud disks and would endanger the 5 ms p99 target
 - Alternatives: fsync every batch (slow); no fsync (unbounded loss on power failure)
 
@@ -118,6 +118,12 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D020 Commands wait for their result and fail fast when a queue is full
 - Date: 2026-11-05
-- Decision: `PlaceOrder` and `CancelOrder` return the command's events once it is applied. If the symbol's queue is full they return `ErrBusy` at once. Queries and subscriptions wait for room, bounded by their context
+- Decision: `PlaceOrder` and `CancelOrder` return the command's events once it is applied. If the symbol's queue is full they return `ErrBusy` at once. The context bounds only the submission: a queued command is always applied, so its result is always returned. Queries and subscriptions wait for room, bounded by their context
 - Rationale: The REST API can report fills in its response, and backpressure reaches the client immediately instead of building latency (SPEC §4)
 - Alternatives: fire-and-forget commands (the client learns the outcome only from the stream); blocking until there is room (hides overload)
+
+## D021 Order IDs are reserved durably in blocks
+- Date: 2026-11-05
+- Decision: The ID counter is reserved 65,536 values at a time in `<DataDir>/ids`, written to a temporary file, synced and renamed, before any ID of the block is issued. On startup the counter continues from the larger of the reservation and the highest ID in the logs
+- Rationale: A machine crash can lose the last unsynced log records, and with them the highest IDs the logs show. Without a reservation those IDs could be issued again, and a client holding an old ID could cancel someone else's order. A restart wastes at most one block
+- Alternatives: fsync before acknowledging every ID (slow); a random epoch per restart (shrinks the ID space and still needs persistence)

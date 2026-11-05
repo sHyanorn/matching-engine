@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,12 @@ var (
 	// (SPEC §4: backpressure); the caller may retry later.
 	ErrBusy        = errors.New("engine: busy, command queue full")
 	ErrClientIDLen = fmt.Errorf("engine: client_id longer than %d bytes", MaxClientIDLen)
+	// ErrLogFailed reports that a symbol's command log could not be
+	// written or synced. The symbol accepts no more commands. A command
+	// answered with it and no events was not applied and never will be;
+	// one answered with it and its events was applied, but whether it is
+	// durable is unknown (see Config.SyncInterval).
+	ErrLogFailed = errors.New("engine: command log failed")
 )
 
 // MaxClientIDLen is the longest client_id the engine accepts.
@@ -123,6 +130,9 @@ type Engine struct {
 	markets  []*market
 	bySymbol map[string]*market
 	nextSeq  atomic.Uint64 // last counter value issued for an order ID
+	reserved atomic.Uint64 // highest counter value durably reserved (D021)
+	reserve  sync.Mutex    // serializes extending the reservation
+	ids      idStore
 
 	// mu guards closed and the sends to market queues, so Close never
 	// closes a queue while a send to it is in progress.
@@ -133,7 +143,7 @@ type Engine struct {
 
 // New replays each symbol's command log from cfg.DataDir into a fresh
 // book, then starts one goroutine per symbol. Order IDs continue after the
-// highest one found in the logs.
+// highest one found in the logs or reserved before (D021).
 func New(cfg Config) (*Engine, error) {
 	if err := cfg.setDefaults(); err != nil {
 		return nil, err
@@ -141,7 +151,14 @@ func New(cfg Config) (*Engine, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
 	}
-	e := &Engine{bySymbol: make(map[string]*market, len(cfg.Symbols))}
+	// DataDir's own entry must survive a machine crash too.
+	if err := syncDir(filepath.Dir(filepath.Clean(cfg.DataDir))); err != nil {
+		return nil, err
+	}
+	e := &Engine{
+		bySymbol: make(map[string]*market, len(cfg.Symbols)),
+		ids:      idStore{path: filepath.Join(cfg.DataDir, "ids")},
+	}
 	var maxSeq uint64
 	for i, s := range cfg.Symbols {
 		m, seq, err := openMarket(s, i, cfg)
@@ -155,7 +172,19 @@ func New(cfg Config) (*Engine, error) {
 		e.bySymbol[s] = m
 		maxSeq = max(maxSeq, seq)
 	}
-	e.nextSeq.Store(maxSeq)
+	start, err := e.ids.load()
+	if err == nil {
+		start = max(start, maxSeq)
+		e.nextSeq.Store(start)
+		e.reserved.Store(start)
+		err = e.extendReservation(start)
+	}
+	if err != nil {
+		for _, m := range e.markets {
+			_ = m.file.Close() // err is the error to report
+		}
+		return nil, err
+	}
 	for _, m := range e.markets {
 		e.wg.Add(1)
 		go func() {
@@ -168,16 +197,15 @@ func New(cfg Config) (*Engine, error) {
 
 // Close stops accepting requests, lets every symbol's goroutine finish the
 // requests already queued, fsync and close its log, and waits for them to
-// stop. It returns any log error, and is safe to call more than once.
+// stop. It returns any log error. Every call, concurrent or later, waits
+// for the shutdown and returns the same error.
 func (e *Engine) Close() error {
 	e.mu.Lock()
-	if e.closed {
-		e.mu.Unlock()
-		return nil
-	}
-	e.closed = true
-	for _, m := range e.markets {
-		close(m.in)
+	if !e.closed {
+		e.closed = true
+		for _, m := range e.markets {
+			close(m.in)
+		}
 	}
 	e.mu.Unlock()
 	e.wg.Wait()
@@ -211,9 +239,10 @@ type Result struct {
 // PlaceOrder assigns the next order ID, validates the order and submits it
 // to its symbol's book, then waits until it has been applied. A command
 // that fails validation returns an *InvalidError and is not applied; if the
-// symbol's queue is full, PlaceOrder returns ErrBusy at once. If ctx
-// ends while waiting, PlaceOrder returns ctx.Err() and the order may or may
-// not have been applied; Order tells which.
+// symbol's queue is full, PlaceOrder returns ErrBusy at once. ctx bounds
+// only the submission: if it is already done PlaceOrder submits nothing,
+// and once the order is queued PlaceOrder waits for its result (D020). See
+// ErrLogFailed for what a log failure means.
 func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 	m, ok := e.bySymbol[o.Symbol]
 	if !ok {
@@ -222,7 +251,14 @@ func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 	if len(o.ClientID) > MaxClientIDLen {
 		return Result{}, ErrClientIDLen
 	}
-	id := makeOrderID(e.nextSeq.Add(1), m.index)
+	if err := ctx.Err(); err != nil {
+		return Result{}, err // nothing submitted, so no ID is taken
+	}
+	seq, err := e.nextID()
+	if err != nil {
+		return Result{}, err
+	}
+	id := makeOrderID(seq, m.index)
 	cmd := book.Command{
 		Kind: book.CommandNewOrder, OrderID: id,
 		Side: o.Side, Type: o.Type, TIF: o.TIF, Price: o.Price, Qty: o.Qty,
@@ -235,10 +271,11 @@ func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 }
 
 // CancelOrder submits a cancel of order id to the book of the symbol the
-// ID was issued for and waits until it has been applied. An ID this engine
-// cannot have issued returns ErrUnknownOrder; a valid ID that is not
-// resting gives a Rejected event with ReasonUnknownOrder. A full queue
-// returns ErrBusy at once.
+// ID was issued for and waits until it has been applied, with ctx and
+// errors as for PlaceOrder. An ID this engine cannot have issued (counter 0
+// or not yet reached, or no such symbol) returns ErrUnknownOrder without
+// reaching a book; an issued ID that is not resting gives a Rejected event
+// with ReasonUnknownOrder.
 func (e *Engine) CancelOrder(ctx context.Context, id book.OrderID) (Result, error) {
 	cmd := book.Command{Kind: book.CommandCancel, OrderID: id}
 	if r := cmd.Validate(); r != book.ReasonNone {
@@ -281,13 +318,42 @@ func (e *Engine) Order(ctx context.Context, id book.OrderID) (book.Order, bool, 
 	return resp.order, resp.found, err
 }
 
-// marketOf returns the market an order ID was issued for, if any.
+// marketOf returns the market an order ID was issued for, if the engine
+// can have issued it.
 func (e *Engine) marketOf(id book.OrderID) (*market, bool) {
 	i := symbolIndexOf(id)
-	if id == 0 || i >= len(e.markets) {
+	if seq := seqOf(id); seq == 0 || seq > e.nextSeq.Load() || i >= len(e.markets) {
 		return nil, false
 	}
 	return e.markets[i], true
+}
+
+// nextID issues the next order-ID counter value, first extending the
+// durable reservation if the value lies beyond it (D021).
+func (e *Engine) nextID() (uint64, error) {
+	seq := e.nextSeq.Add(1)
+	if seq <= e.reserved.Load() {
+		return seq, nil
+	}
+	e.reserve.Lock()
+	defer e.reserve.Unlock()
+	if seq > e.reserved.Load() {
+		if err := e.extendReservation(seq); err != nil {
+			return 0, err
+		}
+	}
+	return seq, nil
+}
+
+// extendReservation durably reserves the block after from. The caller
+// holds e.reserve, or no other goroutine runs yet.
+func (e *Engine) extendReservation(from uint64) error {
+	high := max(from, e.reserved.Load()) + idBlock
+	if err := e.ids.store(high); err != nil {
+		return fmt.Errorf("engine: reserving order IDs: %w", err)
+	}
+	e.reserved.Store(high)
+	return nil
 }
 
 // queueFull says what send does when m's queue is full.
@@ -319,13 +385,17 @@ func (e *Engine) send(ctx context.Context, m *market, r *request, full queueFull
 			e.mu.RUnlock()
 			return response{}, ErrBusy
 		}
-	} else {
-		select {
-		case m.in <- r:
-		case <-ctx.Done():
-			e.mu.RUnlock()
-			return response{}, ctx.Err()
-		}
+		e.mu.RUnlock()
+		// A queued command is always applied (Close drains the queue), so
+		// its result is waited for rather than lost to ctx (D020).
+		resp := <-r.reply
+		return resp, resp.err
+	}
+	select {
+	case m.in <- r:
+	case <-ctx.Done():
+		e.mu.RUnlock()
+		return response{}, ctx.Err()
 	}
 	e.mu.RUnlock()
 	select {
