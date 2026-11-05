@@ -1,0 +1,27 @@
+services:
+  engine:
+    build: .
+    image: matching-engine
+    pull_policy: build
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: [data:/data]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/engine", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      start_interval: 1s
+    # Longer than the engine's -shutdown-timeout (10s), so a stop never
+    # cuts its final fsync short.
+    stop_grace_period: 20s
+
+  loadgen:
+    image: matching-engine
+    profiles: [load]
+    entrypoint: ["/usr/local/bin/loadgen", "-addr=engine:8080"]
+    depends_on:
+      engine:
+        condition: service_healthy
+
+volumes:
+  data:

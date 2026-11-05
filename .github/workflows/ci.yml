@@ -24,6 +24,15 @@ jobs:
           go-version-file: go.mod
       - run: go test ./...
 
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --wait
+      - run: docker compose run --rm loadgen -rate 1000 -warmup 1s -duration 5s
+      - if: always()
+        run: docker compose logs engine && docker compose down -v
+
   lint:
     runs-on: ubuntu-latest
     steps:
