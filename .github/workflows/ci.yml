@@ -25,3 +25,21 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fuzz FuzzBook
+        run: go test -run='^$' -fuzz='^FuzzBook$' -fuzztime=30s ./internal/book
+      - name: Fuzz FuzzCommandValidate
+        run: go test -run='^$' -fuzz='^FuzzCommandValidate$' -fuzztime=30s ./internal/book
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: internal/book/testdata/fuzz
