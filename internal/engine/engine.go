@@ -29,6 +29,10 @@ var (
 	// one answered with it and its events was applied, but whether it is
 	// durable is unknown (see Config.SyncInterval).
 	ErrLogFailed = errors.New("engine: command log failed")
+	// ErrDataDirInUse is returned by New when another engine, in this
+	// process or another, has the data directory open (D028). Platforms
+	// with neither flock nor LockFileEx do not lock it.
+	ErrDataDirInUse = errors.New("engine: data directory is in use by another engine")
 )
 
 // MaxClientIDLen is the longest client_id the engine accepts.
@@ -52,7 +56,8 @@ type Config struct {
 	Symbols []string
 
 	// DataDir holds one command log per symbol, <symbol>.log. It is
-	// created if missing; existing logs are replayed by New.
+	// created if missing; existing logs are replayed by New. One engine
+	// at a time can use it.
 	DataDir string
 
 	// SyncInterval is how often a symbol's goroutine fsyncs its log
@@ -146,6 +151,9 @@ type Engine struct {
 	reserved atomic.Uint64 // highest counter value durably reserved (D021)
 	reserve  sync.Mutex    // serializes extending the reservation
 	ids      idStore
+	lock     *os.File // held on DataDir until Close (D028)
+	unlock   sync.Once
+	errLock  error // of releasing lock
 
 	// mu guards closed and the sends to market queues, so Close never
 	// closes a queue while a send to it is in progress.
@@ -154,9 +162,11 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
-// New replays each symbol's command log from cfg.DataDir into a fresh
-// book, then starts one goroutine per symbol. Order IDs continue after the
-// highest one found in the logs or reserved before (D021).
+// New locks cfg.DataDir, replays each symbol's command log from it into a
+// fresh book, then starts one goroutine per symbol. Order IDs continue
+// after the highest one found in the logs or reserved before (D021). If
+// another engine has the directory, New returns ErrDataDirInUse having
+// read or written nothing in it.
 func New(cfg Config) (*Engine, error) {
 	if err := cfg.setDefaults(); err != nil {
 		return nil, err
@@ -164,13 +174,14 @@ func New(cfg Config) (*Engine, error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
 	}
-	// DataDir's own entry must survive a machine crash too.
-	if err := syncDir(filepath.Dir(filepath.Clean(cfg.DataDir))); err != nil {
+	lock, err := lockDir(cfg.DataDir)
+	if err != nil {
 		return nil, err
 	}
 	e := &Engine{
 		bySymbol: make(map[string]*market, len(cfg.Symbols)),
 		ids:      idStore{path: filepath.Join(cfg.DataDir, "ids")},
+		lock:     lock,
 	}
 	// A failed start removes the logs it created, which hold only a
 	// header: one left behind would bind its symbol to this attempt's
@@ -186,7 +197,12 @@ func New(cfg Config) (*Engine, error) {
 		if len(created) > 0 {
 			_ = syncDir(cfg.DataDir)
 		}
+		_ = unlockDir(lock)
 		return nil, err
+	}
+	// DataDir's own entry must survive a machine crash too.
+	if err := syncDir(filepath.Dir(filepath.Clean(cfg.DataDir))); err != nil {
+		return fail(err)
 	}
 	var maxSeq uint64
 	for i, s := range cfg.Symbols {
@@ -223,8 +239,9 @@ func New(cfg Config) (*Engine, error) {
 
 // Close stops accepting requests, lets every symbol's goroutine finish the
 // requests already queued, fsync and close its log, and waits for them to
-// stop. It returns any log error. Every call, concurrent or later, waits
-// for the shutdown and returns the same error.
+// stop; then it unlocks the data directory. It returns any log error.
+// Every call, concurrent or later, waits for the shutdown and returns the
+// same error.
 func (e *Engine) Close() error {
 	e.mu.Lock()
 	if !e.closed {
@@ -235,11 +252,12 @@ func (e *Engine) Close() error {
 	}
 	e.mu.Unlock()
 	e.wg.Wait()
+	e.unlock.Do(func() { e.errLock = unlockDir(e.lock) })
 	var errs []error
 	for _, m := range e.markets {
 		errs = append(errs, m.closeErr)
 	}
-	return errors.Join(errs...)
+	return errors.Join(append(errs, e.errLock)...)
 }
 
 // NewOrder is a client's new order. The engine assigns its ID and
@@ -396,6 +414,13 @@ func (e *Engine) nextID() (uint64, error) {
 	e.reserve.Lock()
 	defer e.reserve.Unlock()
 	if seq > e.reserved.Load() {
+		// Not once closed: Close unlocks DataDir, and another engine may
+		// own the ids file by then.
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		if e.closed {
+			return 0, ErrClosed
+		}
 		if err := e.extendReservation(seq); err != nil {
 			return 0, err
 		}

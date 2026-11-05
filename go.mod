@@ -5,6 +5,7 @@ go 1.24.7
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/prometheus/client_golang v1.23.2
+	golang.org/x/sys v0.35.0
 )
 
 require (
@@ -16,6 +17,5 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
