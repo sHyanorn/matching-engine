@@ -76,12 +76,19 @@ type market struct {
 	subs         []*Subscription
 	orders       *orderTracker
 
-	dirty    bool      // written since the last fsync
-	lastSync time.Time // of the last fsync
+	dirty    bool      // written since the last fsync was started or asked for
+	lastSync time.Time // when it was
 	failed   error     // a log write or fsync failed (wraps ErrLogFailed); no command is logged after it
 	closeErr error     // set by shutdown, read by Engine.Close after run returns
 
 	logErr atomic.Pointer[error] // failed, for other goroutines
+
+	// With syncInterval > 0 the fsyncs run on a helper goroutine, so
+	// commands do not wait for them (D031): syncs wakes it, and it
+	// reports a failure in syncErr, which the market takes up.
+	syncs   chan struct{}
+	synced  chan struct{} // closed when the helper has stopped
+	syncErr atomic.Pointer[error]
 }
 
 // openMarket opens symbol's command log in cfg.DataDir, creating it if it
@@ -209,7 +216,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 
 // run is the market's event loop. It takes the next request, then up to
 // maxBatch-1 more that are already queued, and processes the batch in
-// arrival order. While idle it fsyncs pending log writes every
+// arrival order. While idle it has pending log writes fsynced every
 // syncInterval. It returns once the queue is closed and drained.
 func (m *market) run() {
 	defer m.shutdown()
@@ -218,6 +225,8 @@ func (m *market) run() {
 		t := time.NewTicker(m.syncInterval)
 		defer t.Stop()
 		tick = t.C
+		m.syncs, m.synced = make(chan struct{}, 1), make(chan struct{})
+		go m.syncLoop(m.syncs)
 	}
 	for {
 		select {
@@ -233,6 +242,7 @@ func (m *market) run() {
 				return
 			}
 		case <-tick:
+			m.takeSyncErr()
 			if m.dirty {
 				_ = m.sync() // a failure is kept in m.failed
 			}
@@ -271,6 +281,7 @@ func (m *market) drain() bool {
 // or fsync get the error too, with their events: durability was promised
 // and is unknown.
 func (m *market) process(batch []*request) {
+	m.takeSyncErr()
 	m.logBuf, m.recEnds = m.logBuf[:0], m.recEnds[:0]
 	for _, r := range batch {
 		if r.kind == reqCommand {
@@ -336,19 +347,51 @@ func (m *market) process(batch []*request) {
 	}
 }
 
-// sync flushes the log to stable storage. A failure is kept in m.failed.
+// sync has the log flushed to stable storage: by the helper if there is
+// one, at once otherwise. A failure is kept in m.failed.
 func (m *market) sync() error {
 	m.dirty = false
 	m.lastSync = time.Now()
-	err := m.file.Sync()
-	if m.onSync != nil {
-		m.onSync(m.symbol, time.Since(m.lastSync))
+	if m.syncs != nil {
+		select {
+		case m.syncs <- struct{}{}:
+		default: // an fsync is already due to start, and covers these writes
+		}
+		return nil
 	}
-	if err != nil {
+	if err := m.fsync(); err != nil {
 		m.fail("fsync", err)
 		return m.failed
 	}
 	return nil
+}
+
+// syncLoop is the helper: it runs an fsync for each wake on syncs, until
+// syncs is closed.
+func (m *market) syncLoop(syncs <-chan struct{}) {
+	defer close(m.synced)
+	for range syncs {
+		if err := m.fsync(); err != nil {
+			m.syncErr.CompareAndSwap(nil, &err)
+		}
+	}
+}
+
+// takeSyncErr takes up a failed fsync of the helper.
+func (m *market) takeSyncErr() {
+	if err := m.syncErr.Load(); err != nil {
+		m.fail("fsync", *err)
+	}
+}
+
+// fsync flushes the log and reports how long it took.
+func (m *market) fsync() error {
+	start := time.Now()
+	err := m.file.Sync()
+	if m.onSync != nil {
+		m.onSync(m.symbol, time.Since(start))
+	}
+	return err
 }
 
 // fail records the first failed write or fsync of the log: nothing is
@@ -363,13 +406,19 @@ func (m *market) fail(op string, err error) {
 	m.logger.Error("command log failed; the symbol accepts no more commands", "symbol", m.symbol, "err", err)
 }
 
-// shutdown runs when the loop ends: it ends every subscription, then
-// syncs and closes the log.
+// shutdown runs when the loop ends: it ends every subscription, stops the
+// helper once its fsyncs are done, then syncs and closes the log.
 func (m *market) shutdown() {
 	for _, s := range m.subs {
 		m.end(s, ErrClosed)
 	}
 	m.subs = nil
+	if m.syncs != nil {
+		close(m.syncs)
+		<-m.synced
+		m.syncs = nil
+		m.takeSyncErr()
+	}
 	if m.dirty {
 		_ = m.sync() // a failure is kept in m.failed
 	}

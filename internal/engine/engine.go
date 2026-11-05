@@ -61,11 +61,13 @@ type Config struct {
 	// at a time can use it.
 	DataDir string
 
-	// SyncInterval is how often a symbol's goroutine fsyncs its log
-	// after writing to it (default 10ms). Each batch is written to the
-	// operating system before it is applied, so a process crash loses
-	// nothing; a machine crash may lose up to SyncInterval of commands.
-	// A negative value fsyncs after every batch (D017).
+	// SyncInterval is how often a symbol's log is fsynced after writes
+	// to it (default 10ms). Each batch is written to the operating system
+	// before it is applied, so a process crash loses nothing. The fsyncs
+	// run beside the symbol's goroutine, which goes on with later commands
+	// meanwhile, so a machine crash may lose up to SyncInterval of
+	// commands plus those taken during an fsync in progress (D031). A
+	// negative value fsyncs after every batch, before its replies (D017).
 	SyncInterval time.Duration
 
 	// QueueSize is the capacity of each symbol's request queue
@@ -90,8 +92,8 @@ type Config struct {
 	Logger *slog.Logger
 
 	// OnSync, if set, gets the duration of every fsync of a symbol's log,
-	// failed ones included. It is called on the symbol's goroutine, so it
-	// must be quick.
+	// failed ones included. It is called on the goroutine that ran the
+	// fsync, which waits for it, so it must be quick.
 	OnSync func(symbol string, took time.Duration)
 
 	// onReplay, if set, receives the events of every command replayed

@@ -19,10 +19,14 @@ import (
 
 // faultyLog wraps a market's log file and injects failures: writes stop
 // after limit bytes (a short write, as on a full disk), and Sync can fail.
+// If stall is set, Sync waits for it to close, after closing syncing once.
 type faultyLog struct {
 	f       *os.File
 	limit   int // bytes still accepted; negative means no limit
 	syncErr error
+	stall   chan struct{}
+	syncing chan struct{}
+	once    sync.Once
 }
 
 var errInjected = errors.New("injected failure")
@@ -40,6 +44,10 @@ func (l *faultyLog) Write(p []byte) (int, error) {
 }
 
 func (l *faultyLog) Sync() error {
+	if l.stall != nil {
+		l.once.Do(func() { close(l.syncing) })
+		<-l.stall
+	}
 	if l.syncErr != nil {
 		return l.syncErr
 	}
@@ -416,4 +424,74 @@ func TestOnSyncReportsEveryFsync(t *testing.T) {
 		t.Fatalf("OnSync calls %v, want one per order for A", got)
 	}
 	mustClose(t, e)
+}
+
+// TestCommandsDoNotWaitForIntervalFsync stalls an interval fsync: commands
+// go on meanwhile (D031). Once the fsync returns its failure, the log
+// stops as after any other.
+func TestCommandsDoNotWaitForIntervalFsync(t *testing.T) {
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: t.TempDir(), SyncInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &faultyLog{limit: -1, syncErr: errInjected, stall: make(chan struct{}), syncing: make(chan struct{})}
+	injectFault(e, l)
+	ctx := context.Background()
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
+		t.Fatal(err)
+	}
+	<-l.syncing
+	done := make(chan error, 1)
+	go func() {
+		for range 10 {
+			if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("order during the fsync: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(l.stall)
+		t.Fatal("orders waited for the stalled fsync")
+	}
+	close(l.stall)
+	waitFor(t, "the failed fsync to be taken up", func() bool { return e.LogErr("A") != nil })
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); !errors.Is(err, ErrLogFailed) {
+		t.Fatalf("order after the failed fsync: %v, want ErrLogFailed", err)
+	}
+	if err := e.Close(); !errors.Is(err, ErrLogFailed) {
+		t.Fatalf("Close = %v, want ErrLogFailed", err)
+	}
+}
+
+// TestCloseWaitsForIntervalFsync checks that Close returns only once the
+// helper's fsync in progress is done, so nothing touches the log after it.
+func TestCloseWaitsForIntervalFsync(t *testing.T) {
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: t.TempDir(), SyncInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &faultyLog{limit: -1, stall: make(chan struct{}), syncing: make(chan struct{})}
+	injectFault(e, l)
+	if _, err := e.PlaceOrder(context.Background(), limitOrder("A", book.Buy, 100, 1)); err != nil {
+		t.Fatal(err)
+	}
+	<-l.syncing
+	closed := make(chan error, 1)
+	go func() { closed <- e.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned %v during an fsync", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(l.stall)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
 }
