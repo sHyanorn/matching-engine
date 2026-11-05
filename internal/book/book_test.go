@@ -213,8 +213,8 @@ func TestApplyRandomGTC(t *testing.T) {
 // TestApplyAllocations pins the hot paths that must not allocate once the
 // output buffer has grown: a taker that fully fills against a resting maker
 // and a cancel, each both when the level survives and when it empties and
-// is removed from the tree. Resting a new order allocates its node by
-// design. Every measured call is checked to take the intended path, because
+// is removed from the tree, plus an IOC remainder, a rejected FOK and a
+// market fill. Resting a new order allocates its node by design. Every measured call is checked to take the intended path, because
 // AllocsPerRun rounds down: a path taken by only some calls could hide one
 // allocation per call.
 func TestApplyAllocations(t *testing.T) {
@@ -224,7 +224,9 @@ func TestApplyAllocations(t *testing.T) {
 		resting func(id OrderID) Command // resting order id, for id 1..runs+2
 		op      func(i OrderID) Command  // measured command i, for i 1..runs+1
 		want    EventKind                // kind of op's last event
-		empties bool                     // whether op empties its level
+		// empties says whether op's last event reports LevelQty 0: it
+		// emptied a level, or (IOC remainder, FOK rejection) touched none.
+		empties bool
 	}{
 		{
 			name:    "full fill, level stays",
@@ -244,6 +246,28 @@ func TestApplyAllocations(t *testing.T) {
 			resting: func(id OrderID) Command { return limit(id, Buy, 50, 1) },
 			op:      cancel,
 			want:    EventCanceled,
+		},
+		{
+			// One maker per price: IOC i, limited to maker i's price, takes
+			// that one lot (removing its level) and cancels the other lot.
+			name:    "IOC trades, then its remainder is canceled",
+			resting: func(id OrderID) Command { return limit(id, Sell, 100+Price(id), 1) },
+			op:      func(i OrderID) Command { return ioc(1_000_000+i, Buy, 100+Price(i), 2) },
+			want:    EventCanceled,
+			empties: true,
+		},
+		{
+			name:    "FOK that cannot fill is rejected",
+			resting: func(id OrderID) Command { return limit(id, Sell, 100, 1) },
+			op:      func(i OrderID) Command { return fok(1_000_000+i, Buy, 100, 1_000_000) },
+			want:    EventRejected,
+			empties: true,
+		},
+		{
+			name:    "market order fills in full",
+			resting: func(id OrderID) Command { return limit(id, Buy, 100, 1) },
+			op:      func(i OrderID) Command { return market(1_000_000+i, Sell, 1) },
+			want:    EventTrade,
 		},
 		{
 			// Prices are a permutation of 1..runs+2 (37 is coprime with
@@ -279,5 +303,40 @@ func TestApplyAllocations(t *testing.T) {
 			}
 			checkBook(t, b)
 		})
+	}
+}
+
+// TestAvailable pins the FOK pre-check: it adds whole opposite levels from
+// the best price outward, stops at the order's limit, and stops as soon as
+// the total reaches the order's quantity, so it walks only the levels a fill
+// would consume.
+func TestAvailable(t *testing.T) {
+	b := New()
+	for i, p := range []Price{100, 101, 102} { // asks of 5 each
+		b.Apply(limit(OrderID(1+i), Sell, p, 5), nil)
+	}
+	for i, p := range []Price{99, 98, 97} { // bids of 4 each
+		b.Apply(limit(OrderID(10+i), Buy, p, 4), nil)
+	}
+	tests := []struct {
+		name string
+		cmd  Command
+		want Qty
+	}{
+		{"buy stops once the quantity is reached", fok(20, Buy, 102, 6), 10},
+		{"buy stops at its limit", fok(20, Buy, 101, 100), 10},
+		{"buy below the best ask finds nothing", fok(20, Buy, 99, 1), 0},
+		{"buy at the best ask exactly", fok(20, Buy, 100, 5), 5},
+		{"market buy counts every level it needs", marketFOK(20, Buy, 100), 15},
+		{"market buy needing one level", marketFOK(20, Buy, 1), 5},
+		{"sell stops at its limit", fok(20, Sell, 98, 100), 8},
+		{"sell stops once the quantity is reached", fok(20, Sell, 1, 5), 8},
+		{"sell above the best bid finds nothing", fok(20, Sell, 100, 1), 0},
+		{"market sell takes all bids", marketFOK(20, Sell, 1_000), 12},
+	}
+	for _, tt := range tests {
+		if got := b.available(tt.cmd); got != tt.want {
+			t.Errorf("%s: available = %d, want %d", tt.name, got, tt.want)
+		}
 	}
 }
