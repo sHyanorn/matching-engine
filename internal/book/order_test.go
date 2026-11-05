@@ -83,7 +83,7 @@ func TestSideCrosses(t *testing.T) {
 		want     bool
 	}{
 		{Buy, 100, 99, true},
-		{Buy, 100, 100, true}, // equal prices trade (SPEC §6.1: 大于等于)
+		{Buy, 100, 100, true}, // equal prices trade (SPEC §6.1: greater than or equal)
 		{Buy, 100, 101, false},
 		{Sell, 100, 101, true},
 		{Sell, 100, 100, true},
