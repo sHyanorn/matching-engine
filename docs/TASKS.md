@@ -45,7 +45,6 @@
 
 ## M6 展示
 - [ ] Dockerfile 和 docker compose
-- [ ] 英文 README：介绍、架构图、性能表、GIF、快速启动
-- [ ] 中文 README 或双语
+- [ ] README（只写英文版）：介绍、架构图、性能表、GIF、快速启动
 - [ ] 选做：简单网页盘口可视化
 - [ ] 整理 DECISIONS.md，确保每个决定都有理由
