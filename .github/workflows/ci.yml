@@ -17,6 +17,12 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
+    # Test files go to the runner's local disk: an fsync on its system disk,
+    # where the temporary directory is by default, takes tens of
+    # milliseconds (bench-results/m6-windows).
+    env:
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
