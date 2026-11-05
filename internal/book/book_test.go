@@ -6,50 +6,11 @@ import (
 	"testing"
 )
 
-// checkBook fails t unless every structural invariant of b holds: both trees
-// are valid red-black trees, every level's queue is consistent with its
-// totals, every resting order is a Limit GTC order at its level's price on
-// its tree's side with Filled + Remaining = Qty and Remaining > 0, time
-// priority (RestedSeq) increases from head to tail, the ID map and the queues
-// hold exactly the same orders, and the book is not crossed. It is O(N) in
-// the number of resting orders.
+// checkBook fails t if b.CheckInvariants reports a violation.
 func checkBook(t *testing.T, b *Book) {
 	t.Helper()
-	seen := 0
-	for _, s := range []Side{Buy, Sell} {
-		tree := b.side(s)
-		if err := checkTree(tree); err != nil {
-			t.Fatalf("%v tree: %v", s, err)
-		}
-		for l := tree.best; l != nil; l = l.next() {
-			ids := queueIDs(t, l)
-			if len(ids) == 0 {
-				t.Fatalf("%v level %d is empty but still in the tree", s, l.price)
-			}
-			var lastSeq uint64
-			for o := l.head; o != nil; o = o.next {
-				switch {
-				case o.Side != s || o.Price != l.price:
-					t.Fatalf("order %d (%v @ %d) sits in the %v level at %d", o.ID, o.Side, o.Price, s, l.price)
-				case o.Type != Limit || o.TIF != GTC:
-					t.Fatalf("order %d is %v %v but resting", o.ID, o.Type, o.TIF)
-				case o.Remaining <= 0 || o.Filled < 0 || o.Filled+o.Remaining != o.Qty:
-					t.Fatalf("order %d: Qty %d, Filled %d, Remaining %d", o.ID, o.Qty, o.Filled, o.Remaining)
-				case o.RestedSeq <= lastSeq || o.RestedSeq > b.seq:
-					t.Fatalf("order %d: RestedSeq %d after %d (last Seq %d)", o.ID, o.RestedSeq, lastSeq, b.seq)
-				case b.orders[o.ID] != o:
-					t.Fatalf("order %d is queued but the ID map does not point at it", o.ID)
-				}
-				lastSeq = o.RestedSeq
-				seen++
-			}
-		}
-	}
-	if seen != len(b.orders) {
-		t.Fatalf("queues hold %d orders, the ID map %d", seen, len(b.orders))
-	}
-	if bid, ask := b.bids.best, b.asks.best; bid != nil && ask != nil && Buy.Crosses(bid.price, ask.price) {
-		t.Fatalf("book is crossed: best bid %d, best ask %d", bid.price, ask.price)
+	if err := b.CheckInvariants(); err != nil {
+		t.Fatal(err)
 	}
 }
 
