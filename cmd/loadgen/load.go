@@ -106,7 +106,7 @@ func measure(ctx context.Context, cfg config) (report, error) {
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				w.handle(j)
+				w.handle(ctx, j)
 			}
 		}()
 	}
@@ -115,9 +115,14 @@ func measure(ctx context.Context, cfg config) (report, error) {
 	// one arrives every 20 µs, finer than a sleep can resolve. If every
 	// worker is busy, sends wait, and the delay shows in the latency.
 	gen := flow.New(cfg.seed, cfg.sd)
-	for i := 0; i < total && ctx.Err() == nil; {
+send:
+	for i := 0; i < total; {
 		for n := min(total, int(float64(time.Since(t0))/period)+1); i < n; i++ {
-			jobs <- job{op: gen.Next(), planned: due(i), measured: !due(i).Before(start)}
+			select {
+			case jobs <- job{op: gen.Next(), planned: due(i), measured: !due(i).Before(start)}:
+			case <-ctx.Done():
+				break send
+			}
 		}
 		if i < total {
 			time.Sleep(time.Until(due(i)))
@@ -141,15 +146,28 @@ func measure(ctx context.Context, cfg config) (report, error) {
 
 // sampleHiccups records, from start to end, how late each 1 ms sleep
 // wakes up: a pause of loadgen or of the machine, which adds to every
-// latency measured meanwhile (after jHiccup).
+// latency measured meanwhile.
 func sampleHiccups(start, end time.Time) []int64 {
 	var late []int64
 	time.Sleep(time.Until(start))
 	for now := time.Now(); now.Before(end); {
-		time.Sleep(time.Millisecond)
+		time.Sleep(hiccupTick)
 		t := time.Now()
-		late = append(late, int64(t.Sub(now)-time.Millisecond))
+		late = wokeLate(late, t.Sub(now)-hiccupTick)
 		now = t
+	}
+	return late
+}
+
+const hiccupTick = time.Millisecond
+
+// wokeLate appends a wakeup that came d late and, as jHiccup does, the
+// wakeups the pause swallowed, each one tick less late, down to one tick:
+// so the percentiles weigh a pause by how long it lasted.
+func wokeLate(late []int64, d time.Duration) []int64 {
+	late = append(late, int64(d))
+	for m := d - hiccupTick; m >= hiccupTick; m -= hiccupTick {
+		late = append(late, int64(m))
 	}
 	return late
 }

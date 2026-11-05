@@ -46,7 +46,7 @@ func (l *loader) newWorker(ctx context.Context) (*worker, error) {
 }
 
 // handle sends one request of the flow and records its outcome.
-func (w *worker) handle(j job) {
+func (w *worker) handle(ctx context.Context, j job) {
 	method, path, body := http.MethodPost, "/v1/orders", w.orderBody(j)
 	if j.op.Cancel {
 		id := w.l.ids[j.op.Order].Load()
@@ -59,7 +59,7 @@ func (w *worker) handle(j job) {
 		method, path, body = http.MethodDelete, "/v1/orders/"+strconv.FormatUint(id, 10), nil
 	}
 	sent := time.Now()
-	status, data, err := w.do(context.Background(), method, path, body)
+	status, data, err := w.do(ctx, method, path, body)
 	done := time.Now()
 
 	outcome, id, traded := classify(j, status, data, err)

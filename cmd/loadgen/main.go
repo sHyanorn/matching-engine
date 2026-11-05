@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"runtime/pprof"
@@ -49,8 +50,10 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if cfg.rate <= 0 || cfg.duration <= 0 || cfg.warmup < 0 || cfg.conns <= 0 || cfg.sd < 0 {
-		return errors.New("loadgen: -rate, -duration and -conns must be positive, -warmup and -sd not negative")
+	// The comparisons are written so that NaN fails them.
+	requests := cfg.rate * (cfg.warmup + cfg.duration).Seconds()
+	if !(cfg.rate > 0) || cfg.duration <= 0 || cfg.warmup < 0 || cfg.conns <= 0 || !(cfg.sd >= 0) || !(requests < math.MaxInt32) {
+		return errors.New("loadgen: -rate, -duration and -conns must be positive, -warmup and -sd not negative, and the run under 2^31 requests")
 	}
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile)
