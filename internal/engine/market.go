@@ -264,9 +264,10 @@ func (m *market) drain() bool {
 // log, so it always equals what replaying the log gives. After a failed or
 // short write, the commands that did not reach the log, and every command
 // after them, fail with ErrLogFailed and are never applied. A failed fsync
-// leaves the batch in the file, so the batch is applied; when every batch
-// is fsynced (syncInterval < 0) its callers also get the error, because
-// durability was promised and is unknown.
+// leaves the batch in the file, so the batch is applied. When every batch
+// is fsynced (syncInterval < 0), the commands applied after a failed write
+// or fsync get the error too, with their events: durability was promised
+// and is unknown.
 func (m *market) process(batch []*request) {
 	m.logBuf, m.recEnds = m.logBuf[:0], m.recEnds[:0]
 	for _, r := range batch {
@@ -289,6 +290,9 @@ func (m *market) process(batch []*request) {
 		switch {
 		case err != nil:
 			m.fail("write", err)
+			if m.syncInterval < 0 {
+				syncErr = m.failed // the commands that were written are never fsynced
+			}
 		case m.syncInterval < 0 || time.Since(m.lastSync) >= m.syncInterval:
 			if err := m.sync(); err != nil && m.syncInterval < 0 {
 				syncErr = err

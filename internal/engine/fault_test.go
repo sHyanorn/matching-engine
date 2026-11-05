@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"slices"
@@ -79,11 +80,19 @@ func sameDepth(t *testing.T, cfg Config, want Depth) {
 // the middle of its third record. The book applies exactly the commands
 // that reached the log; the rest fail with ErrLogFailed and are never
 // applied; the market accepts no more commands; and a restarted engine
-// has the same book.
+// has the same book. When every batch is fsynced, the logged commands of
+// the failed batch report ErrLogFailed too, with their events: they were
+// applied, but nothing will fsync them.
 func TestShortWriteAppliesOnlyLoggedCommands(t *testing.T) {
+	for _, interval := range []time.Duration{0, -1} {
+		t.Run(fmt.Sprintf("SyncInterval=%v", interval), func(t *testing.T) { shortWrite(t, interval) })
+	}
+}
+
+func shortWrite(t *testing.T, interval time.Duration) {
 	ctx := context.Background()
 	g := newGateClock()
-	cfg := Config{Symbols: []string{"A"}, DataDir: t.TempDir(), Clock: g.Now}
+	cfg := Config{Symbols: []string{"A"}, DataDir: t.TempDir(), Clock: g.Now, SyncInterval: interval}
 	e, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +126,9 @@ func TestShortWriteAppliesOnlyLoggedCommands(t *testing.T) {
 	}
 	for i, err := range errs {
 		switch logged := i < 2; {
-		case logged && (err != nil || len(events[i]) == 0):
+		case logged && interval < 0 && (!errors.Is(err, ErrLogFailed) || len(events[i]) == 0):
+			t.Errorf("order %d was logged, not fsynced, but got %v, %d events", i, err, len(events[i]))
+		case logged && interval >= 0 && (err != nil || len(events[i]) == 0):
 			t.Errorf("order %d was logged but got %v, %d events", i, err, len(events[i]))
 		case !logged && (!errors.Is(err, ErrLogFailed) || len(events[i]) != 0):
 			t.Errorf("order %d was not logged but got %v, %d events", i, err, len(events[i]))
