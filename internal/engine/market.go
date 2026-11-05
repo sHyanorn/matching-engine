@@ -15,9 +15,11 @@ import (
 type reqKind uint8
 
 const (
-	reqCommand reqKind = iota + 1 // log cmd, then apply it to the book
-	reqDepth                      // read n levels per side
-	reqOrder                      // look up a resting order
+	reqCommand     reqKind = iota + 1 // log cmd, then apply it to the book
+	reqDepth                          // read n levels per side
+	reqOrder                          // look up a resting order
+	reqSubscribe                      // add sub to the subscribers
+	reqUnsubscribe                    // remove sub
 )
 
 // request is one unit of work for a market's goroutine. reply is buffered
@@ -29,6 +31,7 @@ type request struct {
 	clientID string
 	n        int
 	id       book.OrderID
+	sub      *Subscription
 	reply    chan response
 }
 
@@ -56,6 +59,7 @@ type market struct {
 	batch        []*request
 	logBuf       []byte
 	out          []book.Event // reused output buffer for book.Apply
+	subs         []*Subscription
 
 	dirty    bool      // written since the last fsync
 	lastSync time.Time // of the last fsync
@@ -225,7 +229,10 @@ func (m *market) process(batch []*request) {
 				break
 			}
 			m.out = m.book.Apply(r.cmd, m.out[:0])
-			resp.events = slices.Clone(m.out) // m.out is overwritten by the next Apply
+			// One copy, since m.out is overwritten by the next Apply,
+			// shared read-only by the caller and every subscriber.
+			resp.events = slices.Clone(m.out)
+			m.publish(resp.events)
 		case reqDepth:
 			resp.depth = Depth{
 				Bids:    m.book.Depth(book.Buy, r.n, nil),
@@ -234,6 +241,10 @@ func (m *market) process(batch []*request) {
 			}
 		case reqOrder:
 			resp.order, resp.found = m.book.Order(r.id)
+		case reqSubscribe:
+			resp = m.subscribe(r.sub)
+		case reqUnsubscribe:
+			m.unsubscribe(r.sub)
 		}
 		r.reply <- resp
 	}
@@ -249,8 +260,13 @@ func (m *market) sync() {
 	m.lastSync = time.Now()
 }
 
-// shutdown runs when the loop ends: it syncs and closes the log.
+// shutdown runs when the loop ends: it ends every subscription, then
+// syncs and closes the log.
 func (m *market) shutdown() {
+	for _, s := range m.subs {
+		m.end(s, ErrClosed)
+	}
+	m.subs = nil
 	if m.dirty {
 		m.sync()
 	}
