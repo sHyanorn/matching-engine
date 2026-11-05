@@ -72,15 +72,15 @@ type instance struct {
 	err    error // run's result; set before done is closed
 }
 
-// start calls run on dir in a goroutine and waits for its listening line.
-// The instance is stopped when the test ends.
-func start(t *testing.T, dir string) *instance {
+// start calls run on dir, with any extra flags, in a goroutine and waits
+// for its listening line. The instance is stopped when the test ends.
+func start(t *testing.T, dir string, flags ...string) *instance {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	in := &instance{cancel: cancel, done: make(chan struct{})}
 	pr, pw := io.Pipe()
 	go func() {
-		in.err = run(ctx, []string{"-addr", "127.0.0.1:0", "-data", dir, "-symbols", symbol}, pw)
+		in.err = run(ctx, append([]string{"-addr", "127.0.0.1:0", "-data", dir, "-symbols", symbol}, flags...), pw)
 		_ = pw.Close() // a pipe writer's Close never fails
 		close(in.done)
 	}()
@@ -143,14 +143,8 @@ func (in *instance) stop(t *testing.T) error {
 }
 
 // newClient returns a client that never uses a proxy and bounds every
-// request by 3*waitFor.
-//
-// With keepAlive false every request has a connection of its own. Requests
-// that race a shutdown need that: http.Server.Shutdown closes connections
-// it sees as idle, and a keep-alive connection stays idle until the server
-// has parsed the next request, so a request read just before the close is
-// still handed to the handler, applied, and its reply lost. A fresh
-// connection is new, not idle, until it is served, so Shutdown waits for it.
+// request by 3*waitFor. With keepAlive false every request has a
+// connection of its own.
 func newClient(t *testing.T, keepAlive bool) *http.Client {
 	t.Helper()
 	tr := &http.Transport{DisableKeepAlives: !keepAlive}
@@ -274,7 +268,17 @@ func waitGroup(t *testing.T, wg *sync.WaitGroup, what string) {
 // flight, then starts it again on the same data directory: every
 // acknowledged order must survive with its status, and nothing that was
 // applied may have gone unacknowledged.
+// A shutdown under load loses no acknowledged order and applies none whose
+// reply was lost. Keep-alive connections are the hard case: Shutdown closes
+// a connection it sees as idle, which can race a request the server has
+// just read from it.
 func TestRunShutsDownGracefullyAndRestarts(t *testing.T) {
+	for _, keepAlive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keepAlive=%v", keepAlive), func(t *testing.T) { testShutdownUnderLoad(t, keepAlive) })
+	}
+}
+
+func testShutdownUnderLoad(t *testing.T, keepAlive bool) {
 	const (
 		workers = 16
 		// perWorker is a bound only; workers stop at the first transport
@@ -286,7 +290,7 @@ func TestRunShutsDownGracefullyAndRestarts(t *testing.T) {
 	dir := t.TempDir()
 	first := start(t, dir)
 	client := newClient(t, true)
-	flood := newClient(t, false) // see newClient
+	flood := newClient(t, keepAlive)
 
 	// A partial fill, which the restarted book must reproduce.
 	maker := place(t, client, first.base, orderJSON("sell", 5000, 10, "maker"))
@@ -347,8 +351,8 @@ func TestRunShutsDownGracefullyAndRestarts(t *testing.T) {
 	waitGroup(t, &wg, "flood clients")
 
 	// Every request got 200 or 503 shutting_down (the queue of 4096 cannot
-	// fill with 16 clients, so never busy), or failed in transport and so,
-	// on a connection of its own, never reached a handler.
+	// fill with 16 clients, so never busy), or failed in transport, in which
+	// case nothing was applied.
 	var acked []orderReply
 	transportErrors := 0
 	for _, o := range outcomes {
@@ -466,5 +470,23 @@ func TestRunShutsDownGracefullyAndRestarts(t *testing.T) {
 	}
 	if err := second.stop(t); err != nil {
 		t.Fatalf("second run returned %v, want nil", err)
+	}
+}
+
+// A client that stalls in the middle of a request delays shutdown by at
+// most the server's read timeout, and run still returns nil.
+func TestShutdownWithStalledRequest(t *testing.T) {
+	in := start(t, t.TempDir(), "-shutdown-timeout", "1m")
+	conn, err := net.Dial("tcp", strings.TrimPrefix(in.base, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := io.WriteString(conn, "POST /v1/orders HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the handler is now waiting for the body
+	if err := in.stop(t); err != nil {
+		t.Fatalf("run returned %v, want nil", err)
 	}
 }

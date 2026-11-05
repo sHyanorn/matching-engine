@@ -80,10 +80,11 @@ type market struct {
 
 // openMarket opens symbol's command log in cfg.DataDir, creating it if it
 // does not exist, and replays it into a fresh book. A torn last record is
-// truncated away. It returns the market and the highest order-ID counter
-// value of a logged new order.
-func openMarket(symbol string, index int, cfg Config) (*market, uint64, error) {
-	m := &market{
+// truncated away. It returns the market, the highest order-ID counter
+// value of a logged new order, and whether it created the log, which it
+// reports even with an error.
+func openMarket(symbol string, index int, cfg Config) (m *market, maxSeq uint64, created bool, err error) {
+	m = &market{
 		symbol:       symbol,
 		index:        index,
 		in:           make(chan *request, cfg.QueueSize),
@@ -95,28 +96,28 @@ func openMarket(symbol string, index int, cfg Config) (*market, uint64, error) {
 		lastSync:     time.Now(),
 	}
 	path := filepath.Join(cfg.DataDir, symbol+".log")
-	if err := createLog(path, symbol, index); err != nil {
-		return nil, 0, err
+	if created, err = createLog(path, symbol, index); err != nil {
+		return nil, 0, created, err
 	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, created, err
 	}
-	maxSeq, err := m.replay(f, cfg.onReplay)
-	if err != nil {
+	if maxSeq, err = m.replay(f, cfg.onReplay); err != nil {
 		_ = f.Close() // the replay error is the one to report
-		return nil, 0, fmt.Errorf("%s: %w", path, err)
+		return nil, 0, created, fmt.Errorf("%s: %w", path, err)
 	}
 	m.file = f
-	return m, maxSeq, nil
+	return m, maxSeq, created, nil
 }
 
-// createLog creates a log holding only its header, unless path exists. The
-// header goes to a temporary file that is synced and then renamed into
-// place, so a crash never leaves a log with a partial header.
-func createLog(path, symbol string, index int) error {
+// createLog creates a log holding only its header, unless path exists, and
+// reports whether it did. The header goes to a temporary file that is
+// synced and then renamed into place, so a crash never leaves a log with a
+// partial header.
+func createLog(path, symbol string, index int) (bool, error) {
 	if _, err := os.Stat(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return false, err
 	}
 	tmp := path + ".tmp"
 	err := writeFileSync(tmp, appendHeader(nil, symbol, index))
@@ -125,9 +126,9 @@ func createLog(path, symbol string, index int) error {
 	}
 	if err != nil {
 		_ = os.Remove(tmp) // best effort; err is the one to report
-		return err
+		return false, err
 	}
-	return syncDir(filepath.Dir(path))
+	return true, syncDir(filepath.Dir(path))
 }
 
 // writeFileSync writes data to a new or truncated file and fsyncs it.

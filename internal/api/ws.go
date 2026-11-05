@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,8 +20,8 @@ import (
 
 const (
 	maxClientMessage = 4 << 10
-	writeTimeout     = 10 * time.Second
-	outQueue         = 256 // messages waiting for the connection's writer
+	outQueue         = 256     // messages waiting for the connection's writer
+	maxQueuedBytes   = 1 << 20 // bytes waiting for the writer, beyond one message
 )
 
 type clientMessage struct {
@@ -59,11 +61,13 @@ type serverMessage struct {
 // writer sends queued messages, and each subscribed channel has a pump
 // that turns engine updates into messages.
 type stream struct {
-	srv    *Server
-	conn   *websocket.Conn
-	ctx    context.Context
-	cancel context.CancelFunc
-	out    chan []byte
+	srv        *Server
+	conn       *websocket.Conn
+	ctx        context.Context
+	cancel     context.CancelFunc
+	out        chan []byte
+	queued     atomic.Int64  // bytes in out
+	writerDone chan struct{} // closed when the writer has stopped
 
 	mu       sync.Mutex
 	channels map[string]*channel
@@ -88,12 +92,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxClientMessage)
 	ctx, cancel := context.WithCancel(context.Background())
-	st := &stream{srv: s, conn: conn, ctx: ctx, cancel: cancel, out: make(chan []byte, outQueue), channels: map[string]*channel{}}
+	st := &stream{
+		srv: s, conn: conn, ctx: ctx, cancel: cancel,
+		out: make(chan []byte, outQueue), writerDone: make(chan struct{}), channels: map[string]*channel{},
+	}
 
 	s.mu.Lock()
 	if s.stopping.Load() { // CloseStreams may have run since the check above
 		s.mu.Unlock()
-		st.close(1001, "shutting down")
+		close(st.writerDone) // no writer was started
+		st.close(websocket.StatusGoingAway, "shutting down")
 		return
 	}
 	s.streams[st] = struct{}{}
@@ -124,15 +132,24 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 }
 
 // close ends the connection once, with code and reason: it stops the
-// writer and the pumps, then runs the close handshake, which waits for the
-// peer (bounded by the library) off every caller's path.
+// writer and the pumps, then, off every caller's path, lets a message
+// being written finish (for up to the write timeout) and runs the close
+// handshake, which the library bounds too.
 //
-// Reads and writes never use st.ctx: the library drops the connection
-// without a close frame when an operation's context is canceled.
+// Reads and writes never use a context that can end: the library drops
+// the connection without a close frame when an operation's context ends.
 func (st *stream) close(code websocket.StatusCode, reason string) {
 	st.once.Do(func() {
 		st.cancel()
-		go func() { _ = st.conn.Close(code, reason) }()
+		go func() {
+			t := time.NewTimer(st.srv.opts.WriteTimeout)
+			defer t.Stop()
+			select {
+			case <-st.writerDone:
+			case <-t.C:
+			}
+			_ = st.conn.Close(code, reason)
+		}()
 	})
 }
 
@@ -163,18 +180,22 @@ func (st *stream) readLoop() {
 	}
 }
 
+// writeLoop writes queued messages. A message that takes longer than the
+// write timeout marks the client as a slow consumer.
 func (st *stream) writeLoop() {
+	defer close(st.writerDone)
 	for {
 		select {
 		case msg := <-st.out:
+			st.queued.Add(-int64(len(msg)))
 			if st.ctx.Err() != nil {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-			err := st.conn.Write(ctx, websocket.MessageText, msg)
-			cancel()
+			slow := time.AfterFunc(st.srv.opts.WriteTimeout, func() { st.close(websocket.StatusPolicyViolation, "slow consumer") })
+			err := st.conn.Write(context.Background(), websocket.MessageText, msg)
+			slow.Stop()
 			if err != nil {
-				st.close(websocket.StatusPolicyViolation, "write timeout")
+				st.close(websocket.StatusInternalError, "write failed") // the connection is gone
 				return
 			}
 		case <-st.ctx.Done():
@@ -185,16 +206,24 @@ func (st *stream) writeLoop() {
 
 // send queues msg, waiting while the writer is behind. A pump blocked
 // here lets its engine subscription fill, so a client that does not read
-// is disconnected as a slow consumer.
+// is disconnected as a slow consumer; so is one whose queued messages
+// pass maxQueuedBytes, which bounds the memory a connection holds.
 func (st *stream) send(msg serverMessage) bool {
 	data, err := json.Marshal(msg)
 	if err != nil {
+		return false
+	}
+	n := int64(len(data))
+	if backlog := st.queued.Add(n) - n; backlog > 0 && backlog+n > maxQueuedBytes {
+		st.queued.Add(-n)
+		st.close(websocket.StatusPolicyViolation, "slow consumer")
 		return false
 	}
 	select {
 	case st.out <- data:
 		return true
 	case <-st.ctx.Done():
+		st.queued.Add(-n)
 		return false
 	}
 }
@@ -219,7 +248,7 @@ func (st *stream) subscribe(name string) {
 	}
 	depth := 0
 	if kind == "book" {
-		depth = maxDepth
+		depth = math.MaxInt // the whole book, which the deltas then keep current
 	}
 	sub, err := st.srv.eng.Subscribe(st.ctx, symbol, st.srv.opts.SubscriberBuffer, depth)
 	switch {
@@ -269,10 +298,22 @@ func (st *stream) pump(ch *channel, isBook bool) {
 		}
 	}
 	for u := range ch.sub.C {
-		for _, msg := range channelMessages(ch.name, isBook, u.Events) {
-			msg.Seq = next()
-			if !st.send(msg) {
-				return
+		if isBook {
+			if msg, ok := bookDelta(ch.name, u.Events); ok {
+				msg.Seq = next()
+				if !st.send(msg) {
+					return
+				}
+			}
+			continue
+		}
+		for _, e := range u.Events { // one message at a time: a sweep can hold many trades
+			if e.Kind == book.EventTrade {
+				msg := tradeMessage(ch.name, e)
+				msg.Seq = next()
+				if !st.send(msg) {
+					return
+				}
 			}
 		}
 	}
@@ -284,28 +325,23 @@ func (st *stream) pump(ch *channel, isBook bool) {
 	}
 }
 
-// channelMessages turns one command's events into a channel's messages:
-// one trade message per execution, or one book_delta with every level the
-// command changed, at its final total.
-func channelMessages(name string, isBook bool, evs []book.Event) []serverMessage {
-	if !isBook {
-		var msgs []serverMessage
-		for _, e := range evs {
-			if e.Kind == book.EventTrade {
-				bookSeq := e.Seq
-				msgs = append(msgs, serverMessage{
-					Type: "trade", Channel: name, BookSeq: &bookSeq, Price: int64(e.Price), Qty: int64(e.Qty),
-					TakerSide: e.Side.String(), TakerOrderID: e.OrderID, MakerOrderID: e.MakerID, TS: e.Timestamp,
-				})
-			}
-		}
-		return msgs
+// tradeMessage is the message of one execution.
+func tradeMessage(name string, e book.Event) serverMessage {
+	bookSeq := e.Seq
+	return serverMessage{
+		Type: "trade", Channel: name, BookSeq: &bookSeq, Price: int64(e.Price), Qty: int64(e.Qty),
+		TakerSide: e.Side.String(), TakerOrderID: e.OrderID, MakerOrderID: e.MakerID, TS: e.Timestamp,
 	}
+}
+
+// bookDelta is the book_delta of one command's events: every level the
+// command changed, at its final total. ok is false if no level changed.
+func bookDelta(name string, evs []book.Event) (msg serverMessage, ok bool) {
 	var changes []levelChange
 	at := map[book.LevelUpdate]int{} // keyed by side and price, with Qty 0
 	for _, e := range evs {
-		lu, ok := e.LevelUpdate()
-		if !ok {
+		lu, changed := e.LevelUpdate()
+		if !changed {
 			continue
 		}
 		key := book.LevelUpdate{Side: lu.Side, Price: lu.Price}
@@ -317,8 +353,8 @@ func channelMessages(name string, isBook bool, evs []book.Event) []serverMessage
 		changes = append(changes, levelChange{Side: lu.Side.String(), Price: int64(lu.Price), Qty: int64(lu.Qty)})
 	}
 	if len(changes) == 0 {
-		return nil
+		return serverMessage{}, false
 	}
 	bookSeq := evs[len(evs)-1].Seq
-	return []serverMessage{{Type: "book_delta", Channel: name, BookSeq: &bookSeq, Changes: changes}}
+	return serverMessage{Type: "book_delta", Channel: name, BookSeq: &bookSeq, Changes: changes}, true
 }
