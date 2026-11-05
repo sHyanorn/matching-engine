@@ -266,7 +266,7 @@ func TestCanceledSubscribeDoesNotLeak(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	const buffer = 1024
-	if _, err := e.Subscribe(ctx, "A", buffer); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := e.Subscribe(ctx, "A", buffer, 0); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Subscribe = %v, want its deadline", err)
 	}
 	close(g.release)
