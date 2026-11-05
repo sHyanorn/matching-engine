@@ -1,0 +1,315 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/engine"
+)
+
+const (
+	maxClientMessage = 4 << 10
+	writeTimeout     = 10 * time.Second
+	outQueue         = 256 // messages waiting for the connection's writer
+)
+
+type clientMessage struct {
+	Op       string   `json:"op"`
+	Channels []string `json:"channels"`
+}
+
+type levelChange struct {
+	Side  string `json:"side"`
+	Price int64  `json:"price"`
+	Qty   int64  `json:"qty"`
+}
+
+// serverMessage is every message the server sends; fields a type does not
+// use are omitted.
+type serverMessage struct {
+	Type    string        `json:"type"`
+	Channel string        `json:"channel,omitempty"`
+	Seq     uint64        `json:"seq,omitempty"`
+	BookSeq *uint64       `json:"book_seq,omitempty"`
+	Bids    *[]levelJSON  `json:"bids,omitempty"` // pointers: an empty side is [], not omitted
+	Asks    *[]levelJSON  `json:"asks,omitempty"`
+	Changes []levelChange `json:"changes,omitempty"`
+	// trade
+	Price        int64        `json:"price,omitempty"`
+	Qty          int64        `json:"qty,omitempty"`
+	TakerSide    string       `json:"taker_side,omitempty"`
+	TakerOrderID book.OrderID `json:"taker_order_id,omitempty"`
+	MakerOrderID book.OrderID `json:"maker_order_id,omitempty"`
+	TS           int64        `json:"ts,omitempty"`
+	// error
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// stream is one WebSocket connection. A reader handles subscriptions, a
+// writer sends queued messages, and each subscribed channel has a pump
+// that turns engine updates into messages.
+type stream struct {
+	srv    *Server
+	conn   *websocket.Conn
+	ctx    context.Context
+	cancel context.CancelFunc
+	out    chan []byte
+
+	mu       sync.Mutex
+	channels map[string]*channel
+	once     sync.Once
+}
+
+// channel is one subscription of a stream.
+type channel struct {
+	name string
+	sub  *engine.Subscription
+	done chan struct{} // closed when its pump has stopped
+}
+
+func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
+	if s.stopping.Load() {
+		writeError(w, http.StatusServiceUnavailable, "shutting_down", "server is shutting down")
+		return
+	}
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return // Accept has written the HTTP error
+	}
+	conn.SetReadLimit(maxClientMessage)
+	ctx, cancel := context.WithCancel(context.Background())
+	st := &stream{srv: s, conn: conn, ctx: ctx, cancel: cancel, out: make(chan []byte, outQueue), channels: map[string]*channel{}}
+
+	s.mu.Lock()
+	if s.stopping.Load() { // CloseStreams may have run since the check above
+		s.mu.Unlock()
+		st.close(1001, "shutting down")
+		return
+	}
+	s.streams[st] = struct{}{}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	s.metrics.streams.Inc()
+	defer func() {
+		s.mu.Lock()
+		delete(s.streams, st)
+		s.mu.Unlock()
+		s.metrics.streams.Dec()
+		s.wg.Done()
+	}()
+
+	go st.writeLoop()
+	st.readLoop()
+	st.close(websocket.StatusNormalClosure, "")
+	st.mu.Lock()
+	chans := make([]*channel, 0, len(st.channels))
+	for _, ch := range st.channels {
+		chans = append(chans, ch)
+	}
+	st.mu.Unlock()
+	for _, ch := range chans {
+		ch.sub.Close()
+		<-ch.done
+	}
+}
+
+// close ends the connection once, with code and reason.
+func (st *stream) close(code websocket.StatusCode, reason string) {
+	st.once.Do(func() {
+		st.cancel()
+		go func() { _ = st.conn.Close(code, reason) }() // waits for the peer; not on any caller's path
+	})
+}
+
+func (st *stream) readLoop() {
+	for {
+		_, data, err := st.conn.Read(st.ctx)
+		if err != nil {
+			return
+		}
+		var m clientMessage
+		if err := json.Unmarshal(data, &m); err != nil {
+			st.sendError("bad_request", err.Error())
+			continue
+		}
+		switch m.Op {
+		case "subscribe":
+			for _, name := range m.Channels {
+				st.subscribe(name)
+			}
+		case "unsubscribe":
+			for _, name := range m.Channels {
+				st.unsubscribe(name)
+			}
+		default:
+			st.sendError("unknown_op", fmt.Sprintf("unknown op %q", m.Op))
+		}
+	}
+}
+
+func (st *stream) writeLoop() {
+	for {
+		select {
+		case msg := <-st.out:
+			ctx, cancel := context.WithTimeout(st.ctx, writeTimeout)
+			err := st.conn.Write(ctx, websocket.MessageText, msg)
+			cancel()
+			if err != nil {
+				st.close(websocket.StatusPolicyViolation, "write timeout")
+				return
+			}
+		case <-st.ctx.Done():
+			return
+		}
+	}
+}
+
+// send queues msg, waiting while the writer is behind. A pump blocked
+// here lets its engine subscription fill, so a client that does not read
+// is disconnected as a slow consumer.
+func (st *stream) send(msg serverMessage) bool {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	select {
+	case st.out <- data:
+		return true
+	case <-st.ctx.Done():
+		return false
+	}
+}
+
+func (st *stream) sendError(code, message string) {
+	st.send(serverMessage{Type: "error", Code: code, Message: message})
+}
+
+// subscribe starts channel name, "trades:SYMBOL" or "book:SYMBOL".
+func (st *stream) subscribe(name string) {
+	kind, symbol, _ := strings.Cut(name, ":")
+	if kind != "trades" && kind != "book" {
+		st.sendError("unknown_channel", fmt.Sprintf("unknown channel %q", name))
+		return
+	}
+	st.mu.Lock()
+	_, dup := st.channels[name]
+	st.mu.Unlock()
+	if dup {
+		st.sendError("already_subscribed", fmt.Sprintf("already subscribed to %q", name))
+		return
+	}
+	depth := 0
+	if kind == "book" {
+		depth = maxDepth
+	}
+	sub, err := st.srv.eng.Subscribe(st.ctx, symbol, st.srv.opts.SubscriberBuffer, depth)
+	switch {
+	case errors.Is(err, engine.ErrUnknownSymbol):
+		st.sendError("unknown_channel", fmt.Sprintf("unknown channel %q", name))
+		return
+	case err != nil:
+		_, code := engineStatus(err)
+		st.sendError(code, err.Error())
+		return
+	}
+	ch := &channel{name: name, sub: sub, done: make(chan struct{})}
+	st.mu.Lock()
+	st.channels[name] = ch
+	st.mu.Unlock()
+	st.send(serverMessage{Type: "subscribed", Channel: name})
+	go st.pump(ch, kind == "book")
+}
+
+// unsubscribe stops channel name; the acknowledgement follows the
+// channel's last message.
+func (st *stream) unsubscribe(name string) {
+	st.mu.Lock()
+	ch, ok := st.channels[name]
+	delete(st.channels, name)
+	st.mu.Unlock()
+	if !ok {
+		st.sendError("not_subscribed", fmt.Sprintf("not subscribed to %q", name))
+		return
+	}
+	ch.sub.Close()
+	<-ch.done
+	st.send(serverMessage{Type: "unsubscribed", Channel: name})
+}
+
+// pump sends one channel's messages, numbered from 1.
+func (st *stream) pump(ch *channel, isBook bool) {
+	defer close(ch.done)
+	var seq uint64
+	next := func() uint64 { seq++; return seq }
+	if isBook {
+		snap := ch.sub.Snapshot
+		bookSeq := snap.LastSeq
+		bids, asks := toLevelsJSON(snap.Bids), toLevelsJSON(snap.Asks)
+		if !st.send(serverMessage{Type: "book_snapshot", Channel: ch.name, Seq: next(), BookSeq: &bookSeq, Bids: &bids, Asks: &asks}) {
+			return
+		}
+	}
+	for u := range ch.sub.C {
+		for _, msg := range channelMessages(ch.name, isBook, u.Events) {
+			msg.Seq = next()
+			if !st.send(msg) {
+				return
+			}
+		}
+	}
+	switch err := ch.sub.Err(); {
+	case errors.Is(err, engine.ErrSlowConsumer):
+		st.close(websocket.StatusPolicyViolation, "slow consumer")
+	case errors.Is(err, engine.ErrClosed):
+		st.close(websocket.StatusGoingAway, "shutting down")
+	}
+}
+
+// channelMessages turns one command's events into a channel's messages:
+// one trade message per execution, or one book_delta with every level the
+// command changed, at its final total.
+func channelMessages(name string, isBook bool, evs []book.Event) []serverMessage {
+	if !isBook {
+		var msgs []serverMessage
+		for _, e := range evs {
+			if e.Kind == book.EventTrade {
+				bookSeq := e.Seq
+				msgs = append(msgs, serverMessage{
+					Type: "trade", Channel: name, BookSeq: &bookSeq, Price: int64(e.Price), Qty: int64(e.Qty),
+					TakerSide: e.Side.String(), TakerOrderID: e.OrderID, MakerOrderID: e.MakerID, TS: e.Timestamp,
+				})
+			}
+		}
+		return msgs
+	}
+	var changes []levelChange
+	at := map[book.LevelUpdate]int{} // keyed by side and price, with Qty 0
+	for _, e := range evs {
+		lu, ok := e.LevelUpdate()
+		if !ok {
+			continue
+		}
+		key := book.LevelUpdate{Side: lu.Side, Price: lu.Price}
+		if i, seen := at[key]; seen {
+			changes[i].Qty = int64(lu.Qty)
+			continue
+		}
+		at[key] = len(changes)
+		changes = append(changes, levelChange{Side: lu.Side.String(), Price: int64(lu.Price), Qty: int64(lu.Qty)})
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	bookSeq := evs[len(evs)-1].Seq
+	return []serverMessage{{Type: "book_delta", Channel: name, BookSeq: &bookSeq, Changes: changes}}
+}
