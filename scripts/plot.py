@@ -103,7 +103,7 @@ def percentiles(out, rate, specs):
     ax.set_ylabel("order to trade push (ms)")
     if len(specs) > 1:
         ax.legend(loc="upper left")
-    finish(ax, fig, out, f"Latency by percentile at {rate // 1000}k orders/s")
+    finish(ax, fig, out, f"Latency by percentile at {rate // 1000}k requests/s")
 
 
 def sweep(out, directory):

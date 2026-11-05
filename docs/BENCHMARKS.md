@@ -19,20 +19,21 @@ Every number here comes from one machine and can be measured again with the comm
 
 The SPEC target of 1M operations per second on one symbol holds with 3 to 4.5 times to spare. Go's `allocs/op` prints 0 for these runs because it rounds down; `allocs/cmd` keeps the fraction. An order that rests allocates its node, a new price level its tree node, and the ID map grows now and then.
 
-**Memory**: 1,000,000 resting orders on 1,000 price levels per side hold 127.8 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`).
+**Memory**: 1,000,000 resting orders on 1,000 price levels per side hold 127.7 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`).
 
 ## End to end
 
 Method ([D030](DECISIONS.md)):
 
-- [`cmd/loadgen`](../cmd/loadgen) offers the same flow at a fixed rate. Request i is due at t0 + i/rate whatever the replies, and goes out over one of 64 keep-alive connections. Latency counts from the due time, so a stall is charged to every request it delayed.
+- [`cmd/loadgen`](../cmd/loadgen) offers the same flow at a fixed rate of requests, 70% of them new orders and 30% cancels. Request i is due at t0 + i/rate whatever the replies, and goes out over one of 64 keep-alive connections. Latency counts from the due time, so a stall is charged to every request it delayed.
 - The latency reported here runs from the due time of a new order to the first trade push for it on the WebSocket. The JSON reports also hold the reply latency of every request, the service time (from the actual send) and the send lag.
 - Each run starts a fresh engine on an empty data directory (fsync every 10 ms, one symbol), discards a 10 s warmup and measures 30 s. Each rate runs three times, and the run with the median p99 stands for it. A run is valid only if 99% of the target rate went out, no request failed and every trade was pushed.
 - A 1 ms sleep loop in loadgen records pauses of the generator and the machine (hiccups, after jHiccup).
+- More connections than the load needs only add work on both sides: at 15k/s, 512 connections gave a p99 of 11.2 ms against 7.26 ms with 64 ([`conns-64`](../bench-results/m5-e2e/conns-64), [`conns-512`](../bench-results/m5-e2e/conns-512)).
 
 Latency from order to trade push, in ms, after the optimizations below ([`bench-results/m5-e2e/after-fsync`](../bench-results/m5-e2e/after-fsync)):
 
-| Rate | Valid runs | p50 | p90 | p99 | p99.9 | max | p99 of each run | Engine CPU per request | Worst hiccup |
+| Requests/s | Valid runs | p50 | p90 | p99 | p99.9 | max | p99 of each run | Engine CPU per request | Worst hiccup |
 |---|---|---|---|---|---|---|---|---|---|
 | 10k/s | 3 of 3 | 0.30 | 0.57 | 3.82 | 11.2 | 18.0 | 3.81, 3.82, 7.68 | 131 µs | 6 ms |
 | 15k/s | 3 of 3 | 0.35 | 1.10 | 7.41 | 12.5 | 16.6 | 7.24, 7.41, 7.81 | 105 µs | 10 ms |
@@ -43,7 +44,7 @@ Latency from order to trade push, in ms, after the optimizations below ([`bench-
 
 ![p50, p99 and p99.9 by load](img/latency-by-load.svg)
 
-- **Capacity.** Near 40k/s the two processes use up the 4 vCPUs; the engine alone takes about 1.5 cores at 25k/s. So the SPEC target, a p99 under 5 ms at 50k/s, is out of reach on this machine. The p99 is under 5 ms at 10k/s.
+- **Capacity.** Near 40k requests/s the two processes use up the 4 vCPUs; the engine alone takes about 1.8 cores at 25k/s. So the SPEC target, a p99 under 5 ms at 50,000 orders/s (about 71k requests/s in this flow), is out of reach on this machine. The p99 is under 5 ms at 10k requests/s.
 - **Engine CPU per request** is the process's CPU time over the run divided by the requests it answered. It falls as the rate rises because the fixed costs, from idle wakeups to GC, are shared by more requests.
 - **The tail** above p99 depends on single pauses. The hiccup meter runs no engine code, yet it saw pauses of up to 50 ms; the 10k/s run with a 7.68 ms p99 had one of 128 ms. The spread between runs at one rate shows how far to trust a single run.
 
@@ -59,7 +60,7 @@ Reading and writing HTTP takes the largest share, about 19% in system calls alon
 
 Each change was measured with the full sweep above; [`bench-results/m5-e2e`](../bench-results/m5-e2e) holds the three sweeps.
 
-| Rate | p99 before | Keys scanned | And fsync aside | Engine CPU per request |
+| Requests/s | p99 before | Keys scanned | And fsync aside | Engine CPU per request |
 |---|---|---|---|---|
 | 10k/s | 5.65 | 5.32 | 3.82 | 138 → 131 → 131 µs |
 | 15k/s | 9.64 | 8.25 | 7.41 | 107 → 101 → 105 µs |
@@ -70,7 +71,7 @@ Each change was measured with the full sweep above; [`bench-results/m5-e2e`](../
 
 ![Latency by percentile at 20k/s for each step](img/latency-percentiles.svg)
 
-**Checking request keys with one scan.** A request body must be one JSON object whose field names match exactly, with no unknown or repeated fields ([API](API.md#post-v1orders)). The check decoded every value with a `json.Decoder`, which builds a syntax error after each number and throws it away. Now `json.Valid` checks the syntax and one scan finds the keys; a fuzz test holds the new check to the old one's answers.
+**Checking request keys with one scan.** A request body must be one JSON object whose field names match exactly, with no unknown or repeated fields ([API](API.md#post-v1orders)). The check decoded every value with a `json.Decoder`, which builds a syntax error after each key and scalar value and throws it away. Now `json.Valid` checks the syntax and one scan finds the keys; a fuzz test holds the new check to the old one's answers.
 
 - The check takes 0.51 µs instead of 5.79 µs, with 0 allocations instead of 79 ([`checkkeys.txt`](../bench-results/m5-opt/checkkeys.txt)).
 - It fell from 9.2% to 1.1% of the engine's CPU profile, and the engine's CPU per request fell 5% to 8%.
@@ -80,7 +81,7 @@ Each change was measured with the full sweep above; [`bench-results/m5-e2e`](../
 
 - At 10k/s, p90 fell from 0.91 to 0.57 ms and p99 from 5.32 to 3.82 ms.
 - At 25k/s the runs' p99 went from 20.0, 36.4 and 215 ms to 19.6, 19.8 and 28.7 ms.
-- 40k/s sent 39.2k/s. The helper's wakeups cost 2% to 3% more CPU per request.
+- 40k/s sent 39.2k/s. The engine's CPU per request rose by up to 3%, with no change at 10k/s.
 
 The profile after both changes ([`cpu-after.pprof`](../bench-results/m5-opt/cpu-after.pprof)); the fsync runs on its own stack (`syncLoop`):
 
