@@ -39,7 +39,7 @@ type request struct {
 type response struct {
 	events []book.Event
 	depth  Depth
-	order  book.Order
+	status OrderStatus
 	found  bool
 	err    error
 }
@@ -70,6 +70,7 @@ type market struct {
 	recEnds      []int        // end offset in logBuf of each command's record
 	out          []book.Event // reused output buffer for book.Apply
 	subs         []*Subscription
+	orders       *orderTracker
 
 	dirty    bool      // written since the last fsync
 	lastSync time.Time // of the last fsync
@@ -90,6 +91,7 @@ func openMarket(symbol string, index int, cfg Config) (*market, uint64, error) {
 		clock:        cfg.Clock,
 		syncInterval: cfg.SyncInterval,
 		book:         book.New(),
+		orders:       newOrderTracker(symbol, cfg.History),
 		lastSync:     time.Now(),
 	}
 	path := filepath.Join(cfg.DataDir, symbol+".log")
@@ -182,6 +184,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 			maxSeq = max(maxSeq, seqOf(c.OrderID))
 		}
 		m.out = m.book.Apply(c, m.out[:0])
+		m.orders.track(c, rec.clientID, m.out)
 		if observe != nil {
 			observe(m.symbol, slices.Clone(m.out))
 		}
@@ -310,6 +313,7 @@ func (m *market) process(batch []*request) {
 			// One copy, since m.out is overwritten by the next Apply,
 			// shared read-only by the caller and every subscriber.
 			resp.events = slices.Clone(m.out)
+			resp.status, resp.found = m.orders.track(r.cmd, r.clientID, resp.events)
 			resp.err = syncErr
 			m.publish(resp.events)
 		case reqDepth:
@@ -319,9 +323,9 @@ func (m *market) process(batch []*request) {
 				LastSeq: m.book.LastSeq(),
 			}
 		case reqOrder:
-			resp.order, resp.found = m.book.Order(r.id)
+			resp.status, resp.found = m.orders.lookup(r.id)
 		case reqSubscribe:
-			resp = m.subscribe(r.sub)
+			resp = m.subscribe(r.sub, r.n)
 		case reqUnsubscribe:
 			m.unsubscribe(r.sub)
 		}

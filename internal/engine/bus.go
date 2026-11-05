@@ -32,6 +32,8 @@ type Subscription struct {
 	// FromSeq is the book's LastSeq when the subscription started: a
 	// snapshot taken at FromSeq plus the updates on C is the whole book.
 	FromSeq uint64
+	// Snapshot is the book at FromSeq, up to the depth asked for.
+	Snapshot Depth
 
 	ch     chan Update
 	err    error // set before ch is closed
@@ -51,8 +53,10 @@ func (s *Subscription) Close() {
 
 // Subscribe starts a subscription to symbol's events. buffer is the
 // capacity of its channel (default 1024 if not positive); a subscriber
-// that falls that far behind is dropped with ErrSlowConsumer.
-func (e *Engine) Subscribe(ctx context.Context, symbol string, buffer int) (*Subscription, error) {
+// that falls that far behind is dropped with ErrSlowConsumer. If depth is
+// positive, Snapshot holds that many levels per side, taken in the same
+// step as FromSeq, so it lines up with the first update exactly.
+func (e *Engine) Subscribe(ctx context.Context, symbol string, buffer, depth int) (*Subscription, error) {
 	m, ok := e.bySymbol[symbol]
 	if !ok {
 		return nil, ErrUnknownSymbol
@@ -62,7 +66,7 @@ func (e *Engine) Subscribe(ctx context.Context, symbol string, buffer int) (*Sub
 	}
 	ch := make(chan Update, buffer)
 	s := &Subscription{C: ch, ch: ch, engine: e, market: m}
-	resp, err := e.send(ctx, m, &request{kind: reqSubscribe, sub: s}, orWait)
+	resp, err := e.send(ctx, m, &request{kind: reqSubscribe, sub: s, n: depth}, orWait)
 	if err != nil {
 		if ctx.Err() != nil {
 			// The subscribe may already be queued: queue an unsubscribe
@@ -72,7 +76,7 @@ func (e *Engine) Subscribe(ctx context.Context, symbol string, buffer int) (*Sub
 		}
 		return nil, err
 	}
-	s.FromSeq = resp.depth.LastSeq
+	s.FromSeq, s.Snapshot = resp.depth.LastSeq, resp.depth
 	return s, nil
 }
 
@@ -96,10 +100,16 @@ func (m *market) publish(evs []book.Event) {
 	m.subs = kept
 }
 
-// subscribe adds s; its FromSeq is the book's LastSeq now.
-func (m *market) subscribe(s *Subscription) response {
+// subscribe adds s and returns the book now: its LastSeq, and depth levels
+// per side if depth is positive.
+func (m *market) subscribe(s *Subscription, depth int) response {
 	m.subs = append(m.subs, s)
-	return response{depth: Depth{LastSeq: m.book.LastSeq()}}
+	d := Depth{LastSeq: m.book.LastSeq()}
+	if depth > 0 {
+		d.Bids = m.book.Depth(book.Buy, depth, nil)
+		d.Asks = m.book.Depth(book.Sell, depth, nil)
+	}
+	return response{depth: d}
 }
 
 // unsubscribe removes s if it is still subscribed.

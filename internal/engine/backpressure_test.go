@@ -55,7 +55,7 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 	g := newGateClock()
 	e := newTestEngine(t, Config{Symbols: []string{"A", "B"}, QueueSize: queue, MaxBatch: 1, Clock: g.Now})
 
-	sub, err := e.Subscribe(ctx, "A", 64)
+	sub, err := e.Subscribe(ctx, "A", 64, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 	for name, call := range map[string]func(context.Context) error{
 		"Depth":     func(c context.Context) error { _, err := e.Depth(c, "A", 1); return err },
 		"Order":     func(c context.Context) error { _, _, err := e.Order(c, makeOrderID(1, a.index)); return err },
-		"Subscribe": func(c context.Context) error { _, err := e.Subscribe(c, "A", 1); return err },
+		"Subscribe": func(c context.Context) error { _, err := e.Subscribe(c, "A", 1, 0); return err },
 	} {
 		short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 		if err := call(short); !errors.Is(err, context.DeadlineExceeded) {

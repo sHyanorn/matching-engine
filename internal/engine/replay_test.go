@@ -115,7 +115,7 @@ func TestReplayDeterminism(t *testing.T) {
 		want[s] = stream(t, results[s])
 		depth[s], _ = e.Depth(ctx, s, 1<<20)
 	}
-	orders := map[book.OrderID]book.Order{}
+	orders := map[book.OrderID]OrderStatus{}
 	for _, id := range ids {
 		if o, found, _ := e.Order(ctx, id); found {
 			orders[id] = o

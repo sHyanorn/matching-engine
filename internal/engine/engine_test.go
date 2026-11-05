@@ -125,8 +125,12 @@ func TestPlaceCancelAndQuery(t *testing.T) {
 	if !slices.Equal(c.Events, want) {
 		t.Fatalf("cancel events = %+v\nwant %+v", c.Events, want)
 	}
-	if _, found, _ := e.Order(ctx, sell.OrderID); found {
-		t.Fatal("canceled order still found")
+	st, found, _ := e.Order(ctx, sell.OrderID)
+	if !found || st.State != StateCanceled || st.Reason != book.ReasonUserCancel || st.Filled != 4 || st.Remaining != 0 || st.ClientID != "c-1" {
+		t.Fatalf("canceled order status = %+v, %v", st, found)
+	}
+	if c.Status.State != StateCanceled || c.Status.ID != sell.OrderID {
+		t.Fatalf("cancel result status = %+v", c.Status)
 	}
 }
 

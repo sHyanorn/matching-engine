@@ -30,12 +30,12 @@ func TestSubscribersReceiveEveryUpdateInOrder(t *testing.T) {
 	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Sell, 100, 5)); err != nil {
 		t.Fatal(err)
 	}
-	s1, err := e.Subscribe(ctx, "A", 16)
+	s1, err := e.Subscribe(ctx, "A", 16, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, _ := e.Subscribe(ctx, "A", 16)
-	other, _ := e.Subscribe(ctx, "B", 16)
+	s2, _ := e.Subscribe(ctx, "A", 16, 0)
+	other, _ := e.Subscribe(ctx, "B", 16, 0)
 	if s1.FromSeq != 2 || s2.FromSeq != 2 || other.FromSeq != 0 {
 		t.Fatalf("FromSeq = %d, %d, %d", s1.FromSeq, s2.FromSeq, other.FromSeq)
 	}
@@ -79,7 +79,7 @@ func TestSubscribersReceiveEveryUpdateInOrder(t *testing.T) {
 func TestDeliveredEventsAreNotOverwritten(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t, Config{Symbols: []string{"A"}})
-	s, _ := e.Subscribe(ctx, "A", 64)
+	s, _ := e.Subscribe(ctx, "A", 64, 0)
 	r, _ := e.PlaceOrder(ctx, limitOrder("A", book.Sell, 100, 5))
 	u, _ := receive(t, s)
 	keep := slices.Clone(u.Events)
@@ -99,8 +99,8 @@ func TestDeliveredEventsAreNotOverwritten(t *testing.T) {
 func TestSlowSubscriberIsDropped(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t, Config{Symbols: []string{"A"}})
-	slow, _ := e.Subscribe(ctx, "A", 2)
-	fast, _ := e.Subscribe(ctx, "A", 64)
+	slow, _ := e.Subscribe(ctx, "A", 2, 0)
+	fast, _ := e.Subscribe(ctx, "A", 64, 0)
 	const n = 10
 	for range n {
 		if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
@@ -131,7 +131,7 @@ func TestSubscriptionClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := e.Subscribe(ctx, "A", 4)
+	s, _ := e.Subscribe(ctx, "A", 4, 0)
 	s.Close()
 	if _, ok := receive(t, s); ok || s.Err() != nil {
 		t.Fatalf("after Close: channel open or Err %v", s.Err())
@@ -143,16 +143,49 @@ func TestSubscriptionClose(t *testing.T) {
 		}
 	}
 
-	live, _ := e.Subscribe(ctx, "A", 4)
+	live, _ := e.Subscribe(ctx, "A", 4, 0)
 	mustClose(t, e)
 	if _, ok := receive(t, live); ok || !errors.Is(live.Err(), ErrClosed) {
 		t.Fatalf("after engine Close: channel open or Err %v", live.Err())
 	}
 	live.Close() // after the engine closed is fine too
-	if _, err := e.Subscribe(ctx, "A", 4); !errors.Is(err, ErrClosed) {
+	if _, err := e.Subscribe(ctx, "A", 4, 0); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Subscribe after Close: %v", err)
 	}
-	if _, err := e.Subscribe(ctx, "Z", 4); !errors.Is(err, ErrUnknownSymbol) {
+	if _, err := e.Subscribe(ctx, "Z", 4, 0); !errors.Is(err, ErrUnknownSymbol) {
 		t.Fatalf("Subscribe to an unknown symbol: %v", err)
+	}
+}
+
+// TestSubscribeSnapshotLinesUp takes a snapshot with the subscription: it
+// equals the depth at FromSeq, and the first update follows it directly.
+func TestSubscribeSnapshotLinesUp(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t, Config{Symbols: []string{"A"}})
+	for i := range 6 {
+		side := book.Buy
+		if i%2 == 0 {
+			side = book.Sell
+		}
+		if _, err := e.PlaceOrder(ctx, limitOrder("A", side, book.Price(100+i*3-6), 2)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, _ := e.Depth(ctx, "A", 10)
+	s, err := e.Subscribe(ctx, "A", 8, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.FromSeq != want.LastSeq || s.Snapshot.LastSeq != want.LastSeq || !slices.Equal(s.Snapshot.Bids, want.Bids) || !slices.Equal(s.Snapshot.Asks, want.Asks) {
+		t.Fatalf("snapshot %+v at %d, want %+v", s.Snapshot, s.FromSeq, want)
+	}
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := receive(t, s); u.Events[0].Seq != s.FromSeq+1 {
+		t.Fatalf("first update starts at Seq %d, want %d", u.Events[0].Seq, s.FromSeq+1)
+	}
+	if plain, _ := e.Subscribe(ctx, "A", 8, 0); plain.Snapshot.Bids != nil || plain.Snapshot.Asks != nil {
+		t.Fatal("depth 0 still returned a snapshot")
 	}
 }

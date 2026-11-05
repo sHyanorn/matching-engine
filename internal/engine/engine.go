@@ -74,6 +74,11 @@ type Config struct {
 	// (default the system clock). Tests replace it for fixed values.
 	Clock func() int64
 
+	// History is how many finished orders each symbol remembers for
+	// Order (default 100,000; negative: none). Open orders are always
+	// known (D022).
+	History int
+
 	// onReplay, if set, receives the events of every command replayed
 	// from the logs by New. Tests use it to compare replays.
 	onReplay func(symbol string, evs []book.Event)
@@ -112,6 +117,12 @@ func (c *Config) setDefaults() error {
 	}
 	if c.SyncInterval == 0 {
 		c.SyncInterval = defaultSyncInterval
+	}
+	switch {
+	case c.History == 0:
+		c.History = defaultHistory
+	case c.History < 0:
+		c.History = 0
 	}
 	if c.MaxBatch <= 0 {
 		c.MaxBatch = defaultMaxBatch
@@ -229,11 +240,14 @@ type NewOrder struct {
 }
 
 // Result is the outcome of a command that reached its book: the order ID
-// it concerns and the events the book emitted for it, in order. Events is
-// shared with event subscribers and must not be modified.
+// it concerns, the events the book emitted for it, in order, and that
+// order's status afterwards (the zero OrderStatus if the engine does not
+// know the order). Events is shared with event subscribers and must not
+// be modified.
 type Result struct {
 	OrderID book.OrderID
 	Events  []book.Event
+	Status  OrderStatus
 }
 
 // PlaceOrder assigns the next order ID, validates the order and submits it
@@ -267,7 +281,7 @@ func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 		return Result{OrderID: id}, &InvalidError{Reason: r}
 	}
 	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd, clientID: o.ClientID}, orBusy)
-	return Result{OrderID: id, Events: resp.events}, err
+	return Result{OrderID: id, Events: resp.events, Status: resp.status}, err
 }
 
 // CancelOrder submits a cancel of order id to the book of the symbol the
@@ -286,7 +300,7 @@ func (e *Engine) CancelOrder(ctx context.Context, id book.OrderID) (Result, erro
 		return Result{OrderID: id}, ErrUnknownOrder
 	}
 	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd}, orBusy)
-	return Result{OrderID: id, Events: resp.events}, err
+	return Result{OrderID: id, Events: resp.events, Status: resp.status}, err
 }
 
 // Depth is an L2 snapshot of one book: up to the requested number of
@@ -307,15 +321,44 @@ func (e *Engine) Depth(ctx context.Context, symbol string, n int) (Depth, error)
 	return resp.depth, err
 }
 
-// Order returns the resting order with this ID, and false if it is not
-// resting (unknown, filled or canceled).
-func (e *Engine) Order(ctx context.Context, id book.OrderID) (book.Order, bool, error) {
+// Order returns the status of order id: always for a resting order, and
+// for one of the most recently finished orders of its symbol (see
+// Config.History). It returns false for any other ID.
+func (e *Engine) Order(ctx context.Context, id book.OrderID) (OrderStatus, bool, error) {
 	m, ok := e.marketOf(id)
 	if !ok {
-		return book.Order{}, false, nil
+		return OrderStatus{}, false, nil
 	}
 	resp, err := e.send(ctx, m, &request{kind: reqOrder, id: id}, orWait)
-	return resp.order, resp.found, err
+	return resp.status, resp.found, err
+}
+
+// SymbolOf returns the symbol an order ID was issued for, if the engine
+// can have issued it.
+func (e *Engine) SymbolOf(id book.OrderID) (string, bool) {
+	m, ok := e.marketOf(id)
+	if !ok {
+		return "", false
+	}
+	return m.symbol, true
+}
+
+// Symbols returns the configured symbols, in order.
+func (e *Engine) Symbols() []string {
+	s := make([]string, len(e.markets))
+	for i, m := range e.markets {
+		s[i] = m.symbol
+	}
+	return s
+}
+
+// QueueLen returns how many requests wait in symbol's queue.
+func (e *Engine) QueueLen(symbol string) (int, bool) {
+	m, ok := e.bySymbol[symbol]
+	if !ok {
+		return 0, false
+	}
+	return len(m.in), true
 }
 
 // marketOf returns the market an order ID was issued for, if the engine
