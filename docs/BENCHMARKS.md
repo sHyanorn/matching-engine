@@ -89,6 +89,10 @@ The profile after both changes ([`cpu-after.pprof`](../bench-results/m5-opt/cpu-
 
 The book allocates 0.6 times per command, but `Book.Apply` is 1.4% to 2% of the engine's CPU, so pooling its nodes would not show end to end; it is not done.
 
+## On Windows
+
+All the figures above are from Linux. On GitHub's Windows runners an fsync takes 19 ms at the median, against 0.2 ms on its Linux runners, and writes to the file wait while it runs ([`windows-fsync.txt`](../bench-results/m5-opt/windows-fsync.txt)). With fsyncs every 10 ms, requests there wait tens of milliseconds whether or not the fsync runs beside the matching goroutine.
+
 ## Measuring again
 
 ```bash
