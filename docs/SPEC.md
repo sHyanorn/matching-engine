@@ -28,7 +28,7 @@ A high-performance limit order book matching engine written in Go. It matches or
 
 ### Optional
 
-- Order amendment (changing quantity keeps priority; changing price re-queues the order)
+- Order amendment (reducing quantity keeps priority; increasing quantity or changing price re-queues the order)
 - Self-trade prevention (buy and sell orders from the same account do not trade with each other)
 - Snapshot-plus-delta recovery
 - A simple web order book display (reusable on the portfolio website)
