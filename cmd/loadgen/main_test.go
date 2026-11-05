@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -112,7 +114,7 @@ func TestRunWritesReport(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "r.json")
 	var stdout bytes.Buffer
 	err := run(context.Background(), []string{
-		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "0s", "-duration", "500ms", "-conns", "4", "-out", out,
+		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "200ms", "-duration", "2s", "-conns", "4", "-out", out,
 	}, &stdout)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +130,59 @@ func TestRunWritesReport(t *testing.T) {
 	if err := json.Unmarshal(data, &r); err != nil || !r.Valid || r.TargetRate != 1000 || r.Latency["reply"].Count == 0 {
 		t.Fatalf("report %s: %v", data, err)
 	}
-	if err := run(context.Background(), []string{"-rate", "0"}, &stdout); err == nil {
-		t.Error("run accepted -rate 0")
+	for _, rate := range []string{"0", "NaN", "Inf", "1e300"} {
+		if err := run(context.Background(), []string{"-rate", rate}, &stdout); err == nil {
+			t.Errorf("run accepted -rate %s", rate)
+		}
+	}
+}
+
+// Canceling a run stops it at once, even while the engine is stalled and
+// requests pile up.
+func TestCancelDuringStall(t *testing.T) {
+	stalled := make(chan struct{})
+	var cmds atomic.Int64
+	clock := func() int64 {
+		if cmds.Add(1) == 100 {
+			close(stalled)
+			time.Sleep(5 * time.Second)
+		}
+		return time.Now().UnixNano()
+	}
+	cfg := testConfig(startEngine(t, clock))
+	cfg.duration = time.Minute // far longer than the test may take
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := measure(ctx, cfg)
+		done <- err
+	}()
+	<-stalled
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("measure = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("measure did not return within 1 s of the cancel")
+	}
+}
+
+func TestWokeLate(t *testing.T) {
+	ms := func(f float64) int64 { return int64(f * float64(time.Millisecond)) }
+	for _, tc := range []struct {
+		late time.Duration
+		want []int64
+	}{
+		{200 * time.Microsecond, []int64{ms(0.2)}},
+		{1500 * time.Microsecond, []int64{ms(1.5)}},
+		{5500 * time.Microsecond, []int64{ms(5.5), ms(4.5), ms(3.5), ms(2.5), ms(1.5)}},
+		{3 * time.Millisecond, []int64{ms(3), ms(2), ms(1)}},
+	} {
+		if got := wokeLate(nil, tc.late); !slices.Equal(got, tc.want) {
+			t.Errorf("wokeLate(%v) = %v, want %v", tc.late, got, tc.want)
+		}
 	}
 }
