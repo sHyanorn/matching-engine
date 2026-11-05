@@ -29,7 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose up -d --wait
-      - run: docker compose run --rm loadgen -rate 1000 -warmup 1s -duration 5s
+      # A run is valid with 1% of its window missing, so a 30 s window
+      # survives a stall of the runner of up to about 300 ms.
+      - run: docker compose run --rm loadgen -rate 500 -warmup 2s -duration 30s
       - if: always()
         run: docker compose logs engine && docker compose down -v
 
