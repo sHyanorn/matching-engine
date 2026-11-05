@@ -19,10 +19,13 @@ import (
 )
 
 // startEngine serves an engine for BTC-USD on a loopback port and returns
-// its address. clock, if not nil, stamps the engine's commands.
+// its address. clock, if not nil, stamps the engine's commands. The log is
+// almost never fsynced: these tests measure loadgen, not the disk.
 func startEngine(t *testing.T, clock func() int64) string {
 	t.Helper()
-	eng, err := engine.New(engine.Config{Symbols: []string{"BTC-USD"}, DataDir: t.TempDir(), Clock: clock})
+	eng, err := engine.New(engine.Config{
+		Symbols: []string{"BTC-USD"}, DataDir: t.TempDir(), Clock: clock, SyncInterval: time.Hour,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
