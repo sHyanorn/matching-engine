@@ -63,13 +63,15 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return errors.Join(err, eng.Close())
 	}
-	// No ReadTimeout or WriteTimeout: they would also cut long-lived
-	// WebSocket connections. Handlers do bounded work.
+	// The timeouts bound each request, so a stalled client cannot hold a
+	// handler or delay shutdown. A WebSocket connection is hijacked, which
+	// clears them; ws.go bounds its own writes.
 	hs := &http.Server{
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    16 << 10,
+		Handler:        srv.Handler(),
+		ReadTimeout:    5 * time.Second,
+		WriteTimeout:   5 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 16 << 10,
 	}
 	if _, err := fmt.Fprintf(stdout, "listening on %s\n", ln.Addr()); err != nil {
 		return errors.Join(err, ln.Close(), eng.Close())

@@ -170,14 +170,30 @@ func New(cfg Config) (*Engine, error) {
 		bySymbol: make(map[string]*market, len(cfg.Symbols)),
 		ids:      idStore{path: filepath.Join(cfg.DataDir, "ids")},
 	}
+	// A failed start removes the logs it created, which hold only a
+	// header: one left behind would bind its symbol to this attempt's
+	// index and reject the corrected configuration.
+	var created []string
+	fail := func(err error) (*Engine, error) {
+		for _, m := range e.markets {
+			_ = m.file.Close() // err is the error to report
+		}
+		for _, path := range created {
+			_ = os.Remove(path)
+		}
+		if len(created) > 0 {
+			_ = syncDir(cfg.DataDir)
+		}
+		return nil, err
+	}
 	var maxSeq uint64
 	for i, s := range cfg.Symbols {
-		m, seq, err := openMarket(s, i, cfg)
+		m, seq, isNew, err := openMarket(s, i, cfg)
+		if isNew {
+			created = append(created, filepath.Join(cfg.DataDir, s+".log"))
+		}
 		if err != nil {
-			for _, open := range e.markets {
-				_ = open.file.Close() // err, from opening s, is the error to report
-			}
-			return nil, err
+			return fail(err)
 		}
 		e.markets = append(e.markets, m)
 		e.bySymbol[s] = m
@@ -191,10 +207,7 @@ func New(cfg Config) (*Engine, error) {
 		err = e.extendReservation(start)
 	}
 	if err != nil {
-		for _, m := range e.markets {
-			_ = m.file.Close() // err is the error to report
-		}
-		return nil, err
+		return fail(err)
 	}
 	for _, m := range e.markets {
 		e.wg.Add(1)

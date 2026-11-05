@@ -19,7 +19,7 @@ type metrics struct {
 
 var (
 	orderResults  = []string{"accepted", "rejected", "invalid", "busy", "failed"}
-	cancelResults = []string{"canceled", "unknown", "finished", "invalid", "busy", "failed"}
+	cancelResults = []string{"canceled", "unknown", "finished", "busy", "failed"}
 )
 
 func newMetrics(eng *engine.Engine) *metrics {

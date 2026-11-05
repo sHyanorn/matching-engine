@@ -13,11 +13,14 @@ Every error has the same shape:
 | Status | Codes | Meaning |
 |---|---|---|
 | 400 | `bad_request`, `invalid_order_id`, `invalid_client_id`, `invalid_depth`, and every validation reason (`invalid_side`, `invalid_type`, `invalid_tif`, `market_gtc`, `invalid_price`, `invalid_qty`) | The request is malformed or invalid; nothing was applied |
-| 404 | `unknown_symbol`, `unknown_order` | No such symbol, or no such order |
+| 404 | `unknown_symbol`, `unknown_order`, `not_found` | No such symbol, order or route |
+| 405 | `method_not_allowed` | The route does not take this method; see `Allow` |
 | 409 | `order_finished` | The order exists but is filled, canceled or rejected |
 | 413 | `body_too_large` | The request body is over 4 KB |
-| 500 | `log_failed` | The command log failed; the symbol accepts no more commands |
-| 503 | `busy` (with `Retry-After: 1`), `shutting_down` | Try again later |
+| 500 | `log_failed`, `internal` | `log_failed`: the command log failed, and the symbol accepts no more commands. `internal`: an unexpected error; nothing was applied |
+| 503 | `busy` (with `Retry-After: 1`), `shutting_down` | Try again later; nothing was applied |
+
+A `log_failed` reply to `POST` or `DELETE` that also holds `order` (when there is one) and `events` means the command took effect, but its log record may not be durable.
 
 ## Orders
 
@@ -32,7 +35,7 @@ Every error has the same shape:
 - `tif`: `gtc`, `ioc` or `fok`; optional, defaulting to `gtc` for limit orders and `ioc` for market orders.
 - `price`: required for limit orders, omitted or 0 for market orders.
 - `client_id`: optional, at most 64 bytes, echoed back in order status.
-- Unknown fields are rejected.
+- The body is one JSON object. Field names are case-sensitive; unknown and repeated fields are rejected.
 
 `200 OK` once the order has been matched, with the order's status and the events it produced:
 
@@ -99,28 +102,28 @@ Client messages:
 { "op": "unsubscribe", "channels": ["book:BTC-USD"] }
 ```
 
-Data messages (`book_snapshot`, `book_delta`, `trade`) carry the `channel`, a `seq` that counts that channel's data messages on this connection from 1 with no gaps, and `book_seq`, the book event sequence number they reflect. `subscribed`, `unsubscribed` and `error` carry no `seq`; a `subscribed` acknowledgement comes before the channel's first data message.
+Data messages (`book_snapshot`, `book_delta`, `trade`) carry the `channel`, a `seq` that counts the subscription's data messages from 1 with no gaps (subscribing again starts a new count), and `book_seq`, the book event sequence number they reflect. `subscribed`, `unsubscribed` and `error` carry no `seq`; a `subscribed` acknowledgement comes before the channel's first data message.
 
-- `book_snapshot`: the first message of a `book:` channel, with up to 1000 levels per side in `bids` and `asks`.
+- `book_snapshot`: the first message of a `book:` channel, with every level in `bids` and `asks`.
 - `book_delta`: the levels one command changed, each with its new total quantity (0 removes the level): `"changes": [ { "side": "sell", "price": 6500100, "qty": 0 } ]`.
 - `trade`: one execution, with `price`, `qty`, `taker_side`, `taker_order_id`, `maker_order_id` and `ts`.
 - `subscribed` and `unsubscribed`: acknowledge a channel.
 - `error`: a bad message, with `code` and `message`; the connection stays open.
 
-A snapshot followed by its deltas reproduces the book. A client that falls behind is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
+A snapshot followed by its deltas reproduces the book. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages, or one message unsent for 10 s) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
 
 ## Operations
 
-- `GET /healthz`: `200 {"status":"ok"}`, or `503 {"status":"shutting_down"}` once shutdown has begun.
+- `GET /healthz`: `200 {"status":"ok"}`, or `503 {"status":"shutting_down"}` once shutdown has begun. From then on new orders, cancels and WebSocket connections get `503 shutting_down`.
 - `GET /metrics`: Prometheus metrics:
 
 | Metric | Type | Labels |
 |---|---|---|
 | `matching_engine_orders_total` | counter | `symbol`, `result`: `accepted`, `rejected`, `invalid`, `busy`, `failed` |
-| `matching_engine_cancels_total` | counter | `symbol`, `result`: `canceled`, `unknown`, `finished`, `invalid`, `busy`, `failed` |
+| `matching_engine_cancels_total` | counter | `symbol`, `result`: `canceled`, `unknown`, `finished`, `busy`, `failed` |
 | `matching_engine_trades_total` | counter | `symbol` |
 | `matching_engine_queue_length` | gauge | `symbol` |
 | `matching_engine_http_request_duration_seconds` | histogram | `route`, `code` |
 | `matching_engine_ws_connections` | gauge | |
 
-`rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands lost to a log failure or shutdown.
+`rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands not applied because of a log failure or shutdown. A command that took effect counts as `accepted`, `rejected` or its cancel result even if its log then failed. Requests that name no configured symbol, such as a cancel of an ID the engine never issued, are not counted.

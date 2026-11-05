@@ -56,7 +56,29 @@ func engineStatus(err error) (int, string) {
 	}
 }
 
-func writeEngineError(w http.ResponseWriter, err error) {
+// writeEngineError writes err, which the engine returned for a command it
+// did not apply. An unexpected error is logged, and the client gets no
+// detail.
+func (s *Server) writeEngineError(w http.ResponseWriter, err error) {
 	status, code := engineStatus(err)
-	writeError(w, status, code, err.Error())
+	msg := err.Error()
+	if code == "internal" {
+		s.opts.Logger.Error("request failed", "err", err)
+		msg = "internal error"
+	}
+	writeError(w, status, code, msg)
+}
+
+// writeAppliedFailure writes err, a log failure, for a command that took
+// effect: the error together with the order and events.
+func (s *Server) writeAppliedFailure(w http.ResponseWriter, err error, res engine.Result) {
+	status, code := engineStatus(err)
+	var b appliedFailure
+	b.Error.Code, b.Error.Message = code, err.Error()
+	if res.Status.ID != 0 {
+		o := toOrderJSON(res.Status)
+		b.Order = &o
+	}
+	b.Events = toEventsJSON(res.Events)
+	writeJSON(w, status, b)
 }

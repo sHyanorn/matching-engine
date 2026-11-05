@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -332,4 +335,27 @@ func closeDuringTraffic(t *testing.T) {
 	if err := e.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
+}
+
+// A start that fails removes the logs it created: one left behind would
+// bind its symbol to the failed attempt's index and reject the corrected
+// configuration.
+func TestFailedStartRemovesNewLogs(t *testing.T) {
+	dir := t.TempDir()
+	e, err := New(Config{Symbols: []string{"A", "B"}, DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustClose(t, e)
+	if _, err := New(Config{Symbols: []string{"A", "X", "B"}, DataDir: dir}); err == nil {
+		t.Fatal("New with B moved to index 2 succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "X.log")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("X.log after the failed start: %v, want it removed", err)
+	}
+	e, err = New(Config{Symbols: []string{"A", "B", "X"}, DataDir: dir})
+	if err != nil {
+		t.Fatalf("New with X appended: %v", err)
+	}
+	mustClose(t, e)
 }

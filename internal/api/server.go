@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,9 @@ type Options struct {
 	// subscription (default 1024). A client that falls this many updates
 	// behind is disconnected.
 	SubscriberBuffer int
+	// WriteTimeout bounds writing one WebSocket message (default 10s); a
+	// client that takes longer is disconnected as a slow consumer.
+	WriteTimeout time.Duration
 	// Logger receives connection-level logs (default: discarded).
 	Logger *slog.Logger
 }
@@ -32,6 +36,7 @@ type Server struct {
 	opts     Options
 	mux      *http.ServeMux
 	metrics  *metrics
+	symbols  map[string]bool // configured symbols: the only metric labels
 	stopping atomic.Bool
 
 	mu      sync.Mutex
@@ -39,12 +44,18 @@ type Server struct {
 	wg      sync.WaitGroup // running stream handlers
 }
 
-const defaultSubscriberBuffer = 1024
+const (
+	defaultSubscriberBuffer = 1024
+	defaultWriteTimeout     = 10 * time.Second
+)
 
 // New returns a Server for eng.
 func New(eng *engine.Engine, opts Options) *Server {
 	if opts.SubscriberBuffer <= 0 {
 		opts.SubscriberBuffer = defaultSubscriberBuffer
+	}
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = defaultWriteTimeout
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -54,7 +65,11 @@ func New(eng *engine.Engine, opts Options) *Server {
 		opts:    opts,
 		mux:     http.NewServeMux(),
 		metrics: newMetrics(eng),
+		symbols: make(map[string]bool),
 		streams: make(map[*stream]struct{}),
+	}
+	for _, sym := range eng.Symbols() {
+		s.symbols[sym] = true
 	}
 	s.handle("POST /v1/orders", s.placeOrder)
 	s.handle("DELETE /v1/orders/{id}", s.cancelOrder)
@@ -67,10 +82,34 @@ func New(eng *engine.Engine, opts Options) *Server {
 }
 
 // Handler returns the handler for every route.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := s.mux.Handler(r); pattern == "" {
+			w = &muxError{w} // no route: the mux answers 404 or 405 itself
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
-// BeginShutdown makes /healthz answer 503 and refuses new WebSocket
-// connections, so a load balancer stops sending traffic.
+// muxError turns the mux's plain-text 404 and 405 replies into the error
+// shape, keeping headers it set such as Allow.
+type muxError struct{ http.ResponseWriter }
+
+func (e *muxError) WriteHeader(code int) {
+	errCode := "not_found"
+	if code == http.StatusMethodNotAllowed {
+		errCode = "method_not_allowed"
+	}
+	writeError(e.ResponseWriter, code, errCode, strings.ToLower(http.StatusText(code)))
+}
+
+func (e *muxError) Write(p []byte) (int, error) { return len(p), nil } // drops the plain-text body
+
+// BeginShutdown makes /healthz answer 503, and new orders, cancels and
+// WebSocket connections 503 shutting_down, so a load balancer stops
+// sending traffic and nothing is applied whose reply could be lost. Call
+// it before http.Server.Shutdown: a request on a connection that Shutdown
+// closes as idle is then refused rather than applied.
 func (s *Server) BeginShutdown() { s.stopping.Store(true) }
 
 // CloseStreams closes every open WebSocket connection with code 1001 and

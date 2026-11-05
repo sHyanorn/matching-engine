@@ -59,6 +59,15 @@ type orderResponse struct {
 	Events []eventJSON `json:"events"`
 }
 
+// appliedFailure answers a command that took effect although writing or
+// syncing its log record failed: the error, then the order (if any) and
+// the events, so the client learns what happened to its order.
+type appliedFailure struct {
+	errorBody
+	Order  *orderJSON  `json:"order,omitempty"`
+	Events []eventJSON `json:"events"`
+}
+
 type bookResponse struct {
 	Symbol string      `json:"symbol"`
 	Seq    uint64      `json:"seq"`

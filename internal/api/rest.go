@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
@@ -18,9 +21,11 @@ const (
 	maxDepth     = 1000
 )
 
+var orderFields = jsonNames(orderRequest{})
+
 func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 	var req orderRequest
-	if !decodeBody(w, r, &req) {
+	if !decodeBody(w, r, &req, orderFields) {
 		return
 	}
 	// Unknown names stay zero, and validation reports them (D008).
@@ -35,35 +40,44 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 			tif = book.IOC
 		}
 	}
-	res, err := s.eng.PlaceOrder(r.Context(), engine.NewOrder{
-		Symbol: req.Symbol, Side: side, Type: typ, TIF: tif,
-		Price: book.Price(req.Price), Qty: book.Qty(req.Qty), ClientID: req.ClientID,
-	})
-	if !errors.Is(err, engine.ErrUnknownSymbol) {
-		s.countOrder(req.Symbol, res, err)
+	var res engine.Result
+	err := engine.ErrClosed
+	if !s.stopping.Load() { // see BeginShutdown
+		res, err = s.eng.PlaceOrder(r.Context(), engine.NewOrder{
+			Symbol: req.Symbol, Side: side, Type: typ, TIF: tif,
+			Price: book.Price(req.Price), Qty: book.Qty(req.Qty), ClientID: req.ClientID,
+		})
 	}
-	if err != nil {
-		writeEngineError(w, err)
-		return
+	if s.symbols[req.Symbol] {
+		s.metrics.orders.WithLabelValues(req.Symbol, orderResult(res, err)).Inc()
+		s.countTrades(req.Symbol, res.Events)
 	}
-	writeJSON(w, http.StatusOK, orderResponse{Order: toOrderJSON(res.Status), Events: toEventsJSON(res.Events)})
+	switch {
+	case err != nil && len(res.Events) > 0:
+		s.writeAppliedFailure(w, err, res)
+	case err != nil:
+		s.writeEngineError(w, err)
+	default:
+		writeJSON(w, http.StatusOK, orderResponse{Order: toOrderJSON(res.Status), Events: toEventsJSON(res.Events)})
+	}
 }
 
-func (s *Server) countOrder(symbol string, res engine.Result, err error) {
-	result := "accepted"
-	switch status, _ := engineStatus(err); {
-	case err == nil && len(res.Events) > 0 && res.Events[0].Kind == book.EventRejected:
-		result = "rejected"
-	case err == nil:
+// orderResult is the result label of a new order. A command with events
+// reached the book, even if its log failed afterwards.
+func orderResult(res engine.Result, err error) string {
+	status, _ := engineStatus(err)
+	switch {
+	case len(res.Events) > 0 && res.Events[0].Kind == book.EventRejected:
+		return "rejected"
+	case len(res.Events) > 0:
+		return "accepted"
 	case status == http.StatusBadRequest:
-		result = "invalid"
+		return "invalid"
 	case errors.Is(err, engine.ErrBusy):
-		result = "busy"
+		return "busy"
 	default:
-		result = "failed"
+		return "failed"
 	}
-	s.metrics.orders.WithLabelValues(symbol, result).Inc()
-	s.countTrades(symbol, res.Events)
 }
 
 func (s *Server) countTrades(symbol string, evs []book.Event) {
@@ -83,39 +97,44 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	symbol, issued := s.eng.SymbolOf(id)
-	res, err := s.eng.CancelOrder(r.Context(), id)
-	count := func(result string) {
-		if issued {
-			s.metrics.cancels.WithLabelValues(symbol, result).Inc()
-		}
+	var res engine.Result
+	err := engine.ErrClosed
+	if !s.stopping.Load() { // see BeginShutdown
+		res, err = s.eng.CancelOrder(r.Context(), id)
 	}
-	if err != nil {
-		switch status, _ := engineStatus(err); {
-		case errors.Is(err, engine.ErrUnknownOrder):
-			count("unknown")
-		case status == http.StatusBadRequest:
-			count("invalid")
-		case errors.Is(err, engine.ErrBusy):
-			count("busy")
-		default:
-			count("failed")
-		}
-		writeEngineError(w, err)
-		return
+	result := cancelResult(res, err)
+	if symbol, issued := s.eng.SymbolOf(id); issued {
+		s.metrics.cancels.WithLabelValues(symbol, result).Inc()
 	}
-	if res.Events[0].Kind == book.EventRejected { // not resting
-		if res.Status.ID != 0 && res.Status.Finished() {
-			count("finished")
-			writeError(w, http.StatusConflict, "order_finished", fmt.Sprintf("order %d is %v", id, res.Status.State))
-			return
-		}
-		count("unknown")
+	switch {
+	case err != nil && len(res.Events) > 0:
+		s.writeAppliedFailure(w, err, res)
+	case err != nil:
+		s.writeEngineError(w, err)
+	case result == "finished":
+		writeError(w, http.StatusConflict, "order_finished", fmt.Sprintf("order %d is %v", id, res.Status.State))
+	case result == "unknown":
 		writeError(w, http.StatusNotFound, "unknown_order", fmt.Sprintf("order %d is unknown", id))
-		return
+	default:
+		writeJSON(w, http.StatusOK, orderResponse{Order: toOrderJSON(res.Status), Events: toEventsJSON(res.Events)})
 	}
-	count("canceled")
-	writeJSON(w, http.StatusOK, orderResponse{Order: toOrderJSON(res.Status), Events: toEventsJSON(res.Events)})
+}
+
+// cancelResult is the result label of a cancel. A cancel of an order that
+// is not resting reaches the book as a rejection.
+func cancelResult(res engine.Result, err error) string {
+	switch {
+	case len(res.Events) > 0 && res.Events[0].Kind != book.EventRejected:
+		return "canceled"
+	case len(res.Events) > 0 && res.Status.ID != 0 && res.Status.Finished():
+		return "finished"
+	case len(res.Events) > 0, errors.Is(err, engine.ErrUnknownOrder):
+		return "unknown"
+	case errors.Is(err, engine.ErrBusy):
+		return "busy"
+	default:
+		return "failed"
+	}
 }
 
 func (s *Server) getOrder(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +145,7 @@ func (s *Server) getOrder(w http.ResponseWriter, r *http.Request) {
 	st, found, err := s.eng.Order(r.Context(), id)
 	switch {
 	case err != nil:
-		writeEngineError(w, err)
+		s.writeEngineError(w, err)
 	case !found:
 		writeError(w, http.StatusNotFound, "unknown_order", fmt.Sprintf("order %d is unknown", id))
 	default:
@@ -147,25 +166,31 @@ func (s *Server) getBook(w http.ResponseWriter, r *http.Request) {
 	symbol := r.PathValue("symbol")
 	d, err := s.eng.Depth(r.Context(), symbol, depth)
 	if err != nil {
-		writeEngineError(w, err)
+		s.writeEngineError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, bookResponse{Symbol: symbol, Seq: d.LastSeq, Bids: toLevelsJSON(d.Bids), Asks: toLevelsJSON(d.Asks)})
 }
 
-// decodeBody decodes one JSON object from a body of at most maxBodyBytes,
-// rejecting unknown fields and trailing data, and writes the error if it
-// fails.
-func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
-	err := dec.Decode(v)
-	if err == nil && dec.Decode(&struct{}{}) != io.EOF {
-		err = errors.New("body must hold exactly one JSON object")
+// decodeBody decodes a body of at most maxBodyBytes holding one JSON
+// object into v, and writes the error if it fails. The object's keys must
+// be in fields, exactly, and appear once: encoding/json alone would match
+// "QTY" to qty and let a repeated key override an earlier one.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any, fields map[string]bool) bool {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err == nil {
+		err = checkKeys(data, fields)
+	}
+	if err == nil {
+		err = json.Unmarshal(data, v)
 	}
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &tooLarge):
+		// The handler's ResponseWriter is wrapped, which hides the hook
+		// MaxBytesReader uses to close the connection instead of reading
+		// the rest of the body; ask for it here.
+		w.Header().Set("Connection", "close")
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("body is over %d bytes", maxBodyBytes))
 	case err != nil:
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -173,6 +198,52 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 		return true
 	}
 	return false
+}
+
+// checkKeys checks that data is one JSON object whose keys are in fields
+// and unique.
+func checkKeys(data []byte, fields map[string]bool) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return errors.New("body must be a JSON object")
+	}
+	seen := make(map[string]bool, len(fields))
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, _ := t.(string)
+		switch {
+		case !fields[key]:
+			return fmt.Errorf("unknown field %q", key)
+		case seen[key]:
+			return fmt.Errorf("repeated field %q", key)
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("body must hold exactly one JSON object")
+	}
+	return nil
+}
+
+// jsonNames returns the JSON names of a struct's fields.
+func jsonNames(v any) map[string]bool {
+	t := reflect.TypeOf(v)
+	names := make(map[string]bool, t.NumField())
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		names[name] = true
+	}
+	return names
 }
 
 // pathOrderID parses the {id} path value, and writes the error if it is

@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -102,8 +103,10 @@ func (c *testClock) releaseAll() {
 }
 
 type envConfig struct {
-	queueSize        int // engine.Config.QueueSize; 0 for the default
-	subscriberBuffer int // api.Options.SubscriberBuffer; 0 for the default
+	queueSize        int           // engine.Config.QueueSize; 0 for the default
+	subscriberBuffer int           // api.Options.SubscriberBuffer; 0 for the default
+	writeTimeout     time.Duration // api.Options.WriteTimeout; 0 for the default
+	listener         net.Listener  // for the HTTP server; nil for a default one
 }
 
 // testEnv is an engine serving BTC-USD and ETH-USD behind an api.Server on
@@ -132,8 +135,13 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 			t.Errorf("engine.Close: %v", err)
 		}
 	})
-	srv := api.New(eng, api.Options{SubscriberBuffer: cfg.subscriberBuffer})
-	hs := httptest.NewServer(srv.Handler())
+	srv := api.New(eng, api.Options{SubscriberBuffer: cfg.subscriberBuffer, WriteTimeout: cfg.writeTimeout})
+	hs := httptest.NewUnstartedServer(srv.Handler())
+	if cfg.listener != nil {
+		_ = hs.Listener.Close() // replaced; nothing listens on it yet
+		hs.Listener = cfg.listener
+	}
+	hs.Start()
 	t.Cleanup(hs.Close)
 	// Cleanups run last first: end any stall, then close the WebSocket
 	// connections (httptest.Server.Close does not wait for hijacked ones),
@@ -733,7 +741,7 @@ func (e *testEnv) dial(t *testing.T) *websocket.Conn {
 	if err != nil {
 		t.Fatalf("dialing %s: %v", e.streamURL(), err)
 	}
-	conn.SetReadLimit(1 << 20) // a snapshot holds up to 2000 levels
+	conn.SetReadLimit(1 << 20) // ample for the books these tests build
 	t.Cleanup(func() { _ = conn.CloseNow() })
 	return conn
 }
@@ -1174,6 +1182,17 @@ func TestRequestErrors(t *testing.T) {
 		{"unknown symbol", "POST", "/v1/orders",
 			`{"symbol":"DOGE-USD","side":"buy","type":"limit","price":100,"qty":1}`, 404, "unknown_symbol"},
 		{"body over 4 KB", "POST", "/v1/orders", tooLarge, 413, "body_too_large"},
+		{"over 4 KB after the object", "POST", "/v1/orders", orderWith(valid) + strings.Repeat(" ", 5000), 413, "body_too_large"},
+		{"empty body", "POST", "/v1/orders", "", 400, "bad_request"},
+		{"null body", "POST", "/v1/orders", "null", 400, "bad_request"},
+		{"two objects", "POST", "/v1/orders", orderWith(valid) + orderWith(valid), 400, "bad_request"},
+		{"field name in other case", "POST", "/v1/orders", orderWith(valid + `,"QTY":7`), 400, "bad_request"},
+		{"every name in other case", "POST", "/v1/orders",
+			`{"SYMBOL":"BTC-USD","Side":"buy","TYPE":"limit","Price":100,"Qty":1}`, 400, "bad_request"},
+		{"repeated field", "POST", "/v1/orders", orderWith(valid + `,"qty":7`), 400, "bad_request"},
+
+		{"unknown route", "GET", "/v1/nothing", "", 404, "not_found"},
+		{"method not allowed", "PUT", "/v1/orders/5", "", 405, "method_not_allowed"},
 
 		{"GET non-numeric id", "GET", "/v1/orders/abc", "", 400, "invalid_order_id"},
 		{"GET id 0", "GET", "/v1/orders/0", "", 400, "invalid_order_id"},

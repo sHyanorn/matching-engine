@@ -145,3 +145,15 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: `ErrBusy` maps to `503 Service Unavailable` with `Retry-After: 1`
 - Rationale: The server is overloaded; the client did nothing wrong, which 429 would imply
 - Alternatives: 429 Too Many Requests
+
+## D025 A command that took effect is reported even if its log failed
+- Date: 2026-11-05
+- Decision: When writing or syncing a batch's log records fails after the batch was applied (`-sync-interval` below 0), the REST reply is `500 log_failed` with the order and events. Metrics count the command by what it did
+- Rationale: The order is live and may trade, and replay restores it if the write reached the disk. Without its ID the client could neither query nor cancel it
+- Alternatives: a plain 500 (the client wrongly concludes nothing happened); a 200 (hides that durability is unknown)
+
+## D026 WebSocket snapshots hold the whole book; the send backlog is bounded in bytes
+- Date: 2026-11-05
+- Decision: `book_snapshot` holds every level, so snapshot plus deltas always reproduces the book. Each connection's unsent messages are limited to 1 MB beyond the one being queued, and one message unsent for 10 s also marks a slow consumer (close 1008)
+- Rationale: With a capped snapshot, deltas for levels below the cap left the client's book incomplete. A byte bound keeps the memory a non-reading client can pin small even when snapshots are large
+- Alternatives: a capped snapshot with deltas filtered to the visible depth (the server tracks each client's window); a message-count bound only (a backlog of snapshots costs megabytes)
