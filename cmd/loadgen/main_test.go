@@ -42,7 +42,8 @@ func startEngine(t *testing.T, clock func() int64) string {
 }
 
 func testConfig(addr string) config {
-	return config{addr: addr, symbol: "BTC-USD", rate: 2000, warmup: 200 * time.Millisecond, duration: time.Second, conns: 8, seed: 1, sd: 5}
+	// Enough connections that a run under the race detector keeps up.
+	return config{addr: addr, symbol: "BTC-USD", rate: 2000, warmup: 200 * time.Millisecond, duration: time.Second, conns: 16, seed: 1, sd: 5}
 }
 
 func TestMeasure(t *testing.T) {
@@ -100,7 +101,7 @@ func TestStallIsChargedToEveryDelayedRequest(t *testing.T) {
 	}
 	// About stall*rate = 800 requests were due during the stall, 40% of
 	// those measured, and the first three quarters of them waited over
-	// 100 ms; only 8 were in flight when it began.
+	// 100 ms; only 16 were in flight when it began.
 	const limit = 100_000 // µs
 	if p := r.Latency["reply"].P90; p < limit {
 		t.Errorf("p90 request to reply %.0f µs, want over %d", p, limit)
@@ -117,7 +118,7 @@ func TestRunWritesReport(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "r.json")
 	var stdout bytes.Buffer
 	err := run(context.Background(), []string{
-		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "200ms", "-duration", "2s", "-conns", "4", "-out", out,
+		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "200ms", "-duration", "2s", "-conns", "16", "-out", out,
 	}, &stdout)
 	if err != nil {
 		t.Fatal(err)
