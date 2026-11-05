@@ -1,97 +1,123 @@
-# 技术决策记录
+# Technical Decision Log
 
-格式：编号、日期、决定、理由、备选方案。新决定追加到末尾。
+Format: ID, date, decision, rationale, alternatives. Append new decisions at the end.
 
-## D001 使用 Go
-- 日期：2026-11-04
-- 决定：用 Go 实现
-- 理由：后端岗位认可度高；goroutine 和 channel 适合事件循环模型；自带基准测试、模糊测试、pprof
-- 备选：Rust（性能更高，但学习成本高）、TypeScript（已熟悉，但不适合展示底层性能）
+## D001 Use Go
+- Date: 2026-11-04
+- Decision: Implement in Go
+- Rationale: Widely valued for backend roles; goroutines and channels fit the event-loop model; built-in benchmarking, fuzzing, and pprof
+- Alternatives: Rust (faster, but a steeper learning curve); TypeScript (already familiar, but poorly suited to showcasing low-level performance)
 
-## D002 价格和数量用整数
-- 日期：2026-11-04
-- 决定：价格以最小报价单位存为 int64，数量同样用 int64
-- 理由：浮点数有精度误差，会导致比较和累加出错；真实交易系统普遍使用定点整数
-- 备选：decimal 库（正确但慢）
+## D002 Integer prices and quantities
+- Date: 2026-11-04
+- Decision: Store prices as int64 in minimum price increments (ticks); quantities are also int64
+- Rationale: Floating point has precision errors that break comparisons and accumulation; real trading systems generally use fixed-point integers
+- Alternatives: a decimal library (correct but slow)
 
-## D003 单线程撮合
-- 日期：2026-11-04
-- 决定：每个交易对一个 goroutine 串行处理命令
-- 理由：撮合天然要求顺序；无锁设计更快更简单，结果可确定性重放
-- 备选：细粒度锁（复杂且容易出错）
+## D003 Single-threaded matching
+- Date: 2026-11-04
+- Decision: One goroutine per symbol processes commands serially
+- Rationale: Matching is inherently sequential; a lock-free design is faster and simpler, and results can be replayed deterministically
+- Alternatives: fine-grained locking (complex and error-prone)
 
-## D004 价格档位有序结构用红黑树
-- 日期：2026-11-04
-- 决定：每一边的价格档位用手写的经典红黑树（CLRS 第 13 章，带父指针，迭代实现）。树按价格优先级排序，缓存最左节点作为最优价，Best 为 O(1)；前 N 档从最优价沿后继遍历，代价 O(N + log P)。买卖两边共用一份代码，方向只体现在比较函数里。删除时重新挂接节点，从不复制档位，已返回的档位指针在该档删除前一直有效
-- 理由：两种结构用同一套模型测试和基准测试比较（Intel Xeon 2.1GHz 云主机，Go 1.24.7，每项 10 轮取中位数）。价位数 P = 100 / 1000 / 10000 时，盘口附近删一档加一档红黑树 127 / 183 / 250 ns，跳表 159 / 241 / 405 ns；吃掉最优档 86 / 119 / 144 ns 对 172 / 190 / 227 ns；查找 6 / 27 / 48 ns 对 27 / 67 / 101 ns。跳表只在遍历前 20 档时快 13% 到 16%（约 15 ns），交错复测（每项 6 轮）时差距不显著。原型每档内存红黑树 48 字节，跳表 58.7 字节；加上 FIFO 队列字段后，正式版每档 80 字节。红黑树最坏情况有保证，树高不超过 2·log2(P+1)；跳表只有期望 O(log P)，知道种子的人可以挑价格把它拖慢，测试中盘口附近平均查找步数从 18 升到 517。红黑树不用随机数，同一命令序列总得到同一棵树，符合撮合核心可重放的要求。代价是代码多一倍多（271 行对 114 行），对称分支全部写出并沿用 CLRS 的情况编号，便于对照教材核对。买方顺序用 `a^flip < b^flip` 一次比较实现。换成 if 写法后，查找在 100 档时慢 93%，在 1000 和 10000 档时慢 11% 到 15%，吃掉最优档和盘口附近增删慢 6% 到 16% 或在噪声内（`bench-results/d004/results/flip-vs-if.txt`），所以保留，并有边界值测试。数据和三个原型在 `bench-results/d004/`
-- 备选：跳表（代码短，但写操作慢 26% 到 101%，最坏情况没有保证，还要管理种子）；左倾红黑树（删除时复制后继的键值，已返回的档位指针会失效）；有序切片（P = 10000 时增删档位慢 14 到 25 倍，只作对照）
+## D004 Red-black tree for ordered price levels
+- Date: 2026-11-04
+- Decision: Each side's price levels use a hand-written classic red-black tree (CLRS chapter 13, with parent pointers, iterative). The tree is ordered by price priority and caches its leftmost node as the best price, so Best is O(1); the top N levels are walked from the best price via successors in O(N + log P). Both sides share one implementation; direction appears only in the comparison function. Deletion relinks nodes and never copies levels, so a returned level pointer stays valid until that level is deleted
+- Rationale: Both structures were compared with the same model tests and benchmarks (Intel Xeon 2.1GHz cloud host, Go 1.24.7, median of 10 runs each). For P = 100 / 1000 / 10000 price levels: removing one level and adding one near the top of the book takes 127 / 183 / 250 ns for the red-black tree vs 159 / 241 / 405 ns for the skip list; consuming the best level 86 / 119 / 144 ns vs 172 / 190 / 227 ns; lookup 6 / 27 / 48 ns vs 27 / 67 / 101 ns. The skip list is faster only when walking the top 20 levels, by 13% to 16% (about 15 ns), and the gap was not significant in interleaved reruns (6 runs each). Per-level memory in the prototypes is 48 bytes for the red-black tree vs 58.7 bytes for the skip list; with the FIFO queue fields added, the production version uses 80 bytes per level. The red-black tree has a guaranteed worst case, with height at most 2·log2(P+1); the skip list is only O(log P) in expectation, and anyone who knows the seed can choose prices that slow it down: in testing, the average lookup steps near the top of the book rose from 18 to 517. The red-black tree uses no randomness, so the same command sequence always produces the same tree, as the replayable matching core requires. The cost is more than twice the code (271 lines vs 114); the symmetric branches are written out in full and keep the CLRS case numbering so they can be checked against the textbook. Buy-side ordering uses a single comparison, `a^flip < b^flip`. An if-based version made lookup 93% slower at 100 levels and 11% to 15% slower at 1000 and 10000 levels, and made consuming the best level and adding/removing near the top of the book 6% to 16% slower or within noise (`bench-results/d004/results/flip-vs-if.txt`), so the comparison is kept and covered by boundary-value tests. Data and the three prototypes are in `bench-results/d004/`
+- Alternatives: skip list (shorter code, but writes are 26% to 101% slower, no worst-case guarantee, and a seed to manage); left-leaning red-black tree (deletion copies the successor's key and value, invalidating returned level pointers); sorted slice (14 to 25 times slower to add or remove levels at P = 10000; kept only as a baseline)
 
-## D005 静态检查统一用 golangci-lint
-- 日期：2026-11-04
-- 决定：用 golangci-lint v2（版本固定为 v2.5.0）统一做静态检查，staticcheck 作为其中一个检查器启用，不再单独安装；配置在 `.golangci.yml`
-- 理由：一个工具、一份配置、本地和 CI 版本一致；staticcheck 的规则一条不少。另外用 depguard 禁止 `internal/book` 的非测试代码导入 `time`、`math/rand`、`crypto/rand`、`net`、`os`，把"撮合核心不依赖时间、随机数和网络"这条规则交给 CI 自动检查
-- 备选：单独安装 staticcheck（多一个工具要维护版本，且没有导入限制）
+## D005 golangci-lint for all static analysis
+- Date: 2026-11-04
+- Decision: Use golangci-lint v2 (pinned to v2.5.0) for all static analysis, with staticcheck enabled as one of its linters instead of installed separately; the configuration is in `.golangci.yml`
+- Rationale: One tool, one configuration, the same version locally and in CI, with no staticcheck rules lost. depguard also forbids non-test code in `internal/book` from importing `time`, `math/rand`, `crypto/rand`, `net`, and `os`, so CI enforces the rule that the matching core does not depend on time, randomness, or networking
+- Alternatives: installing staticcheck separately (one more tool version to maintain, and no import restrictions)
 
-## D006 核心类型只含定长整数，事件追加到调用方的缓冲区
-- 日期：2026-11-04
-- 决定：Command（40 字节）、Event（64 字节）、Order（64 字节）、Trade、LevelUpdate 只由定长整数字段组成，可以用 `==` 比较。所有事件种类共用一个 Event 结构体，用 Kind 区分，字段用法见 Event 的注释。M1 的接口定为 `Book.Apply(cmd Command, out []Event) []Event`，调用方写 `buf = b.Apply(cmd, buf[:0])`；下一次调用会覆盖 buf，交给其他 goroutine 前要先复制。`contract_test.go` 固定这些类型的大小，并检查字段只含整数
-- 理由：缓冲区长大后，发出事件不再分配内存，GC 也不用扫描事件切片。草稿基准（Xeon 2.1GHz）：追加 3 个事件约 27 ns，0 次分配。表驱动测试和重放测试可以直接用 `slices.Equal` 比较整段事件
-- 备选：每种事件一个结构体再装进接口（每个事件分配一次，到处要 type switch）；回调函数（不分配，但每个测试都要写记录器）
+## D006 Core types hold only fixed-size integers; events are appended to a caller-owned buffer
+- Date: 2026-11-04
+- Decision: Command (40 bytes), Event (64 bytes), Order (64 bytes), Trade, and LevelUpdate consist only of fixed-size integer fields and can be compared with `==`. All event kinds share one Event struct, distinguished by Kind; field usage is documented in the Event comments. The M1 interface is `Book.Apply(cmd Command, out []Event) []Event`, called as `buf = b.Apply(cmd, buf[:0])`; the next call overwrites buf, so copy it before handing it to another goroutine. `contract_test.go` pins the sizes of these types and checks that their fields are integers only
+- Rationale: Once the buffer has grown, emitting events no longer allocates, and the GC does not scan the event slice. Preliminary benchmark (Xeon 2.1GHz): appending 3 events takes about 27 ns with 0 allocations. Table-driven and replay tests can compare whole event sequences with `slices.Equal`
+- Alternatives: one struct per event kind wrapped in an interface (one allocation per event, and type switches everywhere); callbacks (no allocation, but every test needs a recorder)
 
-## D007 OrderID 和 Timestamp 由引擎在写日志前填入 Command
-- 日期：2026-11-04
-- 决定：客户端不传 OrderID。API 收到新单时先从引擎的分配器取下一个 ID（所有交易对共用一个计数器），再调用 Validate；被 400 拒掉的命令占用的 ID 直接跳过，ID 只要求唯一，不要求连续。0 无效；book 只能发现与当前挂单重复的 ID。Timestamp 是调用方给的 int64（引擎用 Unix 纳秒），book 原样复制，从不比较。时间优先就是命令被应用的先后顺序。symbol 和 client_id 不进入 Command，由引擎和 API 层处理
-- 理由：日志自包含，重放不依赖时钟或 book 内部计数器；`DELETE /v1/orders/{id}` 不带 symbol，所以 ID 必须跨交易对唯一；时钟回拨不影响撮合
-- 备选：由 book 分配 ID（跨交易对会冲突）；按时间戳排序（优先级受时钟质量影响）
+## D007 The engine fills OrderID and Timestamp into the Command before logging
+- Date: 2026-11-04
+- Decision: Clients do not send an OrderID. When the API receives a new order, it first takes the next ID from the engine's allocator (one counter shared by all symbols), then calls Validate; IDs taken by commands rejected with 400 are simply skipped, since IDs need only be unique, not contiguous. 0 is invalid; the book can only detect IDs that duplicate a currently resting order. Timestamp is an int64 supplied by the caller (the engine uses Unix nanoseconds); the book copies it unchanged and never compares it. Time priority is the order in which commands are applied. symbol and client_id are not part of the Command; the engine and API layers handle them. Each ID also carries its symbol's index (D019)
+- Rationale: Each symbol's log is self-contained, so replay does not depend on the clock or on the book's internal counters; `DELETE /v1/orders/{id}` carries no symbol, so IDs must be unique across symbols; the clock moving backwards does not affect matching
+- Alternatives: book-assigned IDs (collide across symbols); ordering by timestamp (priority would depend on clock quality)
 
-## D008 枚举零值无效，数值显式写出并由测试固定
-- 日期：2026-11-04
-- 决定：Side、OrderType、TIF、CommandKind、EventKind 的零值无效，Reason 的零值是 ReasonNone。所有常量写出显式数字（如 `Buy Side = 1`），`TestWireValuesArePinned` 固定它们，以后只追加不改号。每个枚举有一张名字表，String 和 Parse 函数共用。拼写统一用美式 canceled
-- 理由：漏填字段或 JSON 缺字段会被拒绝，不会悄悄变成 buy 或 limit。这些数字写进命令日志，重排常量会破坏旧日志，测试能拦住
-- 备选：iota 从 0 开始（漏填字段等于一个合法值）；用 UnmarshalText 直接解码 JSON（拼错时错误码要再映射一次）
+## D008 Enum zero values are invalid; numeric values are explicit and pinned by tests
+- Date: 2026-11-04
+- Decision: The zero values of Side, OrderType, TIF, CommandKind, and EventKind are invalid; the zero value of Reason is ReasonNone. All constants have explicit numbers (e.g. `Buy Side = 1`), pinned by `TestWireValuesArePinned`; new values are only appended, never renumbered. Each enum has one name table shared by its String and Parse functions. American spelling is used throughout (canceled)
+- Rationale: An unset field or a missing JSON field is rejected rather than silently becoming buy or limit. These numbers are written to the command log, so reordering constants would break old logs; the test catches that
+- Alternatives: iota starting at 0 (an unset field equals a valid value); decoding JSON directly with UnmarshalText (error codes for misspellings would need a second mapping)
 
-## D009 Command.Validate 是唯一的无状态校验
-- 日期：2026-11-04
-- 决定：`Validate()` 返回 Reason，合法时为 ReasonNone，检查顺序固定。市价单必须是 IOC 或 FOK 且 Price 为 0；限价单 Price 在 [1, MaxPrice]；撤单只能带 OrderID 和 Timestamp。API 用它直接回 400，没通过的命令既不写日志也不应用；book 对每条命令再查一次。新单的 Kind 和 OrderID 由 API 自己填，所以新单出现 invalid_command 或 invalid_order_id 说明 API 有 bug，应回 500
-- 理由：两层共用一个函数，结论不会不一致；顺序固定保证多处出错时原因确定，重放结果稳定；每种意图只有一种合法表示，未使用的字段必须为 0，以后改单等功能可以启用这些字段而不影响旧日志
-- 备选：返回 error（会分配，调用方还要做类型断言）；市价单忽略 TIF 和 Price（日志不规范）
+## D009 Command.Validate is the single stateless validation
+- Date: 2026-11-04
+- Decision: `Validate()` returns a Reason (ReasonNone when valid) and runs its checks in a fixed order. Market orders must be IOC or FOK with Price 0; limit orders must have Price in [1, MaxPrice]; cancels may carry only OrderID and Timestamp. The API uses it to return 400 directly, and commands that fail it are neither logged nor applied; the book checks every command again. The API fills in Kind and OrderID for new orders itself, so invalid_command or invalid_order_id on a new order indicates an API bug and should return 500
+- Rationale: Both layers share one function, so their conclusions cannot diverge; the fixed order makes the reason deterministic when several checks fail, keeping replay results stable; each intent has exactly one valid representation and unused fields must be 0, so future features such as order amendment can use those fields without affecting old logs
+- Alternatives: returning error (allocates, and callers need type assertions); ignoring TIF and Price on market orders (non-canonical log)
 
-## D010 FOK 不能全部成交时整单拒绝
-- 日期：2026-11-04
-- 状态：Aaron 已确认（2026-11-04）
-- 决定：FOK 先累加对手方可成交的档位总量，不够就只发一个 `Rejected(fok_unfillable)`，没有 Accepted 也没有 Trade，订单簿不变。IOC 和市价单的剩余部分是 Accepted ... `Canceled(ioc_remainder)`
-- 理由：SPEC 第 6 节第 4 条写的是"不够就整单拒绝，不产生任何成交"，比第 3 节的"全部成交否则撤销"更具体；这样"Rejected 表示命令什么都没改变"始终成立，数量守恒检查不需要特殊情况
-- 备选：Accepted 加 `Canceled(fok_unfillable)`（与第 6 节字面冲突）
+## D010 FOK orders that cannot fill completely are rejected outright
+- Date: 2026-11-04
+- Decision: FOK first sums the fillable quantity across the opposite side's levels; if it is not enough, it emits only `Rejected(fok_unfillable)`, with no Accepted and no Trade, and the book is unchanged. The remainder of IOC and market orders is Accepted ... `Canceled(ioc_remainder)`
+- Rationale: SPEC section 6, rule 4 says "if it is not enough, rejects the whole order without producing any trades", which is more specific than section 3's "fill completely or cancel"; this keeps "Rejected means the command changed nothing" always true, and the quantity conservation check needs no special case
+- Alternatives: Accepted plus `Canceled(fok_unfillable)` (contradicts the wording of section 6)
 
-## D011 事件序列、档位总量和 Seq
-- 日期：2026-11-04
-- 决定：新单的事件序列是 Rejected，或 Accepted、若干 Trade、最后 Rested 或 Canceled；撤单是 Rejected 或 Canceled；未知种类的命令是 `Rejected(invalid_command)`。数量守恒在每条命令的最后一个事件之后成立。改变挂单的事件（Trade、Rested、撤掉挂单的 Canceled）带上被改变档位的方向和事件之后的绝对总量。Seq 每个 book 从 1 开始，每个事件加 1，拒单也计入；Trade 的 Seq 就是成交序号。WebSocket 每个频道用引擎自己的连续计数器
-- 理由：只看事件流就能检查数量守恒；只有 book 能廉价地拿到档位总量，用绝对值时引擎按 (方向, 价格) 保留最后一个值就能生成 book_delta，不需要另建一份订单簿；频道只看到部分事件，直接用 Seq 会让客户端分不清真断档和被过滤的事件
-- 备选：单独的 BookDelta 事件（事件更多，Qty 字段一个名字两种含义）；事件不带档位信息（引擎要维护盘口镜像）
+## D011 Event sequences, level totals, and Seq
+- Date: 2026-11-04
+- Decision: A new order's event sequence is Rejected, or Accepted, zero or more Trades, then Rested or Canceled; a cancel produces Rejected or Canceled; a command of unknown kind produces `Rejected(invalid_command)`. Quantity conservation holds after the last event of each command. Events that change resting orders (Trade, Rested, and a Canceled that removes a resting order) carry the side of the affected level and its absolute total quantity after the event. Seq starts at 1 in each book and increases by 1 per event, rejections included; a Trade's Seq is its trade sequence number. Each WebSocket channel uses its own contiguous counter kept by the engine
+- Rationale: Quantity conservation can be checked from the event stream alone; only the book can obtain level totals cheaply, and with absolute values the engine can produce book_delta by keeping the last value per (side, price), without maintaining a second order book; a channel sees only some events, so using Seq directly would leave clients unable to tell a real gap from filtered events
+- Alternatives: a separate BookDelta event (more events, and one Qty field name with two meanings); events without level information (the engine would have to maintain a mirror of the book)
 
-## D012 Price 和 Qty 是基于 int64 的具名类型，上限都是 1e9
-- 日期：2026-11-04
-- 状态：Aaron 已确认（2026-11-04）
-- 决定：`type Price int64`、`type Qty int64`、`type OrderID uint64`。Validate 要求价格不超过 1e9 tick、数量不超过 1e9 lot
-- 理由：仍然是 D002 的 int64 整数，编译器还能阻止把价格当数量用。单笔成交金额最多 1e18，小于 int64 上限约 9.2e18；900 万张满额挂单的总量仍小于 2^53，在 JavaScript 客户端里是精确整数。`TestBoundsCannotOverflow` 把这些论证写成了测试。以后提高上限不影响旧日志，降低会
-- 备选：裸 int64（价格和数量变量互换也能编译通过）；不设上限（模糊测试很快会让档位总量溢出）
+## D012 Price and Qty are named int64-based types, both capped at 1e9
+- Date: 2026-11-04
+- Decision: `type Price int64`, `type Qty int64`, `type OrderID uint64`. Validate requires prices of at most 1e9 ticks and quantities of at most 1e9 lots
+- Rationale: These are still the int64 integers of D002, and the compiler can also prevent a price from being used as a quantity. A single trade's notional value is at most 1e18, below the int64 maximum of about 9.2e18; the total quantity of 9 million maximum-size resting orders is still below 2^53, an exact integer in JavaScript clients. `TestBoundsCannotOverflow` turns these arguments into a test. Raising the caps later does not affect old logs; lowering them would
+- Alternatives: bare int64 (swapping price and quantity variables still compiles); no caps (fuzzing would quickly overflow level totals)
 
-## D013 book 只保存挂单，Order 记录 RestedSeq
-- 日期：2026-11-04
-- 决定：book 只保存挂单（目前只有限价 GTC），成交完或撤掉的订单直接移除，历史和状态由引擎根据事件维护。Order 记录 RestedSeq，即让它获得当前排队位置的那个 Rested 事件的 Seq
-- 理由：每个价位里 RestedSeq 从队头到队尾严格递增，CheckInvariants 可以借此检查时间优先；以后改单减量时保留它，改价时换新值，"保留优先级"就能测试；快照恢复也能保持排队顺序
-- 备选：book 保留已结束的订单（内存无限增长）
+## D013 The book stores only resting orders; Order records RestedSeq
+- Date: 2026-11-04
+- Decision: The book stores only resting orders (currently only limit GTC); filled or canceled orders are removed immediately, and history and status are maintained by the engine from events. Order records RestedSeq, the Seq of the Rested event that gave it its current queue position
+- Rationale: Within each price level, RestedSeq strictly increases from head to tail, so CheckInvariants can use it to check time priority; a future amendment that reduces quantity keeps it while a price change assigns a new one, which makes "keeps priority" testable; snapshot recovery can also preserve queue order
+- Alternatives: the book keeps finished orders (unbounded memory growth)
 
-## D014 不可能出现的内部状态用 panic 报告
-- 日期：2026-11-04
-- 状态：Aaron 已确认（2026-11-04）
-- 决定：`internal/book` 里只有一种情况用 panic：任何合法或非法命令都触发不到、只能由 book 自身的 bug 造成的状态，例如往价格档位树里插入一个已经存在的价位。panic 信息以 `book:` 开头。所有能由输入触发的问题（包括模糊测试构造的任意命令）都走 `Rejected` 事件，绝不 panic
-- 理由：这类状态一旦出现，订单簿已经不可信，继续运行只会把错误带进后面的成交和日志；当场停下最容易定位。模糊测试和属性测试遇到 panic 会直接报失败，bug 不会被悄悄吞掉
-- 备选：返回 error（调用方无法合理处理，只会层层上抛）；静默忽略（错误被带进后续状态，更难排查）
+## D014 Impossible internal states are reported with panic
+- Date: 2026-11-04
+- Decision: `internal/book` panics in only one case: a state that no valid or invalid command can reach and that only a bug in the book itself can cause, such as inserting a price that already exists into the price-level tree. Panic messages start with `book:`. Every problem that input can trigger (including arbitrary commands constructed by fuzzing) results in a `Rejected` event and never a panic
+- Rationale: Once such a state occurs, the order book can no longer be trusted, and continuing would only carry the error into later trades and logs; stopping immediately makes it easiest to locate. Fuzz and property tests report a panic as a failure, so bugs are not silently swallowed
+- Alternatives: returning error (callers cannot handle it sensibly and would only pass it up); ignoring it silently (the error spreads into later state and is harder to track down)
 
-## D015 正确性检查：CheckInvariants 返回 error，CI 每次推送跑模糊测试
-- 日期：2026-11-05
-- 状态：Aaron 已确认（2026-11-05）
-- 决定：`Book.CheckInvariants()` 返回发现的第一个问题，没有问题时返回 nil，耗时 O(N + P)，只在测试、模糊测试和调试模式下调用。CI 增加 fuzz 任务，每次推送各跑 `FuzzBook` 和 `FuzzCommandValidate` 30 秒；失败时把出错输入作为构建产物上传。模糊测试找到的出错输入提交到 `internal/book/testdata/fuzz/`，之后普通的 `go test` 会把它们当作回归测试运行
-- 理由：返回 error 时，调用方可以决定是让测试失败、打日志还是停机，错误信息也能指出具体是哪条规则坏了；用 panic 只能让进程停下。模糊测试每次推送都跑，新改动引入的问题能在合并前发现；把出错输入留在仓库里，修好的 bug 不会悄悄回来
-- 备选：CheckInvariants 直接 panic（调用方没有选择）；只在本地手动跑模糊测试（容易忘，问题发现得晚）
+## D015 Correctness checks: CheckInvariants returns error, CI fuzzes on every push
+- Date: 2026-11-05
+- Decision: `Book.CheckInvariants()` returns the first problem found, or nil if there is none; it runs in O(N + P) and is called only from tests, fuzzing, and debug mode. CI has a fuzz job that runs `FuzzBook` and `FuzzCommandValidate` for 30 seconds each on every push; on failure, the failing input is uploaded as a build artifact. Failing inputs found by fuzzing are committed to `internal/book/testdata/fuzz/`, after which a plain `go test` runs them as regression tests
+- Rationale: Returning error lets the caller decide whether to fail a test, log, or halt, and the error can name the exact rule that was broken; a panic can only stop the process. Fuzzing on every push catches problems introduced by new changes before they are merged; keeping failing inputs in the repository means fixed bugs cannot quietly return
+- Alternatives: CheckInvariants panics directly (the caller has no choice); fuzzing only manually on a local machine (easy to forget, and problems are found late)
+
+## D016 One command log per symbol
+- Date: 2026-11-05
+- Decision: Each symbol's goroutine owns one append-only file, `<DataDir>/<symbol>.log`. The header holds a format version, the symbol and its index; each record holds the command's fixed fields and client_id, prefixed by its length and followed by a CRC-32C. On startup a torn last record is truncated; damage anywhere else stops the engine
+- Rationale: No lock or shared writer between symbols, and each book replays independently. The checksum tells a crash-truncated tail, which is safe to drop, from real corruption, which is not
+- Alternatives: one shared log (needs a lock or a writer goroutine); no checksum (silent corruption)
+
+## D017 Log durability: write before apply, fsync every 10 ms
+- Date: 2026-11-05
+- Decision: Each batch of commands is written to the OS in one write before any of them is applied. The log is fsynced every `SyncInterval` (10 ms by default) and on shutdown; a negative interval fsyncs after every batch
+- Rationale: A process crash loses nothing; a machine crash loses at most the last interval. An fsync per batch costs milliseconds on cloud disks and would endanger the 5 ms p99 target
+- Alternatives: fsync every batch (slow); no fsync (unbounded loss on power failure)
+
+## D018 Slow subscribers are disconnected
+- Date: 2026-11-05
+- Decision: Each subscriber has a bounded channel. Matching never waits on it: a full channel ends the subscription with `ErrSlowConsumer`. A subscription records the Seq it starts from, so a client can resynchronize from a snapshot
+- Rationale: One slow consumer must not stall a book or other consumers; a gap the client can detect is better than silently dropped events
+- Alternatives: blocking (stalls matching); dropping updates but keeping the subscriber (gaps go unnoticed)
+
+## D019 Order IDs carry their symbol's index
+- Date: 2026-11-05
+- Decision: `id = counter<<8 | symbolIndex`, from one engine-wide counter. An engine serves at most 256 symbols, and IDs stay exact in JavaScript for 2^45 - 1 orders. The symbol order is fixed by configuration and checked against each log header
+- Rationale: `DELETE` and `GET /v1/orders/{id}` are routed from the ID alone, with no lookup table and no lock on the hot path
+- Alternatives: an ID-to-symbol map (shared state updated on every fill and cancel); requiring the symbol in every request (not in SPEC §8)
+
+## D020 Commands wait for their result and fail fast when a queue is full
+- Date: 2026-11-05
+- Decision: `PlaceOrder` and `CancelOrder` return the command's events once it is applied. If the symbol's queue is full they return `ErrBusy` at once. Queries and subscriptions wait for room, bounded by their context
+- Rationale: The REST API can report fills in its response, and backpressure reaches the client immediately instead of building latency (SPEC §4)
+- Alternatives: fire-and-forget commands (the client learns the outcome only from the stream); blocking until there is room (hides overload)

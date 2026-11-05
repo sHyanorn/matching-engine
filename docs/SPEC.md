@@ -1,125 +1,125 @@
-# matching-engine 项目规格
+# matching-engine Specification
 
-## 1. 一句话介绍
+## 1. One-line summary
 
-一个用 Go 实现的高性能限价订单簿撮合引擎，按价格优先、时间优先撮合订单，通过 WebSocket 实时推送行情，并附带完整的压测报告。
+A high-performance limit order book matching engine written in Go. It matches orders by price-time priority, streams market data in real time over WebSocket, and comes with a complete load-test report.
 
-## 2. 要证明的能力
+## 2. Capabilities to demonstrate
 
-| 能力 | 体现在哪里 |
+| Capability | Where it shows |
 |---|---|
-| 算法与数据结构 | 自己实现的价格档位有序结构、O(1) 撤单、复杂度分析 |
-| 后端开发 | REST 和 WebSocket 接口、并发模型、优雅关闭、可观测性 |
-| 工程质量 | 不变量测试、模糊测试、确定性重放、基准测试 |
-| 金融知识 | 订单类型、盘口深度、成交规则 |
+| Algorithms and data structures | Hand-written ordered price-level structure, O(1) cancels, complexity analysis |
+| Backend development | REST and WebSocket APIs, concurrency model, graceful shutdown, observability |
+| Engineering quality | Invariant tests, fuzzing, deterministic replay, benchmarks |
+| Financial domain knowledge | Order types, market depth, matching rules |
 
-## 3. 功能范围
+## 3. Scope
 
-### 必做
+### Required
 
-- 单个或多个交易对，每个交易对一个独立订单簿
-- 订单类型：限价单、市价单
-- 有效期类型：GTC（一直有效）、IOC（立即成交剩余撤销）、FOK（全部成交否则撤销）
-- 撤单
-- 部分成交
-- 查询盘口深度（L2 聚合）和单个订单状态
-- 实时推送：成交记录、盘口增量更新
-- 命令日志与确定性重放：从日志重放可以得到完全相同的订单簿状态
+- One or more symbols, each with its own independent order book
+- Order types: limit and market
+- Time in force: GTC (good till canceled), IOC (immediate or cancel: fill immediately, cancel the remainder), FOK (fill or kill: fill completely or cancel)
+- Order cancellation
+- Partial fills
+- Queries for market depth (L2 aggregated) and individual order status
+- Real-time streaming: trades and incremental book updates
+- Command log and deterministic replay: replaying the log yields exactly the same order book state
 
-### 选做
+### Optional
 
-- 改单（改数量保留优先级，改价格重新排队）
-- 自成交防护（同一账户的买卖单不互相成交）
-- 快照加增量的恢复机制
-- 简单的网页盘口展示（可复用到作品集网站）
+- Order amendment (changing quantity keeps priority; changing price re-queues the order)
+- Self-trade prevention (buy and sell orders from the same account do not trade with each other)
+- Snapshot-plus-delta recovery
+- A simple web order book display (reusable on the portfolio website)
 
-### 不做
+### Out of scope
 
-- 用户账户、资金清算、风控
-- 分布式部署
+- User accounts, settlement, risk management
+- Distributed deployment
 
-## 4. 架构
+## 4. Architecture
 
 ```
            REST / WebSocket (internal/api)
                        │
-                 命令通道 (chan)
+             command channel (chan)
                        │
-        ┌──────────────▼──────────────┐
-        │  engine: 每个交易对一个 goroutine │  单线程撮合，无锁
-        │  1. 写命令日志                  │
-        │  2. 调用 book 撮合              │
-        │  3. 发布事件                    │
-        └──────────────┬──────────────┘
+    ┌──────────────────▼──────────────────┐
+    │ engine: one goroutine per symbol    │  single-threaded matching, lock-free
+    │ 1. write the command log            │
+    │ 2. call book to match               │
+    │ 3. publish events                   │
+    └──────────────────┬──────────────────┘
                        │
-               事件总线 (fan-out)
+              event bus (fan-out)
                  │            │
-          WebSocket 推送    指标统计
+          WebSocket push   metrics
 ```
 
-设计要点：
+Design notes:
 
-- 撮合采用单线程事件循环（参考 LMAX 架构），每个交易对内部无需加锁，结果天然确定
-- `internal/book` 是纯逻辑层，输入命令、输出事件，便于测试和重放
-- 网络层与撮合层之间通过有界通道连接，满了就返回繁忙错误，实现背压
+- Matching uses a single-threaded event loop (modeled on the LMAX architecture), so no locks are needed within a symbol and results are naturally deterministic
+- `internal/book` is a pure logic layer: commands in, events out, which makes it easy to test and replay
+- The network layer and the matching layer are connected by a bounded channel; when it is full, a busy error is returned, which provides backpressure
 
-## 5. 核心数据结构
+## 5. Core data structures
 
 ```
 OrderBook
-├── bids: 价格档位有序结构（从高到低）
-├── asks: 价格档位有序结构（从低到高）
-└── orders: map[OrderID]*OrderNode     // O(1) 定位，用于撤单
+├── bids: ordered price-level structure (high to low)
+├── asks: ordered price-level structure (low to high)
+└── orders: map[OrderID]*OrderNode     // O(1) lookup, used for cancels
 
 PriceLevel
 ├── price    int64
 ├── totalQty int64
-└── queue    双向链表 (FIFO)，节点为 *OrderNode
+└── queue    doubly linked list (FIFO) of *OrderNode
 ```
 
-价格档位有序结构：自己实现红黑树或跳表，二选一并在 DECISIONS.md 说明。同时缓存最优买价和最优卖价指针。
+Ordered price-level structure: a hand-written red-black tree or skip list; choose one and explain the choice in DECISIONS.md. Also cache pointers to the best bid and best ask.
 
-复杂度目标：
+Complexity targets:
 
-| 操作 | 复杂度 |
+| Operation | Complexity |
 |---|---|
-| 新增订单（新价位） | O(log P)，P 为价位数 |
-| 新增订单（已有价位） | O(1) 定位后入队 |
-| 撤单 | O(1)，价位清空时 O(log P) |
-| 撮合一笔成交 | O(1) |
-| 获取最优价 | O(1) |
-| 盘口前 N 档 | O(N) |
+| Add order (new price level) | O(log P), where P is the number of price levels |
+| Add order (existing price level) | O(1) lookup, then enqueue |
+| Cancel order | O(1); O(log P) when the level becomes empty |
+| Execute one trade | O(1) |
+| Get best price | O(1) |
+| Top N levels of the book | O(N) |
 
-## 6. 撮合规则
+## 6. Matching rules
 
-1. 新的买单与卖方最优价比较，买价大于等于卖价即可成交，成交价为挂单方（被动方）价格
-2. 同价位内按到达顺序成交
-3. 市价单吃完对手盘或数量用完为止，剩余部分撤销，不入簿
-4. IOC 剩余部分撤销；FOK 先检查可成交量，不够就整单拒绝，不产生任何成交
-5. 每次成交产生一条 Trade 事件，包含双方订单号、价格、数量、序号
+1. A new buy order is compared with the best ask; it trades if the bid is greater than or equal to the ask, at the price of the resting (passive) order
+2. Orders at the same price fill in order of arrival
+3. A market order trades until the opposite side is exhausted or its quantity is used up; any remainder is canceled and never rests on the book
+4. The remainder of an IOC order is canceled; FOK checks the fillable quantity first and, if it is not enough, rejects the whole order without producing any trades
+5. Each fill produces one Trade event containing both order IDs, the price, the quantity, and a sequence number
 
-## 7. 必须成立的不变量（用于属性测试）
+## 7. Invariants (for property tests)
 
-- 订单簿永远不会交叉：最优买价小于最优卖价
-- 数量守恒：提交数量等于已成交加剩余加撤销
-- 每个价位的 totalQty 等于队列中订单剩余量之和
-- orders 映射中的订单和树中的订单一一对应
-- 同一份命令日志重放两次，得到的事件序列完全一致
+- The book is never crossed: the best bid is below the best ask
+- Quantity conservation: submitted quantity equals filled plus remaining plus canceled
+- Each price level's totalQty equals the sum of the remaining quantities of the orders in its queue
+- Orders in the orders map correspond one-to-one with orders in the tree
+- Replaying the same command log twice produces exactly the same event sequence
 
-## 8. 接口
+## 8. API
 
 ### REST
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 |---|---|---|
-| POST | `/v1/orders` | 下单 |
-| DELETE | `/v1/orders/{id}` | 撤单 |
-| GET | `/v1/orders/{id}` | 查询订单 |
-| GET | `/v1/books/{symbol}?depth=20` | 盘口深度 |
-| GET | `/healthz` | 健康检查 |
-| GET | `/metrics` | Prometheus 指标 |
+| POST | `/v1/orders` | Place an order |
+| DELETE | `/v1/orders/{id}` | Cancel an order |
+| GET | `/v1/orders/{id}` | Get an order |
+| GET | `/v1/books/{symbol}?depth=20` | Market depth |
+| GET | `/healthz` | Health check |
+| GET | `/metrics` | Prometheus metrics |
 
-下单请求示例：
+Example order request:
 
 ```json
 { "symbol": "BTC-USD", "side": "buy", "type": "limit", "tif": "gtc",
@@ -128,33 +128,33 @@ PriceLevel
 
 ### WebSocket `/v1/stream`
 
-订阅消息：`{"op":"subscribe","channels":["trades:BTC-USD","book:BTC-USD"]}`
+Subscribe message: `{"op":"subscribe","channels":["trades:BTC-USD","book:BTC-USD"]}`
 
-推送消息类型：`trade`、`book_delta`、`book_snapshot`。每条消息带递增序号，客户端发现序号断档时可请求快照。
+Pushed message types: `trade`, `book_delta`, `book_snapshot`. Every message carries an increasing sequence number; a client that detects a gap in the sequence can request a snapshot.
 
-## 9. 性能目标与压测
+## 9. Performance targets and load testing
 
-在普通笔记本上（报告中写明 CPU 型号）：
+On an ordinary laptop (with the CPU model stated in the report):
 
-- 撮合核心基准测试：单交易对每秒 100 万次以上操作
-- 端到端（REST 下单到收到成交推送）：p99 延迟低于 5 毫秒，测试负载每秒 5 万单
-- 内存：100 万挂单时的内存占用
+- Matching core benchmark: more than 1 million operations per second on a single symbol
+- End to end (from a REST order to receiving the trade push): p99 latency under 5 ms at a test load of 50,000 orders per second
+- Memory: memory usage with 1 million resting orders
 
-`cmd/loadgen` 生成可复现的随机订单流（固定随机种子），模拟真实分布：价格围绕中间价正态分布，约 30% 撤单。
+`cmd/loadgen` generates a reproducible random order flow (fixed random seed) that simulates a realistic distribution: prices normally distributed around the mid price, and about 30% cancels.
 
-压测报告 `docs/BENCHMARKS.md` 包含：测试环境、方法、吞吐量、延迟分布图（p50/p90/p99/p999）、pprof 火焰图截图、优化前后对比。
+The load-test report `docs/BENCHMARKS.md` covers the test environment, methodology, throughput, latency distribution charts (p50/p90/p99/p999), pprof flame graph screenshots, and before/after optimization comparisons.
 
-## 10. 测试策略
+## 10. Testing strategy
 
-- 单元测试：每种订单类型和边界情况（空簿、恰好成交完、价位清空）
-- 表驱动测试：撮合场景用 YAML 或 Go 表格描述输入和期望输出
-- 属性测试：随机生成大量命令，每步检查第 7 节的不变量
-- 模糊测试：Go 原生 fuzz，确保任意输入不崩溃且不变量成立
-- 竞态检测：所有测试在 `-race` 下运行
+- Unit tests: every order type and edge case (empty book, an order that fills exactly, a level becoming empty)
+- Table-driven tests: matching scenarios described as inputs and expected outputs in YAML or Go tables
+- Property tests: generate large numbers of random commands and check the section 7 invariants after every step
+- Fuzz tests: native Go fuzzing, ensuring that arbitrary input never crashes and the invariants hold
+- Race detection: all tests run under `-race`
 
-## 11. 交付物
+## 11. Deliverables
 
-- 可运行的服务和 Docker 镜像
-- README：一句话介绍、架构图、性能数据表、演示 GIF、快速启动
-- `docs/BENCHMARKS.md` 压测报告
-- `docs/DECISIONS.md` 技术决策记录
+- A runnable service and Docker image
+- README: one-line summary, architecture diagram, performance table, demo GIF, quick start
+- `docs/BENCHMARKS.md` load-test report
+- `docs/DECISIONS.md` technical decision log
