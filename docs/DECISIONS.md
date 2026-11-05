@@ -202,6 +202,6 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D034 CI actions are pinned by commit SHA
 - Date: 2026-11-05
-- Decision: Every action in `.github/workflows/ci.yml` is referenced by the full commit SHA of a release, with the release tag in a comment. Each pin is the commit its major tag pointed to, so CI runs the same code as before
+- Decision: Every action in `.github/workflows/ci.yml` is referenced by the full commit SHA of a release, with the release tag in a comment. Pins move to a new release only by hand. The pinned releases run on Node.js 24, which GitHub's runners now require
 - Rationale: A tag can be moved to other code; a SHA cannot. GitHub's security hardening guide and the OpenSSF Scorecard recommend full SHAs, and the Docker images are already pinned by digest (D032)
 - Alternatives: major tags such as `@v4` (follow whatever the tag points to)
