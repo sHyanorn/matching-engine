@@ -157,3 +157,10 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: `book_snapshot` holds every level, so snapshot plus deltas always reproduces the book. Each connection's unsent messages are limited to 1 MB beyond the one being queued, and one message unsent for 10 s also marks a slow consumer (close 1008)
 - Rationale: With a capped snapshot, deltas for levels below the cap left the client's book incomplete. A byte bound keeps the memory a non-reading client can pin small even when snapshots are large
 - Alternatives: a capped snapshot with deltas filtered to the visible depth (the server tracks each client's window); a message-count bound only (a backlog of snapshots costs megabytes)
+
+## D027 The engine runs on Windows without directory fsync
+- Date: 2026-11-05
+- Decision: On Windows, syncing a directory is skipped, and the command log is opened without O_APPEND (on every platform) so a torn tail can be truncated. CI runs the tests on Windows
+- Rationale: Windows opens a directory read-only and cannot flush it, so the engine could not start. The log has one writer, which writes at the end after replay. A machine crash on Windows may lose a log or ID reservation just created or renamed; the guarantees of D016 and D021 hold fully on Linux and macOS. Pebble and RocksDB make the same trade
+- Alternatives: support only Linux and macOS (the engine would not run on a Windows laptop)
+

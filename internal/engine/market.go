@@ -99,7 +99,7 @@ func openMarket(symbol string, index int, cfg Config) (m *market, maxSeq uint64,
 	if created, err = createLog(path, symbol, index); err != nil {
 		return nil, 0, created, err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return nil, 0, created, err
 	}
@@ -142,16 +142,6 @@ func writeFileSync(path string, data []byte) error {
 		err = f.Sync()
 	}
 	return errors.Join(err, f.Close())
-}
-
-// syncDir fsyncs a directory, so the entries created in it survive a
-// machine crash.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	return errors.Join(d.Sync(), d.Close())
 }
 
 // replay checks the log's header and applies every record to the book. An
@@ -202,7 +192,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 			return 0, err
 		}
 	}
-	// O_APPEND puts every write at the end; reading moved only the offset.
+	// Writes go on at the end, after the last good record.
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		return 0, err
 	}
