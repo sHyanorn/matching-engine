@@ -10,7 +10,9 @@ import (
 // returns the first violation it finds, or nil. It checks:
 //
 //   - each side's price levels form a valid red-black tree ordered by
-//     priority, with the cached best level and size correct (levelTree);
+//     priority, with the cached best level and size correct (levelTree),
+//     and that order is the side's real one: bids fall and asks rise from
+//     the best level outward;
 //   - no level in a tree is empty, and each level's order count and total
 //     quantity equal those of its queue, whose links are consistent;
 //   - every resting order is a Limit GTC order on its tree's side at its
@@ -33,7 +35,15 @@ func (b *Book) CheckInvariants() error {
 		if err := tree.check(); err != nil {
 			return fmt.Errorf("%v levels: %w", s, err)
 		}
+		var prev *levelNode
 		for l := tree.best; l != nil; l = l.next() {
+			// check proves the tree ordered by its own comparator; this
+			// proves that order is the side's real price order, with raw
+			// comparisons, so best really is the best price.
+			if prev != nil && (s == Buy && l.price >= prev.price || s == Sell && l.price <= prev.price) {
+				return fmt.Errorf("%v levels: %d comes after %d", s, l.price, prev.price)
+			}
+			prev = l
 			n, err := b.checkLevel(s, l)
 			if err != nil {
 				return fmt.Errorf("%v level %d: %w", s, l.price, err)
@@ -115,7 +125,9 @@ func (t *levelTree) check() error {
 	// One recursive pass checks order against the bounds inherited from the
 	// ancestors (property 1), red-red (4), black heights (5) and child links
 	// (6), and records the in-order sequence and the height.
-	inorder := make([]*levelNode, 0, t.size)
+	// Not sized from t.size: a corrupted size must be reported, not make
+	// the allocation panic or exhaust memory.
+	var inorder []*levelNode
 	height := 0
 	var walk func(n, lo, hi *levelNode, depth int) (blackHeight int, err error)
 	walk = func(n, lo, hi *levelNode, depth int) (int, error) {
