@@ -152,10 +152,7 @@ func lvl(price Price, qty Qty, orders int) Level {
 
 func TestM1Scenarios(t *testing.T) { runScenarios(t, m1Scenarios) }
 
-func TestM2Scenarios(t *testing.T) {
-	t.Skip("M2")
-	runScenarios(t, m2Scenarios)
-}
+func TestM2Scenarios(t *testing.T) { runScenarios(t, m2Scenarios) }
 
 // TestScenarioTables checks the tables themselves, without a book: the M1
 // table needs nothing but limit GTC orders and cancels (commands that fail
@@ -1577,6 +1574,66 @@ var m2Scenarios = []scenario{
 	},
 
 	// Conservation per order over a mix of every kind of exit.
+	{
+		name:  "market sell fills the resting bids at one price in FIFO order",
+		setup: []Command{limit(1, Buy, 100, 3), limit(2, Buy, 100, 4), limit(3, Buy, 99, 5)},
+		cmd:   market(4, Sell, 5),
+		want: []Event{
+			evAccepted(7, 4, Sell, 0, 5),
+			evTrade(8, 4, 1, Sell, 100, 3, 4),
+			evTrade(9, 4, 2, Sell, 100, 2, 2),
+		},
+		wantBids: []Level{lvl(100, 2, 1), lvl(99, 5, 1)},
+		wantOrders: map[OrderID]Order{
+			2: {ID: 2, Side: Buy, Type: Limit, TIF: GTC, Price: 100, Qty: 4, Filled: 2, Remaining: 2, Timestamp: setupTS(1), RestedSeq: 4},
+		},
+		wantGone: []OrderID{1, 4},
+	},
+	{
+		name:  "market buy at the price and quantity bounds",
+		setup: []Command{limit(1, Sell, MaxPrice, MaxQty)},
+		cmd:   market(2, Buy, MaxQty),
+		want: []Event{
+			evAccepted(3, 2, Buy, 0, MaxQty),
+			evTrade(4, 2, 1, Buy, MaxPrice, MaxQty, 0),
+		},
+		wantGone: []OrderID{1, 2},
+		wantQty: map[OrderID]orderQty{
+			2: {Accepted: MaxQty, Traded: MaxQty},
+		},
+	},
+	{
+		name:  "IOC buy sweeps two levels, stops at its limit and cancels the rest",
+		setup: []Command{limit(1, Sell, 100, 2), limit(2, Sell, 101, 3), limit(3, Sell, 103, 4)},
+		cmd:   ioc(4, Buy, 102, 10),
+		want: []Event{
+			evAccepted(7, 4, Buy, 102, 10),
+			evTrade(8, 4, 1, Buy, 100, 2, 0),
+			evTrade(9, 4, 2, Buy, 101, 3, 0),
+			evIOCRemainder(10, 4, Buy, 102, 5),
+		},
+		wantAsks: []Level{lvl(103, 4, 1)},
+		wantGone: []OrderID{1, 2, 4},
+		wantQty: map[OrderID]orderQty{
+			4: {Accepted: 10, Traded: 5, Canceled: 5},
+		},
+	},
+	{
+		name:  "FOK sell fills exactly across bid levels in price then time order",
+		setup: []Command{limit(1, Buy, 101, 2), limit(2, Buy, 101, 1), limit(3, Buy, 100, 4), limit(4, Buy, 99, 9)},
+		cmd:   fok(5, Sell, 100, 7),
+		want: []Event{
+			evAccepted(9, 5, Sell, 100, 7),
+			evTrade(10, 5, 1, Sell, 101, 2, 1),
+			evTrade(11, 5, 2, Sell, 101, 1, 0),
+			evTrade(12, 5, 3, Sell, 100, 4, 0),
+		},
+		wantBids: []Level{lvl(99, 9, 1)},
+		wantGone: []OrderID{1, 2, 3, 5},
+		wantQty: map[OrderID]orderQty{
+			5: {Accepted: 7, Traded: 7},
+		},
+	},
 	{
 		name: "conservation holds per order across IOC, market and cancel",
 		setup: []Command{
