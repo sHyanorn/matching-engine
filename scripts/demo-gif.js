@@ -3,7 +3,7 @@
 //   node scripts/demo-gif.js [OUT.gif]
 //
 // Needs Go, Node with the playwright package and its Chromium, and ffmpeg
-// (or FFMPEG=path). It starts a fresh engine and loadgen on a free port,
+// (or FFMPEG=path). It starts a fresh engine on a free port and loadgen,
 // captures PNG frames of the page, and encodes them with one palette:
 // frames from a video recording carry compression noise that makes the
 // GIF several times larger.
@@ -16,7 +16,6 @@ const path = require("path");
 
 const out = process.argv[2] || path.join("docs", "img", "demo.gif");
 const ffmpeg = process.env.FFMPEG || "ffmpeg";
-const addr = "127.0.0.1:18090";
 const size = { width: 800, height: 840 };
 const seconds = 8, fps = 10;
 
@@ -25,14 +24,15 @@ const exe = name => path.join(tmp, name + (process.platform === "win32" ? ".exe"
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function main() {
-  for (const cmd of ["engine", "loadgen"]) {
-    execFileSync("go", ["build", "-o", exe(cmd), "./cmd/" + cmd], { stdio: "inherit" });
-  }
-  const engine = spawn(exe("engine"), ["-addr", addr, "-data", path.join(tmp, "data"), "-symbols", "BTC-USD"], { stdio: "ignore" });
-  let loadgen;
-  const browser = await chromium.launch();
+  let engine, loadgen, browser;
   try {
-    await waitHealthy();
+    for (const cmd of ["engine", "loadgen"]) {
+      execFileSync("go", ["build", "-o", exe(cmd), "./cmd/" + cmd], { stdio: "inherit" });
+    }
+    engine = spawn(exe("engine"), ["-addr", "127.0.0.1:0", "-data", path.join(tmp, "data"), "-symbols", "BTC-USD"],
+      { stdio: ["ignore", "pipe", "ignore"] });
+    const addr = await listening(engine);
+    browser = await chromium.launch();
     loadgen = spawn(exe("loadgen"), ["-addr", addr, "-rate", "2000", "-warmup", "0s", "-duration", "10m"], { stdio: "ignore" });
     const page = await browser.newPage({ viewport: size, deviceScaleFactor: 1, colorScheme: "dark" });
     await page.goto(`http://${addr}/`);
@@ -62,22 +62,28 @@ async function main() {
     const mb = fs.statSync(out).size / 1e6;
     console.log(`${out}: ${mb.toFixed(2)} MB${mb > 3 ? " (over 3 MB: shorten it or lower the rate)" : ""}`);
   } finally {
-    await browser.close();
-    loadgen?.kill();
-    engine.kill();
-    await sleep(500);
+    await browser?.close();
+    await stop(loadgen);
+    await stop(engine);
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-async function waitHealthy() {
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`http://${addr}/healthz`)).ok) return;
-    } catch {}
-    await sleep(100);
-  }
-  throw new Error("the engine did not become healthy");
+// stop ends a child process and waits for it to exit, up to 5 s.
+async function stop(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise(resolve => child.once("exit", resolve));
+  child.kill();
+  await Promise.race([exited, sleep(5000)]);
+}
+
+// listening returns the address the engine serves on, from the line it
+// writes once it has bound its port.
+function listening(engine) {
+  return new Promise((resolve, reject) => {
+    engine.stdout.once("data", d => resolve(String(d).trim().replace(/^listening on /, "")));
+    engine.once("exit", code => reject(new Error(`the engine exited with ${code}`)));
+  });
 }
 
 main().catch(err => {
