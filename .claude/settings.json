@@ -6,8 +6,15 @@
       "Bash(make:*)",
       "Bash(golangci-lint:*)",
       "Bash(git:*)",
-      "Bash(gh api:*)",
-      "Bash(gh run:*)"
+      "Bash(gh:*)",
+      "Bash(benchstat:*)",
+      "Edit",
+      "Write",
+      "Workflow",
+      "Agent",
+      "mcp__claude-code-remote__add_repo",
+      "mcp__claude-code-remote__register_repo_root",
+      "mcp__claude-code-remote__read_documentation"
     ]
   }
 }
