@@ -359,3 +359,22 @@ func TestFailedStartRemovesNewLogs(t *testing.T) {
 	}
 	mustClose(t, e)
 }
+
+// A symbol whose log name the OS maps to a device, as some Windows
+// versions do with NUL.log, is refused; elsewhere such names are symbols.
+func TestDeviceNamesAsSymbols(t *testing.T) {
+	for _, s := range []string{"CON", "PRN", "AUX", "NUL", "COM1", "LPT1"} {
+		e, err := New(Config{Symbols: []string{s}, DataDir: t.TempDir()})
+		switch {
+		case !filepath.IsLocal(s + ".log"):
+			if err == nil {
+				mustClose(t, e)
+				t.Errorf("New with symbol %s, a device here, succeeded", s)
+			}
+		case err != nil:
+			t.Errorf("New with symbol %s: %v", s, err)
+		default:
+			mustClose(t, e)
+		}
+	}
+}

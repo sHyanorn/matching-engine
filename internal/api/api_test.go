@@ -143,12 +143,26 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	}
 	hs.Start()
 	t.Cleanup(hs.Close)
+	hs.Client().Transport.(*http.Transport).DialContext = redial
 	// Cleanups run last first: end any stall, then close the WebSocket
 	// connections (httptest.Server.Close does not wait for hijacked ones),
 	// then the HTTP server, then the engine.
 	t.Cleanup(srv.CloseStreams)
 	t.Cleanup(clock.releaseAll)
 	return &testEnv{eng: eng, srv: srv, http: hs, clock: clock}
+}
+
+// redial dials, retrying a refused connection for a while: Windows refuses
+// connections beyond its listen backlog at once, where Linux makes the
+// client retry, and some tests open hundreds at a time.
+func redial(ctx context.Context, network, addr string) (net.Conn, error) {
+	var d net.Dialer
+	for deadline := time.Now().Add(waitFor); ; time.Sleep(10 * time.Millisecond) {
+		c, err := d.DialContext(ctx, network, addr)
+		if err == nil || ctx.Err() != nil || time.Now().After(deadline) {
+			return c, err
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -101,7 +101,9 @@ func (c *Config) setDefaults() error {
 	}
 	seen := make(map[string]bool, len(c.Symbols))
 	for _, s := range c.Symbols {
-		if !symbolPattern.MatchString(s) {
+		// IsLocal rejects a log name that this Windows maps to a device,
+		// such as CON.log or NUL.log.
+		if !symbolPattern.MatchString(s) || !filepath.IsLocal(s+".log") {
 			return fmt.Errorf("engine: invalid symbol %q", s)
 		}
 		if seen[s] {
