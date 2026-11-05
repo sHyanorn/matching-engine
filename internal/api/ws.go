@@ -123,17 +123,23 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// close ends the connection once, with code and reason.
+// close ends the connection once, with code and reason: it stops the
+// writer and the pumps, then runs the close handshake, which waits for the
+// peer (bounded by the library) off every caller's path.
+//
+// Reads and writes never use st.ctx: the library drops the connection
+// without a close frame when an operation's context is canceled.
 func (st *stream) close(code websocket.StatusCode, reason string) {
 	st.once.Do(func() {
 		st.cancel()
-		go func() { _ = st.conn.Close(code, reason) }() // waits for the peer; not on any caller's path
+		go func() { _ = st.conn.Close(code, reason) }()
 	})
 }
 
+// readLoop handles client messages until the connection ends.
 func (st *stream) readLoop() {
 	for {
-		_, data, err := st.conn.Read(st.ctx)
+		_, data, err := st.conn.Read(context.Background())
 		if err != nil {
 			return
 		}
@@ -161,7 +167,10 @@ func (st *stream) writeLoop() {
 	for {
 		select {
 		case msg := <-st.out:
-			ctx, cancel := context.WithTimeout(st.ctx, writeTimeout)
+			if st.ctx.Err() != nil {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 			err := st.conn.Write(ctx, websocket.MessageText, msg)
 			cancel()
 			if err != nil {

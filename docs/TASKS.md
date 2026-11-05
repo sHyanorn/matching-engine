@@ -30,11 +30,11 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Backpressure via bounded channels
 
 ## M4 Network API
-- [ ] REST API with input validation
-- [ ] WebSocket subscriptions and streaming, with message sequence numbers
-- [ ] Graceful shutdown (stop accepting, drain the queue, flush the log)
-- [ ] Prometheus metrics: order count, trade count, queue length, latency histogram
-- [ ] Integration tests
+- [x] REST API with input validation
+- [x] WebSocket subscriptions and streaming, with message sequence numbers
+- [x] Graceful shutdown (stop accepting, drain the queue, flush the log)
+- [x] Prometheus metrics: order count, trade count, queue length, latency histogram
+- [x] Integration tests
 
 ## M5 Performance
 - [ ] Matching core benchmarks
