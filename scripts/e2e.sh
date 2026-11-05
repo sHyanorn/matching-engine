@@ -21,13 +21,14 @@ addr=127.0.0.1:$port
 
 mkdir -p "$out"
 bin=$(mktemp -d)
-trap 'rm -rf "$bin"' EXIT
+pid=
+trap 'rm -rf "$bin"; [ -z "$pid" ] || kill "$pid" 2>/dev/null || true' EXIT
 go build -o "$bin/engine" ./cmd/engine
 go build -o "$bin/loadgen" ./cmd/loadgen
 
 data=$(mktemp -d)
 {
-	echo "commit: $(git rev-parse --short HEAD)$(git diff --quiet HEAD || echo ' (modified)')"
+	echo "commit: $(git rev-parse --short HEAD)$([ -z "$(git status --porcelain -- . ':!bench-results')" ] || echo ' (modified)')"
 	echo "go: $(go version)"
 	echo "os: $(uname -srm)"
 	if [ -r /proc/cpuinfo ]; then
@@ -41,6 +42,7 @@ data=$(mktemp -d)
 } > "$out/env.txt"
 rm -rf "$data"
 
+valid=0
 for rate in "$@"; do
 	failed=0
 	for n in $(seq "$repeats"); do
@@ -55,12 +57,14 @@ for rate in "$@"; do
 		echo "== $rate/s, run $n"
 		# shellcheck disable=SC2086
 		"$bin/loadgen" -addr "$addr" -rate "$rate" -warmup "$warmup" -duration "$duration" \
-			-out "$out/rate-$rate-$n.json" ${LOADGEN_FLAGS:-} | tee "$out/rate-$rate-$n.txt" || failed=1
+			-out "$out/rate-$rate-$n.json" ${LOADGEN_FLAGS:-} | tee "$out/rate-$rate-$n.txt" && valid=$((valid + 1)) || failed=1
 		curl -fs "http://$addr/metrics" > "$out/rate-$rate-$n.metrics.txt" || true
 		kill -TERM "$pid"
 		wait "$pid" || true
+		pid=
 		rm -rf "$data"
 		[ "$failed" = 0 ] || break
 	done
 	[ "$failed" = 0 ] || break
 done
+[ "$valid" -gt 0 ] || { echo "e2e: no valid run" >&2; exit 1; }
