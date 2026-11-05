@@ -46,8 +46,24 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # The generated corpus is kept between runs, so each run goes on
+      # from where the last one stopped. A cache entry cannot be updated,
+      # so every run saves a new one and restores the latest.
+      - name: Locate the corpus
+        id: corpus
+        run: echo "dir=$(go env GOCACHE)/fuzz/github.com/sHyanorn/matching-engine/internal/book/${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.corpus.outputs.dir }}
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-${{ matrix.target }}-
       - name: Fuzz ${{ matrix.target }}
         run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s ./internal/book
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ${{ steps.corpus.outputs.dir }}
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Upload failing inputs
         if: failure()
         uses: actions/upload-artifact@v4
