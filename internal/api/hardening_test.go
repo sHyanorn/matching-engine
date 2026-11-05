@@ -108,3 +108,12 @@ func TestBookSnapshotHoldsEveryLevel(t *testing.T) {
 		t.Errorf("REST top 1000 differs from the streamed book")
 	}
 }
+
+func TestOrderBookPage(t *testing.T) {
+	env := newEnv(t, envConfig{})
+	res := env.do(t, http.MethodGet, "/", "")
+	if res.status != http.StatusOK || !strings.HasPrefix(res.header.Get("Content-Type"), "text/html") || !strings.Contains(string(res.body), "/v1/stream") {
+		t.Fatalf("GET / = %d %s, want the order book page", res.status, res.header.Get("Content-Type"))
+	}
+	expectError(t, env.do(t, http.MethodGet, "/nope", ""), http.StatusNotFound, "not_found")
+}
