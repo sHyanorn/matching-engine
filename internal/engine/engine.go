@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -32,12 +33,24 @@ type InvalidError struct {
 
 func (e *InvalidError) Error() string { return "engine: invalid command: " + e.Reason.String() }
 
-// Config configures an Engine. Only Symbols is required.
+// Config configures an Engine. Symbols and DataDir are required.
 type Config struct {
 	// Symbols lists the symbols the engine serves, one book each. A
 	// symbol's index in this list is part of every order ID issued for
-	// it, so the order must not change between runs.
+	// it and is recorded in its command log, so the order must not change
+	// between runs.
 	Symbols []string
+
+	// DataDir holds one command log per symbol, <symbol>.log. It is
+	// created if missing; existing logs are replayed by New.
+	DataDir string
+
+	// SyncInterval is how often a symbol's goroutine fsyncs its log
+	// after writing to it (default 10ms). Each batch is written to the
+	// operating system before it is applied, so a process crash loses
+	// nothing; a machine crash may lose up to SyncInterval of commands.
+	// A negative value fsyncs after every batch (D017).
+	SyncInterval time.Duration
 
 	// QueueSize is the capacity of each symbol's request queue
 	// (default 4096).
@@ -50,11 +63,16 @@ type Config struct {
 	// Clock returns the time stamped on each command, in Unix nanoseconds
 	// (default the system clock). Tests replace it for fixed values.
 	Clock func() int64
+
+	// onReplay, if set, receives the events of every command replayed
+	// from the logs by New. Tests use it to compare replays.
+	onReplay func(symbol string, evs []book.Event)
 }
 
 const (
-	defaultQueueSize = 4096
-	defaultMaxBatch  = 256
+	defaultQueueSize    = 4096
+	defaultMaxBatch     = 256
+	defaultSyncInterval = 10 * time.Millisecond
 )
 
 var symbolPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9._-]{0,31}$`)
@@ -76,8 +94,14 @@ func (c *Config) setDefaults() error {
 		}
 		seen[s] = true
 	}
+	if c.DataDir == "" {
+		return errors.New("engine: no data directory configured")
+	}
 	if c.QueueSize <= 0 {
 		c.QueueSize = defaultQueueSize
+	}
+	if c.SyncInterval == 0 {
+		c.SyncInterval = defaultSyncInterval
 	}
 	if c.MaxBatch <= 0 {
 		c.MaxBatch = defaultMaxBatch
@@ -104,17 +128,31 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
-// New starts an engine with one goroutine per configured symbol.
+// New replays each symbol's command log from cfg.DataDir into a fresh
+// book, then starts one goroutine per symbol. Order IDs continue after the
+// highest one found in the logs.
 func New(cfg Config) (*Engine, error) {
 	if err := cfg.setDefaults(); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+		return nil, err
+	}
 	e := &Engine{bySymbol: make(map[string]*market, len(cfg.Symbols))}
+	var maxSeq uint64
 	for i, s := range cfg.Symbols {
-		m := newMarket(s, i, cfg)
+		m, seq, err := openMarket(s, i, cfg)
+		if err != nil {
+			for _, open := range e.markets {
+				_ = open.file.Close() // err, from opening s, is the error to report
+			}
+			return nil, err
+		}
 		e.markets = append(e.markets, m)
 		e.bySymbol[s] = m
+		maxSeq = max(maxSeq, seq)
 	}
+	e.nextSeq.Store(maxSeq)
 	for _, m := range e.markets {
 		e.wg.Add(1)
 		go func() {
@@ -126,8 +164,8 @@ func New(cfg Config) (*Engine, error) {
 }
 
 // Close stops accepting requests, lets every symbol's goroutine finish the
-// requests already queued, and waits for them to stop. It is safe to call
-// more than once.
+// requests already queued, fsync and close its log, and waits for them to
+// stop. It returns any log error, and is safe to call more than once.
 func (e *Engine) Close() error {
 	e.mu.Lock()
 	if e.closed {
@@ -140,7 +178,11 @@ func (e *Engine) Close() error {
 	}
 	e.mu.Unlock()
 	e.wg.Wait()
-	return nil
+	var errs []error
+	for _, m := range e.markets {
+		errs = append(errs, m.closeErr)
+	}
+	return errors.Join(errs...)
 }
 
 // NewOrder is a client's new order. The engine assigns its ID and

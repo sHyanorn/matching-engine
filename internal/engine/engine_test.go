@@ -15,6 +15,9 @@ import (
 // so every command's timestamp is predictable, and closes it at the end.
 func newTestEngine(t *testing.T, cfg Config) *Engine {
 	t.Helper()
+	if cfg.DataDir == "" {
+		cfg.DataDir = t.TempDir()
+	}
 	if cfg.Clock == nil {
 		var mu sync.Mutex
 		var now int64
@@ -58,11 +61,14 @@ func TestNewValidatesConfig(t *testing.T) {
 		{"too long", []string{"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"}},
 		{"duplicate", []string{"BTC-USD", "BTC-USD"}},
 	} {
-		if _, err := New(Config{Symbols: tc.symbols}); err == nil {
+		if _, err := New(Config{Symbols: tc.symbols, DataDir: t.TempDir()}); err == nil {
 			t.Errorf("%s: New accepted %v", tc.name, tc.symbols)
 		}
 	}
-	e, err := New(Config{Symbols: []string{"BTC-USD", "ETH_USD", "X.1"}})
+	if _, err := New(Config{Symbols: []string{"A"}}); err == nil {
+		t.Error("New accepted a config without DataDir")
+	}
+	e, err := New(Config{Symbols: []string{"BTC-USD", "ETH_USD", "X.1"}, DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +271,7 @@ func TestConcurrentClients(t *testing.T) {
 }
 
 func TestCloseDrainsAndRefuses(t *testing.T) {
-	e, err := New(Config{Symbols: []string{"A"}, QueueSize: 64})
+	e, err := New(Config{Symbols: []string{"A"}, QueueSize: 64, DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
