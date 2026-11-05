@@ -1,13 +1,12 @@
-"""Draws the docs/BENCHMARKS.md charts from loadgen's JSON reports.
+"""Draws the docs/BENCHMARKS.md charts from the reports of scripts/e2e.sh.
 
-    python3 scripts/plot.py percentiles OUT.svg LABEL=REPORT.json ...
+    python3 scripts/plot.py percentiles OUT.svg RATE LABEL=DIR ...
     python3 scripts/plot.py sweep OUT.svg DIR
 
-percentiles plots the order-to-trade-push latency of each report against
-its percentile, on HdrHistogram's 1/(1-p) axis, one line per report.
-sweep plots p50, p99 and p99.9 of the same latency against the target rate
-of every rate-R-N.json in DIR, taking the median p99 of repeated runs.
-Requires matplotlib.
+percentiles plots the order-to-trade-push latency at RATE against its
+percentile, on HdrHistogram's 1/(1-p) axis, one line per DIR. sweep plots
+p50, p99 and p99.9 of the same latency against the target rate. A rate's
+valid run with the median p99 stands for it. Requires matplotlib.
 """
 
 import glob
@@ -56,6 +55,21 @@ def millis(us):
     return us / 1000
 
 
+def median_runs(directory):
+    """The valid run with the median p99 at each rate in directory."""
+    runs = {}
+    for path in glob.glob(os.path.join(directory, "rate-*-*.json")):
+        report = load(path)
+        if report["valid"]:
+            rate = int(re.search(r"rate-(\d+)-\d+\.json$", path).group(1))
+            runs.setdefault(rate, []).append(report)
+    median = {}
+    for rate, reports in runs.items():
+        reports.sort(key=lambda r: r["latency_us"][LATENCY]["p99"])
+        median[rate] = reports[len(reports) // 2]
+    return median
+
+
 def finish(ax, fig, out, title):
     ax.set_title(title, loc="left", color=INK, fontsize=11, pad=12)
     for side in ("top", "right"):
@@ -65,12 +79,13 @@ def finish(ax, fig, out, title):
     fig.savefig(out, metadata={"Date": None})
 
 
-def percentiles(out, specs):
+def percentiles(out, rate, specs):
     fig, ax = plt.subplots(figsize=(7.2, 4))
     top = 1
     for i, spec in enumerate(specs):
-        label, path = spec.split("=", 1)
-        curve = [(p, v) for p, v in load(path)["latency_us"][LATENCY]["curve"] if p < 100]
+        label, directory = spec.split("=", 1)
+        report = median_runs(directory)[rate]
+        curve = [(p, v) for p, v in report["latency_us"][LATENCY]["curve"] if p < 100]
         xs = [1 / (1 - p / 100) for p, _ in curve]
         ys = [millis(v) for _, v in curve]
         top = max(top, xs[-1])
@@ -88,22 +103,15 @@ def percentiles(out, specs):
     ax.set_ylabel("order to trade push (ms)")
     if len(specs) > 1:
         ax.legend(loc="upper left")
-    finish(ax, fig, out, "Latency by percentile")
+    finish(ax, fig, out, f"Latency by percentile at {rate // 1000}k orders/s")
 
 
 def sweep(out, directory):
-    runs = {}
-    for path in glob.glob(os.path.join(directory, "rate-*-*.json")):
-        rate = int(re.search(r"rate-(\d+)-\d+\.json$", path).group(1))
-        runs.setdefault(rate, []).append(load(path))
+    runs = median_runs(directory)
     rates = sorted(runs)
     fig, ax = plt.subplots(figsize=(7.2, 4))
     for i, (key, name) in enumerate((("p50", "p50"), ("p99", "p99"), ("p99_9", "p99.9"))):
-        ys = []
-        for rate in rates:
-            # The run with the median p99 stands for its rate.
-            ordered = sorted(runs[rate], key=lambda r: r["latency_us"][LATENCY]["p99"])
-            ys.append(millis(ordered[len(ordered) // 2]["latency_us"][LATENCY][key]))
+        ys = [millis(runs[rate]["latency_us"][LATENCY][key]) for rate in rates]
         ax.plot(rates, ys, color=SERIES[i], linewidth=2, marker="o", markersize=6,
                 markeredgecolor=SURFACE, markeredgewidth=2, label=name)
         ax.annotate(f"{name} {ys[-1]:.1f} ms", (rates[-1], ys[-1]), xytext=(6, 0), textcoords="offset points",
@@ -122,6 +130,6 @@ if __name__ == "__main__":
     if len(sys.argv) < 4 or sys.argv[1] not in ("percentiles", "sweep"):
         sys.exit(__doc__)
     if sys.argv[1] == "percentiles":
-        percentiles(sys.argv[2], sys.argv[3:])
+        percentiles(sys.argv[2], int(sys.argv[3]), sys.argv[4:])
     else:
         sweep(sys.argv[2], sys.argv[3])
