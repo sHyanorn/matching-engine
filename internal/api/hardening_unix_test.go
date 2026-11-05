@@ -67,6 +67,7 @@ func TestStreamBacklogBoundedInBytes(t *testing.T) {
 		writeMsg(t, conn, `{"op":"unsubscribe","channels":["book:BTC-USD"]}`)
 	}
 	requireClose(t, newStream(conn).closeError(t), websocket.StatusPolicyViolation, "slow consumer")
+	expectDisconnects(t, env, "slow_consumer_bytes", 1)
 }
 
 // A message whose write stalls past the write timeout ends the connection
@@ -78,4 +79,5 @@ func TestStalledWriteEndsWithCloseFrame(t *testing.T) {
 	writeMsg(t, conn, `{"op":"subscribe","channels":["book:BTC-USD"]}`)
 	time.Sleep(time.Second) // the snapshot's write stalls meanwhile
 	requireClose(t, newStream(conn).closeError(t), websocket.StatusPolicyViolation, "slow consumer")
+	expectDisconnects(t, env, "slow_consumer_write", 1)
 }

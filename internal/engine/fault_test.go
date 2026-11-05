@@ -383,3 +383,37 @@ func TestLogFailureReported(t *testing.T) {
 		t.Fatalf("logs %q, want one error for A", got)
 	}
 }
+
+// TestOnSyncReportsEveryFsync checks that the hook sees each fsync of the
+// log.
+func TestOnSyncReportsEveryFsync(t *testing.T) {
+	var mu sync.Mutex
+	var syncs []string
+	e, err := New(Config{
+		Symbols: []string{"A"}, DataDir: t.TempDir(), SyncInterval: -1,
+		OnSync: func(symbol string, took time.Duration) {
+			mu.Lock()
+			defer mu.Unlock()
+			if took < 0 {
+				t.Errorf("fsync took %v", took)
+			}
+			syncs = append(syncs, symbol)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for range 3 {
+		if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	got := slices.Clone(syncs)
+	mu.Unlock()
+	if !slices.Equal(got, []string{"A", "A", "A"}) {
+		t.Fatalf("OnSync calls %v, want one per order for A", got)
+	}
+	mustClose(t, e)
+}

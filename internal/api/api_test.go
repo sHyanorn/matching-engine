@@ -121,11 +121,13 @@ type testEnv struct {
 func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	t.Helper()
 	clock := &testClock{}
+	fsync := api.NewFsyncTimes()
 	eng, err := engine.New(engine.Config{
 		Symbols:   []string{btc, eth},
 		DataDir:   t.TempDir(),
 		QueueSize: cfg.queueSize,
 		Clock:     clock.now,
+		OnSync:    fsync.Observe,
 	})
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
@@ -135,7 +137,7 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 			t.Errorf("engine.Close: %v", err)
 		}
 	})
-	srv := api.New(eng, api.Options{SubscriberBuffer: cfg.subscriberBuffer, WriteTimeout: cfg.writeTimeout})
+	srv := api.New(eng, api.Options{SubscriberBuffer: cfg.subscriberBuffer, WriteTimeout: cfg.writeTimeout, FsyncTimes: fsync})
 	hs := httptest.NewUnstartedServer(srv.Handler())
 	if cfg.listener != nil {
 		_ = hs.Listener.Close() // replaced; nothing listens on it yet
@@ -579,6 +581,15 @@ func sampleKey(name string, labels ...string) string {
 	}
 	slices.Sort(pairs)
 	return name + "{" + strings.Join(pairs, ",") + "}"
+}
+
+// expectDisconnects checks how many WebSocket connections were closed for
+// the cause counted as reason.
+func expectDisconnects(t *testing.T, env *testEnv, reason string, want float64) {
+	t.Helper()
+	if got := env.metrics(t).value("matching_engine_ws_disconnects_total", "reason", reason); got != want {
+		t.Errorf("matching_engine_ws_disconnects_total{reason=%q} = %v, want %v", reason, got, want)
+	}
 }
 
 // value returns a sample's value; a counter that was never incremented may
@@ -1516,6 +1527,7 @@ func TestCloseStreams(t *testing.T) {
 	env.srv.CloseStreams()
 	requireClose(t, subscribed.closeError(t), websocket.StatusGoingAway, "")
 	requireClose(t, bare.closeError(t), websocket.StatusGoingAway, "")
+	expectDisconnects(t, env, "shutdown", 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -1561,6 +1573,9 @@ func TestMetrics(t *testing.T) {
 		"matching_engine_trades_total":                  "counter",
 		"matching_engine_queue_length":                  "gauge",
 		"matching_engine_log_failed":                    "gauge",
+		"matching_engine_log_fsync_duration_seconds":    "histogram",
+		"matching_engine_ws_disconnects_total":          "counter",
+		"go_goroutines":                                 "gauge",
 		"matching_engine_http_request_duration_seconds": "histogram",
 		"matching_engine_ws_connections":                "gauge",
 	} {
@@ -1866,6 +1881,7 @@ func TestStreamSlowConsumerIsDisconnected(t *testing.T) {
 	}
 
 	requireClose(t, newStream(conn).closeError(t), websocket.StatusPolicyViolation, "slow consumer")
+	expectDisconnects(t, env, "slow_consumer_updates", 1)
 
 	// Matching was not held up by the slow client.
 	if bk := env.book(t, btc, "?depth=1000"); len(bk.Bids) != 1+queue {

@@ -57,6 +57,28 @@ type serverMessage struct {
 	Message string `json:"message,omitempty"`
 }
 
+// closeCause is why a connection ends: its close code and reason, and the
+// label it is counted under in matching_engine_ws_disconnects_total.
+type closeCause struct {
+	code   websocket.StatusCode
+	reason string
+	label  string
+}
+
+var (
+	closedByClient = closeCause{websocket.StatusNormalClosure, "", "client"}
+	shuttingDown   = closeCause{websocket.StatusGoingAway, "shutting down", "shutdown"}
+	writeFailed    = closeCause{websocket.StatusInternalError, "write failed", "write_failed"}
+	// A slow consumer: its engine subscription filled, its unsent
+	// messages passed maxQueuedBytes, or one message took longer than the
+	// write timeout.
+	slowSubscription = closeCause{websocket.StatusPolicyViolation, "slow consumer", "slow_consumer_updates"}
+	slowBacklog      = closeCause{websocket.StatusPolicyViolation, "slow consumer", "slow_consumer_bytes"}
+	slowWrite        = closeCause{websocket.StatusPolicyViolation, "slow consumer", "slow_consumer_write"}
+
+	closeCauses = []closeCause{closedByClient, shuttingDown, writeFailed, slowSubscription, slowBacklog, slowWrite}
+)
+
 // stream is one WebSocket connection. A reader handles subscriptions, a
 // writer sends queued messages, and each subscribed channel has a pump
 // that turns engine updates into messages.
@@ -101,7 +123,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if s.stopping.Load() { // CloseStreams may have run since the check above
 		s.mu.Unlock()
 		close(st.writerDone) // no writer was started
-		st.close(websocket.StatusGoingAway, "shutting down")
+		st.close(shuttingDown)
 		return
 	}
 	s.streams[st] = struct{}{}
@@ -118,7 +140,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 
 	go st.writeLoop()
 	st.readLoop()
-	st.close(websocket.StatusNormalClosure, "")
+	st.close(closedByClient)
 	st.mu.Lock()
 	chans := make([]*channel, 0, len(st.channels))
 	for _, ch := range st.channels {
@@ -131,15 +153,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// close ends the connection once, with code and reason: it stops the
-// writer and the pumps, then, off every caller's path, lets a message
+// close ends the connection once, for cause: it counts the cause, stops
+// the writer and the pumps, then, off every caller's path, lets a message
 // being written finish (for up to the write timeout) and runs the close
 // handshake, which the library bounds too.
 //
 // Reads and writes never use a context that can end: the library drops
 // the connection without a close frame when an operation's context ends.
-func (st *stream) close(code websocket.StatusCode, reason string) {
+func (st *stream) close(cause closeCause) {
 	st.once.Do(func() {
+		st.srv.metrics.wsClosed.WithLabelValues(cause.label).Inc()
 		st.cancel()
 		go func() {
 			t := time.NewTimer(st.srv.opts.WriteTimeout)
@@ -148,7 +171,7 @@ func (st *stream) close(code websocket.StatusCode, reason string) {
 			case <-st.writerDone:
 			case <-t.C:
 			}
-			_ = st.conn.Close(code, reason)
+			_ = st.conn.Close(cause.code, cause.reason)
 		}()
 	})
 }
@@ -191,11 +214,11 @@ func (st *stream) writeLoop() {
 			if st.ctx.Err() != nil {
 				return
 			}
-			slow := time.AfterFunc(st.srv.opts.WriteTimeout, func() { st.close(websocket.StatusPolicyViolation, "slow consumer") })
+			slow := time.AfterFunc(st.srv.opts.WriteTimeout, func() { st.close(slowWrite) })
 			err := st.conn.Write(context.Background(), websocket.MessageText, msg)
 			slow.Stop()
 			if err != nil {
-				st.close(websocket.StatusInternalError, "write failed") // the connection is gone
+				st.close(writeFailed) // the connection is gone
 				return
 			}
 		case <-st.ctx.Done():
@@ -216,7 +239,7 @@ func (st *stream) send(msg serverMessage) bool {
 	n := int64(len(data))
 	if backlog := st.queued.Add(n) - n; backlog > 0 && backlog+n > maxQueuedBytes {
 		st.queued.Add(-n)
-		st.close(websocket.StatusPolicyViolation, "slow consumer")
+		st.close(slowBacklog)
 		return false
 	}
 	select {
@@ -319,9 +342,9 @@ func (st *stream) pump(ch *channel, isBook bool) {
 	}
 	switch err := ch.sub.Err(); {
 	case errors.Is(err, engine.ErrSlowConsumer):
-		st.close(websocket.StatusPolicyViolation, "slow consumer")
+		st.close(slowSubscription)
 	case errors.Is(err, engine.ErrClosed):
-		st.close(websocket.StatusGoingAway, "shutting down")
+		st.close(shuttingDown)
 	}
 }
 

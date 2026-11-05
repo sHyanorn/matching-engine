@@ -65,6 +65,7 @@ type market struct {
 	maxBatch     int
 	clock        func() int64
 	logger       *slog.Logger
+	onSync       func(symbol string, took time.Duration)
 	syncInterval time.Duration // < 0: fsync after every batch
 	book         *book.Book
 	file         logFile
@@ -96,6 +97,7 @@ func openMarket(symbol string, index int, cfg Config) (m *market, maxSeq uint64,
 		maxBatch:     cfg.MaxBatch,
 		clock:        cfg.Clock,
 		logger:       cfg.Logger,
+		onSync:       cfg.OnSync,
 		syncInterval: cfg.SyncInterval,
 		book:         book.New(),
 		orders:       newOrderTracker(symbol, cfg.History),
@@ -338,7 +340,11 @@ func (m *market) process(batch []*request) {
 func (m *market) sync() error {
 	m.dirty = false
 	m.lastSync = time.Now()
-	if err := m.file.Sync(); err != nil {
+	err := m.file.Sync()
+	if m.onSync != nil {
+		m.onSync(m.symbol, time.Since(m.lastSync))
+	}
+	if err != nil {
 		m.fail("fsync", err)
 		return m.failed
 	}

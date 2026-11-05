@@ -28,6 +28,8 @@ type Options struct {
 	WriteTimeout time.Duration
 	// Logger receives connection-level logs (default: discarded).
 	Logger *slog.Logger
+	// FsyncTimes, if set, is served on /metrics; the engine feeds it.
+	FsyncTimes *FsyncTimes
 }
 
 // Server holds the HTTP handlers. Its methods are safe for concurrent use.
@@ -64,7 +66,7 @@ func New(eng *engine.Engine, opts Options) *Server {
 		eng:     eng,
 		opts:    opts,
 		mux:     http.NewServeMux(),
-		metrics: newMetrics(eng),
+		metrics: newMetrics(eng, opts.FsyncTimes),
 		symbols: make(map[string]bool),
 		streams: make(map[*stream]struct{}),
 	}
@@ -122,7 +124,7 @@ func (s *Server) CloseStreams() {
 	}
 	s.mu.Unlock()
 	for _, st := range open {
-		st.close(1001, "shutting down")
+		st.close(shuttingDown)
 	}
 	s.wg.Wait()
 }

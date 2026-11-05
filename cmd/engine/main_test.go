@@ -490,3 +490,29 @@ func TestShutdownWithStalledRequest(t *testing.T) {
 		t.Fatalf("run returned %v, want nil", err)
 	}
 }
+
+func TestPprofServedApart(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String() // free for the engine, almost surely
+	_ = l.Close()
+	in := start(t, t.TempDir(), "-pprof", addr)
+	for _, tc := range []struct {
+		url  string
+		want int
+	}{
+		{"http://" + addr + "/debug/pprof/cmdline", http.StatusOK},
+		{in.base + "/debug/pprof/cmdline", http.StatusNotFound},
+	} {
+		resp, err := http.Get(tc.url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Errorf("GET %s: %d, want %d", tc.url, resp.StatusCode, tc.want)
+		}
+	}
+}

@@ -89,6 +89,11 @@ type Config struct {
 	// (default: discarded).
 	Logger *slog.Logger
 
+	// OnSync, if set, gets the duration of every fsync of a symbol's log,
+	// failed ones included. It is called on the symbol's goroutine, so it
+	// must be quick.
+	OnSync func(symbol string, took time.Duration)
+
 	// onReplay, if set, receives the events of every command replayed
 	// from the logs by New. Tests use it to compare replays.
 	onReplay func(symbol string, evs []book.Event)

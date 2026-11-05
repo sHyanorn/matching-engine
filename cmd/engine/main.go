@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -44,22 +45,25 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	syncInterval := fs.Duration("sync-interval", 10*time.Millisecond, "how often to fsync the command logs; negative: after every batch")
 	queueSize := fs.Int("queue-size", 4096, "capacity of each symbol's command queue")
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests on shutdown")
+	pprofAddr := fs.String("pprof", "", "address to serve net/http/pprof on, apart from the API; off if empty")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
+	fsyncTimes := api.NewFsyncTimes()
 	eng, err := engine.New(engine.Config{
 		Symbols:      strings.Split(*symbols, ","),
 		DataDir:      *data,
 		SyncInterval: *syncInterval,
 		QueueSize:    *queueSize,
 		Logger:       logger,
+		OnSync:       fsyncTimes.Observe,
 	})
 	if err != nil {
 		return err
 	}
-	srv := api.New(eng, api.Options{Logger: logger})
+	srv := api.New(eng, api.Options{Logger: logger, FsyncTimes: fsyncTimes})
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		return errors.Join(err, eng.Close())
@@ -73,6 +77,18 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		WriteTimeout:   5 * time.Second,
 		IdleTimeout:    60 * time.Second,
 		MaxHeaderBytes: 16 << 10,
+	}
+	if *pprofAddr != "" {
+		pl, err := net.Listen("tcp", *pprofAddr)
+		if err != nil {
+			return errors.Join(err, ln.Close(), eng.Close())
+		}
+		// No write timeout: a CPU profile or trace streams for as long as
+		// it was asked to run.
+		ps := &http.Server{Handler: pprofHandler(), ReadHeaderTimeout: 5 * time.Second}
+		go func() { _ = ps.Serve(pl) }() // ends with ps.Close
+		defer func() { _ = ps.Close() }()
+		logger.Info("serving pprof", "addr", pl.Addr().String())
 	}
 	if _, err := fmt.Fprintf(stdout, "listening on %s\n", ln.Addr()); err != nil {
 		return errors.Join(err, ln.Close(), eng.Close())
@@ -102,4 +118,15 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	logger.Info("stopped")
 	return nil
+}
+
+// pprofHandler serves the net/http/pprof endpoints.
+func pprofHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	return mux
 }
