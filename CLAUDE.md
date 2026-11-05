@@ -19,6 +19,7 @@
 ```bash
 make help                           # 列出 Makefile 里的快捷命令
 go test -race ./...                 # 全部测试
+go test -short ./...                # 快速运行，属性测试只跑 1 万条命令
 go test -bench=. -benchmem ./internal/book
 go test -fuzz=FuzzBook -fuzztime=30s ./internal/book
 golangci-lint run ./...             # 静态检查，包含 govet 和 staticcheck
