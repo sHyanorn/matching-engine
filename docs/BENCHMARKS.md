@@ -91,7 +91,7 @@ The book allocates 0.6 times per command, but `Book.Apply` is 1.4% to 2% of the 
 
 ## On Windows
 
-All the figures above are from Linux. On GitHub's Windows runners the cost of an fsync depends on the disk ([`disks.txt`](../bench-results/m6-windows/disks.txt)). On the runner's system disk an fsync takes 31 ms at the median, a write-through write 26 ms, and writes to the file being flushed wait meanwhile; there, requests wait tens of milliseconds. On its local disk both take under 1 ms, as on Linux, and that is the case of a laptop's SSD. Writes to another file do not wait for a flush on either disk.
+All the figures above are from Linux. On GitHub's Windows runners the cost of an fsync depends on the disk ([`disks.txt`](../bench-results/m6-windows/disks.txt)). On the runner's system disk the median fsync after a write ranged from 3 to 31 ms across runs and write sizes, a write-through write from 4 to 30 ms, and writes to the file being flushed wait meanwhile; there, requests wait tens of milliseconds. On its local disk both take under 1 ms, as on Linux; a laptop's local SSD should behave alike, though that was not measured. Writes to another file do not wait for a flush on either disk.
 
 ## Measuring again
 

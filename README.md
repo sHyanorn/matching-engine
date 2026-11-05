@@ -37,7 +37,7 @@ flowchart LR
     api -- "snapshots, deltas, trades" --> client
 ```
 
-- **One goroutine per symbol** owns its book and log, so books need no locks and every result is deterministic ([D003](docs/DECISIONS.md)). Requests reach it through a bounded queue, and a full queue answers 503 at once (D020, D024).
+- **One goroutine per symbol** owns its book and log, so books need no locks and every result is deterministic ([D003](docs/DECISIONS.md)). Requests reach it through a bounded queue; when it is full, orders and cancels get 503 at once and queries wait for room (D020, D024).
 - **The book** keeps price levels in a hand-written red-black tree with a FIFO queue per level (D004), and an index by order ID makes a cancel O(1). Prices and quantities are integers (D002).
 - **The command log** gets each batch before it is applied and is fsynced every 10 ms beside the matching goroutine, so a process crash loses nothing (D017, D031). Replaying it rebuilds the same book (D016). One engine at a time owns the data directory (D028).
 - **The stream** sends each subscriber a full snapshot, then the levels each command changed, numbered without gaps; a client that falls behind is disconnected and resubscribes (D018, D026).
