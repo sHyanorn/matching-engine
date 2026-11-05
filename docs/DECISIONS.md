@@ -28,7 +28,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D005 golangci-lint for all static analysis
 - Date: 2026-11-04
-- Decision: Use golangci-lint v2 (pinned to v2.13.2; v2.5.0 until 2026-11-05) for all static analysis, with staticcheck enabled as one of its linters instead of installed separately; the configuration is in `.golangci.yml`
+- Decision: Use golangci-lint v2 (pinned to v2.15.0; v2.5.0 until 2026-11-05) for all static analysis, with staticcheck enabled as one of its linters instead of installed separately; the configuration is in `.golangci.yml`
 - Rationale: One tool, one configuration, the same version locally and in CI, with no staticcheck rules lost. depguard also forbids non-test code in `internal/book` from importing `time`, `math/rand`, `crypto/rand`, `net`, and `os`, so CI enforces the rule that the matching core does not depend on time, randomness, or networking
 - Alternatives: installing staticcheck separately (one more tool version to maintain, and no import restrictions)
 
