@@ -18,7 +18,10 @@ var (
 	ErrUnknownSymbol = errors.New("engine: unknown symbol")
 	ErrUnknownOrder  = errors.New("engine: unknown order")
 	ErrClosed        = errors.New("engine: closed")
-	ErrClientIDLen   = fmt.Errorf("engine: client_id longer than %d bytes", MaxClientIDLen)
+	// ErrBusy is returned at once when a symbol's command queue is full
+	// (SPEC §4: backpressure); the caller may retry later.
+	ErrBusy        = errors.New("engine: busy, command queue full")
+	ErrClientIDLen = fmt.Errorf("engine: client_id longer than %d bytes", MaxClientIDLen)
 )
 
 // MaxClientIDLen is the longest client_id the engine accepts.
@@ -207,7 +210,8 @@ type Result struct {
 
 // PlaceOrder assigns the next order ID, validates the order and submits it
 // to its symbol's book, then waits until it has been applied. A command
-// that fails validation returns an *InvalidError and is not applied. If ctx
+// that fails validation returns an *InvalidError and is not applied; if the
+// symbol's queue is full, PlaceOrder returns ErrBusy at once. If ctx
 // ends while waiting, PlaceOrder returns ctx.Err() and the order may or may
 // not have been applied; Order tells which.
 func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
@@ -226,14 +230,15 @@ func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 	if r := cmd.Validate(); r != book.ReasonNone {
 		return Result{OrderID: id}, &InvalidError{Reason: r}
 	}
-	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd, clientID: o.ClientID})
+	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd, clientID: o.ClientID}, orBusy)
 	return Result{OrderID: id, Events: resp.events}, err
 }
 
 // CancelOrder submits a cancel of order id to the book of the symbol the
 // ID was issued for and waits until it has been applied. An ID this engine
 // cannot have issued returns ErrUnknownOrder; a valid ID that is not
-// resting gives a Rejected event with ReasonUnknownOrder.
+// resting gives a Rejected event with ReasonUnknownOrder. A full queue
+// returns ErrBusy at once.
 func (e *Engine) CancelOrder(ctx context.Context, id book.OrderID) (Result, error) {
 	cmd := book.Command{Kind: book.CommandCancel, OrderID: id}
 	if r := cmd.Validate(); r != book.ReasonNone {
@@ -243,7 +248,7 @@ func (e *Engine) CancelOrder(ctx context.Context, id book.OrderID) (Result, erro
 	if !ok {
 		return Result{OrderID: id}, ErrUnknownOrder
 	}
-	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd})
+	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd}, orBusy)
 	return Result{OrderID: id, Events: resp.events}, err
 }
 
@@ -261,7 +266,7 @@ func (e *Engine) Depth(ctx context.Context, symbol string, n int) (Depth, error)
 	if !ok {
 		return Depth{}, ErrUnknownSymbol
 	}
-	resp, err := e.send(ctx, m, &request{kind: reqDepth, n: n})
+	resp, err := e.send(ctx, m, &request{kind: reqDepth, n: n}, orWait)
 	return resp.depth, err
 }
 
@@ -272,7 +277,7 @@ func (e *Engine) Order(ctx context.Context, id book.OrderID) (book.Order, bool, 
 	if !ok {
 		return book.Order{}, false, nil
 	}
-	resp, err := e.send(ctx, m, &request{kind: reqOrder, id: id})
+	resp, err := e.send(ctx, m, &request{kind: reqOrder, id: id}, orWait)
 	return resp.order, resp.found, err
 }
 
@@ -285,9 +290,17 @@ func (e *Engine) marketOf(id book.OrderID) (*market, bool) {
 	return e.markets[i], true
 }
 
+// queueFull says what send does when m's queue is full.
+type queueFull bool
+
+const (
+	orBusy queueFull = true  // return ErrBusy: commands (backpressure)
+	orWait queueFull = false // wait for room until ctx ends: queries
+)
+
 // send queues r on m and waits for its response. It holds the read lock
 // while sending, so Close cannot close the queue under it.
-func (e *Engine) send(ctx context.Context, m *market, r *request) (response, error) {
+func (e *Engine) send(ctx context.Context, m *market, r *request, full queueFull) (response, error) {
 	if err := ctx.Err(); err != nil {
 		// Checked first: a select with a ready queue and a done context
 		// would pick either case at random.
@@ -299,11 +312,20 @@ func (e *Engine) send(ctx context.Context, m *market, r *request) (response, err
 		e.mu.RUnlock()
 		return response{}, ErrClosed
 	}
-	select {
-	case m.in <- r:
-	case <-ctx.Done():
-		e.mu.RUnlock()
-		return response{}, ctx.Err()
+	if full == orBusy {
+		select {
+		case m.in <- r:
+		default:
+			e.mu.RUnlock()
+			return response{}, ErrBusy
+		}
+	} else {
+		select {
+		case m.in <- r:
+		case <-ctx.Done():
+			e.mu.RUnlock()
+			return response{}, ctx.Err()
+		}
 	}
 	e.mu.RUnlock()
 	select {
