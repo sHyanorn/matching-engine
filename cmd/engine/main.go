@@ -50,7 +50,7 @@ func healthcheck(args []string) error {
 	if err != nil {
 		return err
 	}
-	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+	if host == "" || net.ParseIP(host).IsUnspecified() {
 		host = "127.0.0.1"
 	}
 	client := http.Client{Timeout: 2 * time.Second}

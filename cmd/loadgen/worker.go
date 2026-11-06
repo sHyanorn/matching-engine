@@ -255,7 +255,9 @@ func (l *loader) report(workers []*worker, missing int, streamErr error) report 
 		if firstErr == "" {
 			firstErr = w.firstErr
 		}
-		reply, service, lag = append(reply, w.reply...), append(service, w.service...), append(lag, w.lag...)
+		reply = append(reply, w.reply...)
+		service = append(service, w.service...)
+		lag = append(lag, w.lag...)
 	}
 	r.Achieved = float64(sent) / l.cfg.duration.Seconds()
 	if r.Achieved < 0.99*l.cfg.rate {

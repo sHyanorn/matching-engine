@@ -38,7 +38,7 @@ func New(seed uint64, sd float64) *Generator {
 // Next returns the next op.
 func (g *Generator) Next() Op {
 	if g.orders > 0 && g.r.IntN(100) < 30 {
-		return Op{Cancel: true, Order: 1 + int(g.r.Int64N(int64(g.orders)))}
+		return Op{Cancel: true, Order: 1 + g.r.IntN(g.orders)}
 	}
 	g.orders++
 	off := g.r.NormFloat64() * g.sd
