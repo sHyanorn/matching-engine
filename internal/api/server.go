@@ -6,7 +6,9 @@ import (
 	"embed"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,10 +122,7 @@ func (s *Server) BeginShutdown() { s.stopping.Store(true) }
 // waits for their handlers to finish.
 func (s *Server) CloseStreams() {
 	s.mu.Lock()
-	open := make([]*stream, 0, len(s.streams))
-	for st := range s.streams {
-		open = append(open, st)
-	}
+	open := slices.Collect(maps.Keys(s.streams))
 	s.mu.Unlock()
 	for _, st := range open {
 		st.close(shuttingDown)

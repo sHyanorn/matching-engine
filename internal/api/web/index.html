@@ -134,7 +134,8 @@ function rows(tbody, n, cols) {
   }
   return out;
 }
-const askRows = rows(document.querySelector("#asks tbody"), LEVELS, 3);
+// Bottom row first, so the best ask sits next to the middle.
+const askRows = rows(document.querySelector("#asks tbody"), LEVELS, 3).reverse();
 const bidRows = rows(document.querySelector("#bids tbody"), LEVELS, 3);
 const tapeRows = rows(document.querySelector("#tape tbody"), TRADES, 3);
 const lastEl = document.getElementById("last"), spreadEl = document.getElementById("spread");
@@ -174,7 +175,7 @@ function depth(side) {
 function paint() {
   const max = Math.max(depth(asks), depth(bids), 1);
   paintSide(bids, bidRows, max);
-  paintSide(asks, askRows.slice().reverse(), max); // the best ask sits next to the middle
+  paintSide(asks, askRows, max);
   lastEl.textContent = last === null ? " " : num.format(last);
   lastEl.dataset.dir = dir;
   const spread = asks.keys.length && bids.keys.length ? asks.keys[0] - bids.keys[0] : null;

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,10 +144,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	st.readLoop()
 	st.close(closedByClient)
 	st.mu.Lock()
-	chans := make([]*channel, 0, len(st.channels))
-	for _, ch := range st.channels {
-		chans = append(chans, ch)
-	}
+	chans := slices.Collect(maps.Values(st.channels))
 	st.mu.Unlock()
 	for _, ch := range chans {
 		ch.sub.Close()
@@ -165,11 +164,9 @@ func (st *stream) close(cause closeCause) {
 		st.srv.metrics.wsClosed.WithLabelValues(cause.label).Inc()
 		st.cancel()
 		go func() {
-			t := time.NewTimer(st.srv.opts.WriteTimeout)
-			defer t.Stop()
 			select {
 			case <-st.writerDone:
-			case <-t.C:
+			case <-time.After(st.srv.opts.WriteTimeout):
 			}
 			_ = st.conn.Close(cause.code, cause.reason)
 		}()

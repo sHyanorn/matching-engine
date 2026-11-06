@@ -49,7 +49,7 @@ var checkKeysBodies = []string{
 	`{"symbol":"BTC-USD","side":"buy","type":"limit","price":100,"qty":1}`,
 	` { "qty" : 1 , "price" : -2.5e3 , "client_id" : "a\"b\\cé" } `,
 	`{}`, `{"qty":{"a":[1,{"b":"}"}]}}`, `{"qty":[1,2,"]"]}`, `{"qty":null,"tif":true,"side":false}`,
-	`{"QTY":1}`, `{"qty":1,"qty":2}`, `{"qty":1,"qty":2}`, `{"nope":1}`, `{"a\"b":1}`,
+	`{"QTY":1}`, `{"qty":1,"qty":2}`, `{"nope":1}`, `{"a\"b":1}`,
 	``, `null`, `[]`, `"x"`, `{}{}`, `{"qty":1}x`, `{"qty":}`, `{"qty":1,}`, `{qty:1}`, `{"qty"`,
 }
 
