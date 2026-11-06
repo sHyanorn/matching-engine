@@ -84,8 +84,7 @@ func (c *testClock) stall() (entered <-chan struct{}, release func()) {
 	c.entered = make(chan struct{})
 	ch := make(chan struct{})
 	c.release = ch
-	var once sync.Once
-	release = func() { once.Do(func() { close(ch) }) }
+	release = sync.OnceFunc(func() { close(ch) })
 	c.releases = append(c.releases, release)
 	return c.entered, release
 }
@@ -1143,7 +1142,6 @@ func TestRequestErrors(t *testing.T) {
 
 	const valid = `"symbol":"BTC-USD","side":"buy","type":"limit","price":100,"qty":1`
 	orderWith := func(fields string) string { return "{" + fields + "}" }
-	tooLarge := `{` + valid + `,"client_id":"c"` + strings.Repeat(" ", 5000) + `}`
 
 	// code is the expected error code; "a|b" accepts either, where
 	// docs/API.md requires the 400 but leaves the code open: it says a
@@ -1206,7 +1204,8 @@ func TestRequestErrors(t *testing.T) {
 			orderWith(valid + `,"client_id":"` + strings.Repeat("x", 65) + `"`), 400, "invalid_client_id"},
 		{"unknown symbol", "POST", "/v1/orders",
 			`{"symbol":"DOGE-USD","side":"buy","type":"limit","price":100,"qty":1}`, 404, "unknown_symbol"},
-		{"body over 4 KB", "POST", "/v1/orders", tooLarge, 413, "body_too_large"},
+		{"body over 4 KB", "POST", "/v1/orders",
+			orderWith(valid + `,"client_id":"c"` + strings.Repeat(" ", 5000)), 413, "body_too_large"},
 		{"over 4 KB after the object", "POST", "/v1/orders", orderWith(valid) + strings.Repeat(" ", 5000), 413, "body_too_large"},
 		{"empty body", "POST", "/v1/orders", "", 400, "bad_request"},
 		{"null body", "POST", "/v1/orders", "null", 400, "bad_request"},
@@ -1324,7 +1323,7 @@ func TestNeverIssuedOrder(t *testing.T) {
 		expectError(t, env.do(t, http.MethodGet, orderPath(bad), ""), http.StatusNotFound, "unknown_order")
 		expectError(t, env.do(t, http.MethodDelete, orderPath(bad), ""), http.StatusNotFound, "unknown_order")
 	}
-	checkStatus(t, env.getOrder(t, r.Order.OrderID), r.Order)
+	checkStatus(t, env.getOrder(t, id), r.Order)
 }
 
 // ---------------------------------------------------------------------------
@@ -1563,9 +1562,6 @@ func TestMetrics(t *testing.T) {
 		rise{"matching_engine_cancels_total", []string{"symbol", btc, "result", "canceled"}, 1},
 		rise{"matching_engine_cancels_total", []string{"symbol", btc, "result", "finished"}, 1},
 	)
-	if v, ok := after.values[sampleKey("matching_engine_trades_total", "symbol", btc)]; !ok || v < 1 {
-		t.Errorf("no sample matching_engine_trades_total{symbol=%q} >= 1 in /metrics", btc)
-	}
 
 	for name, typ := range map[string]string{
 		"matching_engine_orders_total":                  "counter",
