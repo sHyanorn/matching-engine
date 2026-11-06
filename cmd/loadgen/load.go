@@ -188,7 +188,7 @@ func (l *loader) subscribe(ctx context.Context) (*websocket.Conn, error) {
 		_ = c.CloseNow()
 		return nil, err
 	}
-	var m struct{ Type, Code, Message string }
+	var m struct{ Type string }
 	if err := json.Unmarshal(data, &m); err != nil || m.Type != "subscribed" {
 		_ = c.CloseNow()
 		return nil, fmt.Errorf("got %s, want subscribed", data)

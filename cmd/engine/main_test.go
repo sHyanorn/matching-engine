@@ -42,8 +42,7 @@ type orderStatus struct {
 }
 
 type event struct {
-	Seq  uint64 `json:"seq"`
-	Type string `json:"type"`
+	Seq uint64 `json:"seq"`
 }
 
 type orderReply struct {
@@ -267,11 +266,9 @@ func waitGroup(t *testing.T, wg *sync.WaitGroup, what string) {
 // TestRunShutsDownGracefullyAndRestarts cancels run while orders are in
 // flight, then starts it again on the same data directory: every
 // acknowledged order must survive with its status, and nothing that was
-// applied may have gone unacknowledged.
-// A shutdown under load loses no acknowledged order and applies none whose
-// reply was lost. Keep-alive connections are the hard case: Shutdown closes
-// a connection it sees as idle, which can race a request the server has
-// just read from it.
+// applied may have gone unacknowledged. Keep-alive connections are the
+// hard case: Shutdown closes a connection it sees as idle, which can race
+// a request the server has just read from it.
 func TestRunShutsDownGracefullyAndRestarts(t *testing.T) {
 	for _, keepAlive := range []bool{false, true} {
 		t.Run(fmt.Sprintf("keepAlive=%v", keepAlive), func(t *testing.T) { testShutdownUnderLoad(t, keepAlive) })
@@ -312,7 +309,6 @@ func testShutdownUnderLoad(t *testing.T, keepAlive bool) {
 		acks     atomic.Int64
 		inFlight atomic.Int64
 		enough   = make(chan struct{})
-		once     sync.Once
 		wg       sync.WaitGroup
 	)
 	for w := range workers {
@@ -331,7 +327,7 @@ func testShutdownUnderLoad(t *testing.T, keepAlive bool) {
 					return // the server has stopped accepting connections
 				case o.status == http.StatusOK:
 					if acks.Add(1) == ackTarget {
-						once.Do(func() { close(enough) })
+						close(enough)
 					}
 				case o.status != http.StatusServiceUnavailable:
 					return // reported below
@@ -410,7 +406,9 @@ func testShutdownUnderLoad(t *testing.T, keepAlive bool) {
 	for _, r := range acked {
 		k := levelKey{r.Order.Side, r.Order.Price}
 		l := want[k]
-		l.Price, l.Qty, l.Orders = k.price, l.Qty+r.Order.Qty, l.Orders+1
+		l.Price = k.price
+		l.Qty += r.Order.Qty
+		l.Orders++
 		want[k] = l
 	}
 	var wantBids, wantAsks []level

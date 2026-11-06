@@ -100,15 +100,15 @@ var latencyRows = []struct{ key, name string }{
 
 // printReport writes r as a short table.
 func printReport(w io.Writer, r report) error {
-	keys := make([]string, 0, len(r.Outcomes))
-	for k := range r.Outcomes {
-		keys = append(keys, fmt.Sprintf("%s %d", k, r.Outcomes[k]))
+	counts := make([]string, 0, len(r.Outcomes))
+	for k, n := range r.Outcomes {
+		counts = append(counts, fmt.Sprintf("%s %d", k, n))
 	}
-	slices.Sort(keys)
+	slices.Sort(counts)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, %d connections\n",
 		r.Symbol, r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Conns)
-	fmt.Fprintf(&b, "%s\n", strings.Join(keys, ", "))
+	fmt.Fprintf(&b, "%s\n", strings.Join(counts, ", "))
 	fmt.Fprintf(&b, "%-20s %9s %8s %8s %8s %8s %8s %8s\n", "latency (µs)", "count", "p50", "p90", "p99", "p99.9", "p99.99", "max")
 	for _, row := range latencyRows {
 		s := r.Latency[row.key]
