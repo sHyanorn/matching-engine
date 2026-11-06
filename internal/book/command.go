@@ -24,10 +24,10 @@ func (k CommandKind) String() string {
 // Command is the only input to the book. The engine logs each Command it
 // applies verbatim, with OrderID and Timestamp already filled in, next to
 // what the engine itself needs to route it, such as the symbol. It is a
-// fixed-size value made only of integers (no
-// pointers, strings or interfaces), so it goes through a channel and into
-// the log without allocating, compares with ==, and is easy to build field by
-// field from fuzz input.
+// fixed-size value made only of integers (no pointers, strings or
+// interfaces), so it goes through a channel and into the log without
+// allocating, compares with ==, and is easy to build field by field from fuzz
+// input.
 //
 // Fields used by each Kind:
 //

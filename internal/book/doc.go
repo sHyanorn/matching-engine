@@ -6,10 +6,9 @@
 // emits [Event] values; it never reads a clock, never draws random numbers
 // and never does I/O. CI guards against accidental dependencies by forbidding
 // imports of time, math/rand, crypto/rand, net and os (depguard, see D005).
-// Everything
-// that is not deterministic happens in internal/engine before a Command
-// reaches the book, so replaying the command log into a fresh book yields
-// exactly the same events, Seq for Seq.
+// Everything that is not deterministic happens in internal/engine before a
+// Command reaches the book, so replaying the command log into a fresh book
+// yields exactly the same events, Seq for Seq.
 //
 // # What lives where
 //
@@ -18,9 +17,9 @@
 //     events.
 //   - engine: OrderID allocation (one counter shared by all symbols, called
 //     by the API before it validates a new order), timestamps, the command
-//     log with its format version and replay,
-//     client_id, order history and status after an order leaves the book,
-//     and the sequence numbers of WebSocket channels.
+//     log with its format version and replay, client_id, order history and
+//     status after an order leaves the book, and the sequence numbers of
+//     WebSocket channels.
 //   - api: JSON shapes, parsing wire names with [ParseSide], [ParseOrderType]
 //     and [ParseTIF], and mapping [Reason] codes to HTTP status codes.
 //

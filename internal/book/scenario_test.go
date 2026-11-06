@@ -459,12 +459,6 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 		side   Side
 		levels []Level
 	}{{Buy, bids}, {Sell, asks}}
-	levelsOf := func(s Side) []Level {
-		if s == Buy {
-			return bids
-		}
-		return asks
-	}
 
 	for _, sd := range sides {
 		for i, l := range sd.levels {
@@ -479,6 +473,17 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 		t.Errorf("%s: book crossed: best bid %d >= best ask %d", label, bids[0].Price, asks[0].Price)
 	}
 
+	type total struct {
+		qty    Qty
+		orders int
+	}
+	fromDepth := make(map[l2Key]total)
+	for _, sd := range sides {
+		for _, l := range sd.levels {
+			fromDepth[l2Key{sd.side, l.Price}] = total{l.Qty, l.Orders}
+		}
+	}
+
 	// The last event touching a level carries the level's total afterwards.
 	last := make(map[l2Key]Qty)
 	for _, e := range evs {
@@ -487,11 +492,7 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 		}
 	}
 	for _, k := range slices.SortedFunc(maps.Keys(last), compareL2Key) {
-		var inDepth Qty
-		if i := slices.IndexFunc(levelsOf(k.side), func(l Level) bool { return l.Price == k.price }); i >= 0 {
-			inDepth = levelsOf(k.side)[i].Qty
-		}
-		if inDepth != last[k] {
+		if inDepth := fromDepth[k].qty; inDepth != last[k] {
 			t.Errorf("%s: last event touching %v %d says LevelQty %d, but Depth has %d", label, k.side, k.price, last[k], inDepth)
 		}
 		if last[k] == 0 {
@@ -502,16 +503,7 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 	}
 
 	// The whole depth follows from the stream, and from the resting orders.
-	type total struct {
-		qty    Qty
-		orders int
-	}
-	fromDepth, fromStream := make(map[l2Key]total), make(map[l2Key]total)
-	for _, sd := range sides {
-		for _, l := range sd.levels {
-			fromDepth[l2Key{sd.side, l.Price}] = total{l.Qty, l.Orders}
-		}
-	}
+	fromStream := make(map[l2Key]total)
 	for k, q := range r.l2 {
 		fromStream[k] = total{q, fromDepth[k].orders} // the stream carries no order counts
 	}

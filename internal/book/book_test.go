@@ -117,14 +117,13 @@ func TestApplyRejectsDuplicateRestingID(t *testing.T) {
 // book's structural invariants (checkBook) and the command's events against
 // price-time priority, maker prices and level totals (checkCommandEvents,
 // shared with the scenario tests); at the end it checks quantity
-// conservation per order. The full property and fuzz tests come in M2; this
-// one guards M1's matching and cancel paths.
+// conservation per order (ledger). The full property and fuzz tests come in
+// M2; this one guards M1's matching and cancel paths.
 func TestApplyRandomGTC(t *testing.T) {
 	for seed := uint64(1); seed <= 5; seed++ {
 		r := rand.New(rand.NewPCG(seed, 0xb00c))
 		b := New()
-		accepted := map[OrderID]Qty{} // order -> submitted qty
-		moved := map[OrderID]Qty{}    // order -> traded + canceled qty
+		lg := ledger{}
 		var nextID OrderID
 		for ts := int64(1); ts <= 3_000; ts++ {
 			var cmd Command
@@ -146,27 +145,12 @@ func TestApplyRandomGTC(t *testing.T) {
 			if err := checkCommandEvents(cmd, evs, before); err != nil {
 				t.Fatalf("seed %d, %+v: %v\nevents:%s", seed, cmd, err, formatEvents(evs))
 			}
-			for _, e := range evs {
-				switch e.Kind {
-				case EventAccepted:
-					accepted[e.OrderID] = e.Qty
-				case EventTrade:
-					moved[e.OrderID] += e.Qty
-					moved[e.MakerID] += e.Qty
-				case EventCanceled:
-					moved[e.OrderID] += e.Qty
-				case EventRejected, EventRested:
-				}
+			if err := lg.record(evs); err != nil {
+				t.Fatalf("seed %d, %+v: %v", seed, cmd, err)
 			}
 		}
-		for id, q := range accepted {
-			var resting Qty
-			if o, ok := b.Order(id); ok {
-				resting = o.Remaining
-			}
-			if moved[id]+resting != q {
-				t.Fatalf("seed %d, order %d: accepted %d, traded+canceled %d, resting %d", seed, id, q, moved[id], resting)
-			}
+		if err := lg.check(b); err != nil {
+			t.Fatalf("seed %d: %v", seed, err)
 		}
 	}
 }

@@ -186,8 +186,9 @@ func TestPropertyRandomCommands(t *testing.T) {
 				extremes[c.Price]++
 			}
 		}
+		bestAfter := [2]*levelNode{b.bids.best, b.asks.best}
 		for s, before := range bestBefore {
-			if before != nil && [2]*levelNode{b.bids.best, b.asks.best}[s] == nil {
+			if before != nil && bestAfter[s] == nil {
 				sideEmptied[half]++
 			}
 		}
