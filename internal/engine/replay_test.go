@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"math/rand/v2"
@@ -62,7 +63,7 @@ func randomTraffic(t *testing.T, e *Engine, symbol string, seed uint64, n int) (
 // events, which must then number 1, 2, 3, ... with no gaps.
 func stream(t *testing.T, results []Result) []book.Event {
 	t.Helper()
-	slices.SortFunc(results, func(a, b Result) int { return int(a.Events[0].Seq) - int(b.Events[0].Seq) })
+	slices.SortFunc(results, func(a, b Result) int { return cmp.Compare(a.Events[0].Seq, b.Events[0].Seq) })
 	var evs []book.Event
 	for _, r := range results {
 		evs = append(evs, r.Events...)

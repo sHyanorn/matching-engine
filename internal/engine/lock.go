@@ -17,12 +17,11 @@ func lockDir(dir string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch err := lockFile(f); {
-	case errors.Is(err, ErrDataDirInUse):
+	if err := lockFile(f); err != nil {
 		_ = f.Close() // err is the error to report
-		return nil, fmt.Errorf("%w: %s", ErrDataDirInUse, dir)
-	case err != nil:
-		_ = f.Close()
+		if errors.Is(err, ErrDataDirInUse) {
+			return nil, fmt.Errorf("%w: %s", ErrDataDirInUse, dir)
+		}
 		return nil, fmt.Errorf("engine: locking %s: %w", path, err)
 	}
 	return f, nil
