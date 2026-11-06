@@ -26,9 +26,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function main() {
   let engine, loadgen, browser;
   try {
-    for (const cmd of ["engine", "loadgen"]) {
-      execFileSync("go", ["build", "-o", exe(cmd), "./cmd/" + cmd], { stdio: "inherit" });
-    }
+    execFileSync("go", ["build", "-o", tmp, "./cmd/engine", "./cmd/loadgen"], { stdio: "inherit" });
     engine = spawn(exe("engine"), ["-addr", "127.0.0.1:0", "-data", path.join(tmp, "data"), "-symbols", "BTC-USD"],
       { stdio: ["ignore", "pipe", "ignore"] });
     const addr = await listening(engine);

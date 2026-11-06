@@ -13,7 +13,6 @@ import glob
 import json
 import os
 import re
-import statistics
 import sys
 
 import matplotlib
