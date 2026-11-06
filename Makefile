@@ -13,7 +13,7 @@ RATES    ?=
 .PHONY: help test cover bench fuzz e2e lint fmt run
 
 help: ## Show available targets
-	@grep -E '^[a-z0-9]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
+	@awk -F':.*## ' '/^[a-z0-9]+:.*## / {printf "  %-8s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 test: ## Run all tests with the race detector
 	$(GO) test -race ./...

@@ -63,8 +63,7 @@ for rate in "$@"; do
 		wait "$pid" || true
 		pid=
 		rm -rf "$data"
-		[ "$failed" = 0 ] || break
+		[ "$failed" = 0 ] || break 2
 	done
-	[ "$failed" = 0 ] || break
 done
 [ "$valid" -gt 0 ] || { echo "e2e: no valid run" >&2; exit 1; }
