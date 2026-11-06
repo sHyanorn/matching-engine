@@ -265,10 +265,7 @@ func TestEngineRefusesBadLogs(t *testing.T) {
 		{"order of another symbol", logRecord{cmd: book.Command{Kind: book.CommandNewOrder, OrderID: makeOrderID(1, 3), Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1}}, "another symbol"},
 	} {
 		dir := t.TempDir()
-		data := appendRecord(appendHeader(nil, "A", 0), tc.rec)
-		if err := os.WriteFile(filepath.Join(dir, "A.log"), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeLog(t, dir, tc.rec)
 		_, err := New(Config{Symbols: []string{"A"}, DataDir: dir})
 		if !errors.Is(err, ErrCorruptLog) || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: New err = %v", tc.name, err)
@@ -313,10 +310,7 @@ func TestLogFormatGolden(t *testing.T) {
 // writeLog writes a log for symbol "A" at index 0 holding recs to dir.
 func writeLog(t *testing.T, dir string, recs ...logRecord) {
 	t.Helper()
-	data := appendHeader(nil, "A", 0)
-	for _, r := range recs {
-		data = appendRecord(data, r)
-	}
+	data, _ := encodeLog(recs)
 	if err := os.WriteFile(filepath.Join(dir, "A.log"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}

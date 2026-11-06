@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestAppliedOrderReportedWhenSyncFails(t *testing.T) {
 		t.Fatalf("reply %s, want the open order and its 2 events", body)
 	}
 
-	status, r, body = request("DELETE", "/v1/orders/"+jsonNumber(r.Order.OrderID), "")
+	status, r, body = request("DELETE", "/v1/orders/"+strconv.FormatUint(r.Order.OrderID, 10), "")
 	if status != http.StatusInternalServerError || r.Error.Code != "log_failed" || r.Order != nil || r.Events != nil {
 		t.Fatalf("cancel after the failure: %d %s, want 500 log_failed with no order or events", status, body)
 	}
@@ -89,9 +90,4 @@ func TestAppliedOrderReportedWhenSyncFails(t *testing.T) {
 			t.Errorf("metrics lack %s", want)
 		}
 	}
-}
-
-func jsonNumber(n uint64) string {
-	b, _ := json.Marshal(n)
-	return string(b)
 }

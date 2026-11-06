@@ -373,11 +373,7 @@ func TestLogFailureReported(t *testing.T) {
 	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
 		t.Fatalf("first order: %v; a reply does not wait for the interval fsync", err)
 	}
-	for deadline := time.Now().Add(5 * time.Second); e.LogErr("A") == nil; time.Sleep(time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("LogErr(A) is still nil after the failed fsync")
-		}
-	}
+	waitFor(t, "LogErr(A) to report the failed fsync", func() bool { return e.LogErr("A") != nil })
 	if err := e.LogErr("A"); !errors.Is(err, ErrLogFailed) || !errors.Is(err, errInjected) {
 		t.Fatalf("LogErr(A) = %v, want ErrLogFailed wrapping the cause", err)
 	}

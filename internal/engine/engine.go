@@ -233,13 +233,13 @@ func New(cfg Config) (*Engine, error) {
 		maxSeq = max(maxSeq, seq)
 	}
 	start, err := e.ids.load()
-	if err == nil {
-		start = max(start, maxSeq)
-		e.nextSeq.Store(start)
-		e.reserved.Store(start)
-		err = e.extendReservation(start)
-	}
 	if err != nil {
+		return fail(err)
+	}
+	start = max(start, maxSeq)
+	e.nextSeq.Store(start)
+	e.reserved.Store(start)
+	if err := e.extendReservation(start); err != nil {
 		return fail(err)
 	}
 	for _, m := range e.markets {

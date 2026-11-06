@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 )
@@ -114,8 +115,8 @@ func (m *market) subscribe(s *Subscription, depth int) response {
 
 // unsubscribe removes s if it is still subscribed.
 func (m *market) unsubscribe(s *Subscription) {
-	if i := indexOf(m.subs, s); i >= 0 {
-		m.subs = append(m.subs[:i], m.subs[i+1:]...)
+	if i := slices.Index(m.subs, s); i >= 0 {
+		m.subs = slices.Delete(m.subs, i, i+1)
 		m.end(s, nil)
 	}
 }
@@ -124,13 +125,4 @@ func (m *market) unsubscribe(s *Subscription) {
 func (m *market) end(s *Subscription, err error) {
 	s.err = err
 	close(s.ch)
-}
-
-func indexOf(subs []*Subscription, s *Subscription) int {
-	for i, x := range subs {
-		if x == s {
-			return i
-		}
-	}
-	return -1
 }

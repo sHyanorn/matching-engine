@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
@@ -22,14 +23,8 @@ func newTestEngine(t *testing.T, cfg Config) *Engine {
 		cfg.DataDir = t.TempDir()
 	}
 	if cfg.Clock == nil {
-		var mu sync.Mutex
-		var now int64
-		cfg.Clock = func() int64 {
-			mu.Lock()
-			defer mu.Unlock()
-			now++
-			return now
-		}
+		var now atomic.Int64
+		cfg.Clock = func() int64 { return now.Add(1) }
 	}
 	e, err := New(cfg)
 	if err != nil {
@@ -231,9 +226,8 @@ func TestContextAlreadyDone(t *testing.T) {
 }
 
 // TestConcurrentClients places orders on several symbols from many
-// goroutines at once. Each book still sees a gap-free Seq, every ID is
-// unique, and each symbol's events are exactly what applying its commands
-// in Seq order to a fresh book gives.
+// goroutines at once. Each book still sees a gap-free Seq and every ID is
+// unique.
 func TestConcurrentClients(t *testing.T) {
 	syms := []string{"A", "B", "C", "D"}
 	e := newTestEngine(t, Config{Symbols: syms, QueueSize: 16, MaxBatch: 4})
@@ -268,19 +262,12 @@ func TestConcurrentClients(t *testing.T) {
 	total := 0
 	for _, s := range syms {
 		rs := results[s]
-		slices.SortFunc(rs, func(a, b Result) int { return int(a.Events[0].Seq) - int(b.Events[0].Seq) })
-		var seq uint64
+		stream(t, rs) // sorts rs by Seq and checks it has no gaps
 		for _, r := range rs {
 			if ids[r.OrderID] {
 				t.Fatalf("ID %d issued twice", r.OrderID)
 			}
 			ids[r.OrderID] = true
-			for _, ev := range r.Events {
-				seq++
-				if ev.Seq != seq {
-					t.Fatalf("%s: Seq %d, want %d", s, ev.Seq, seq)
-				}
-			}
 		}
 		total += len(rs)
 	}
