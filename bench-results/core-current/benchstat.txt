@@ -1,0 +1,79 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+                              │  core.txt   │
+                              │   sec/op    │
+Apply/sd=5-4                    143.9n ± 3%
+Apply/sd=50-4                   151.2n ± 4%
+ApplyDeep/resting=10k/sd=5-4    154.9n ± 5%
+ApplyDeep/resting=10k/sd=50-4   144.4n ± 3%
+ApplyDeep/resting=1M/sd=5-4     185.6n ± 2%
+ApplyDeep/resting=1M/sd=50-4    198.2n ± 2%
+RestingOrders-4                 357.7m ± 6%
+geomean                         1.304µ
+
+                              │  core.txt   │
+                              │ allocs/cmd  │
+Apply/sd=5-4                    594.5m ± 0%
+Apply/sd=50-4                   683.7m ± 0%
+ApplyDeep/resting=10k/sd=5-4    592.3m ± 0%
+ApplyDeep/resting=10k/sd=50-4   682.5m ± 0%
+ApplyDeep/resting=1M/sd=5-4     592.2m ± 0%
+ApplyDeep/resting=1M/sd=50-4    682.5m ± 0%
+geomean                         636.4m
+
+                              │  core.txt   │
+                              │   cmds/s    │
+Apply/sd=5-4                    6.949M ± 3%
+Apply/sd=50-4                   6.612M ± 4%
+ApplyDeep/resting=10k/sd=5-4    6.455M ± 5%
+ApplyDeep/resting=10k/sd=50-4   6.927M ± 3%
+ApplyDeep/resting=1M/sd=5-4     5.389M ± 2%
+ApplyDeep/resting=1M/sd=50-4    5.047M ± 3%
+geomean                         6.183M
+
+                              │  core.txt   │
+                              │ trades/cmd  │
+Apply/sd=5-4                    368.1m ± 0%
+Apply/sd=50-4                   528.2m ± 0%
+ApplyDeep/resting=10k/sd=5-4    368.1m ± 0%
+ApplyDeep/resting=10k/sd=50-4   528.2m ± 0%
+ApplyDeep/resting=1M/sd=5-4     368.1m ± 0%
+ApplyDeep/resting=1M/sd=50-4    528.2m ± 0%
+geomean                         440.9m
+
+                              │   core.txt   │
+                              │     B/op     │
+Apply/sd=5-4                      73.00 ± 0%
+Apply/sd=50-4                     70.00 ± 0%
+ApplyDeep/resting=10k/sd=5-4      55.00 ± 0%
+ApplyDeep/resting=10k/sd=50-4     61.00 ± 0%
+ApplyDeep/resting=1M/sd=5-4       55.00 ± 0%
+ApplyDeep/resting=1M/sd=50-4      61.00 ± 0%
+RestingOrders-4                 163.7Mi ± 0%
+geomean                           517.0
+
+                              │   core.txt    │
+                              │   allocs/op   │
+Apply/sd=5-4                     0.000 ± 0%
+Apply/sd=50-4                    0.000 ± 0%
+ApplyDeep/resting=10k/sd=5-4     0.000 ± 0%
+ApplyDeep/resting=10k/sd=50-4    0.000 ± 0%
+ApplyDeep/resting=1M/sd=5-4      0.000 ± 0%
+ApplyDeep/resting=1M/sd=50-4     0.000 ± 0%
+RestingOrders-4                 1.010M ± 0%
+geomean                                     ¹
+¹ summaries must be >0 to compute geomean
+
+                │  core.txt  │
+                │  B/order   │
+RestingOrders-4   133.9 ± 0%
+
+                │  core.txt  │
+                │    MiB     │
+RestingOrders-4   127.7 ± 0%
+
+                │  core.txt   │
+                │  sec/order  │
+RestingOrders-4   357.8n ± 6%

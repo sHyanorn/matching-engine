@@ -6,11 +6,11 @@ A limit order book matching engine in Go: price-time priority matching, REST and
 
 ## Highlights
 
-Measured on 4 vCPU cloud VMs of one type, which differ in speed; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Measured on one 4 vCPU cloud VM; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Metric | Value |
 |---|---|
-| Core throughput, one symbol | 3.0M to 4.5M commands/s |
+| Core throughput, one symbol | 5.0M to 6.9M commands/s |
 | End-to-end p99, order to trade push | 1.8 ms at 10k requests/s, 41 ms at 50k (70% orders, 30% cancels) |
 | Matching core heap, 1M resting orders (`BenchmarkRestingOrders`) | 128 MiB |
 | Test coverage | 92% of statements |
