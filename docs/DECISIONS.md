@@ -101,7 +101,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 ## D017 Log durability: write before apply, fsync every 10 ms
 - Date: 2026-11-05
 - Decision: Each batch of commands is written to the OS in one write before any of them is applied, and the book applies exactly the commands whose records were written in full. The log is fsynced every `SyncInterval` (10 ms by default) and on shutdown; a negative interval fsyncs after every batch. After a failed write or fsync the symbol accepts no more commands (`ErrLogFailed`). D031 runs the interval fsyncs beside the matching goroutine, which adds an fsync in progress to the bound below; D029 reports a failure
-- Rationale: A process crash loses nothing; a machine crash loses at most the last interval. An fsync per batch costs milliseconds on cloud disks and would endanger the 5 ms p99 target
+- Rationale: A process crash loses no acknowledged command (`TestKillUnderLoad` in cmd/engine kills the engine under load and checks this); a machine crash loses at most the last interval, which no test covers. An fsync per batch costs milliseconds on cloud disks and would endanger the 5 ms p99 target
 - Alternatives: fsync every batch (slow); no fsync (unbounded loss on power failure)
 
 ## D018 Slow subscribers are disconnected
