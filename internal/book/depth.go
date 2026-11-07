@@ -17,7 +17,7 @@ func (b *Book) Depth(s Side, n int, dst []Level) []Level {
 		return dst
 	}
 	for l := b.side(s).best; l != nil && n > 0; l = l.next() {
-		dst = append(dst, Level{Price: l.price, Qty: l.totalQty, Orders: l.count})
+		dst = append(dst, Level{Price: l.price, Qty: l.totalQty, Orders: int(l.count)})
 		n--
 	}
 	return dst

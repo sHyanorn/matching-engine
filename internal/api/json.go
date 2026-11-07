@@ -35,17 +35,24 @@ type orderJSON struct {
 }
 
 type eventJSON struct {
-	Seq       uint64       `json:"seq"`
-	TS        int64        `json:"ts"`
-	Type      string       `json:"type"`
-	OrderID   book.OrderID `json:"order_id"`
-	MakerID   book.OrderID `json:"maker_id,omitempty"`
-	Side      string       `json:"side,omitempty"`
-	Price     int64        `json:"price,omitempty"`
-	Qty       int64        `json:"qty,omitempty"`
-	Reason    string       `json:"reason,omitempty"`
-	LevelSide string       `json:"level_side,omitempty"`
-	LevelQty  *int64       `json:"level_qty,omitempty"` // present whenever LevelSide is
+	Seq     uint64       `json:"seq"`
+	TS      int64        `json:"ts"`
+	Type    string       `json:"type"`
+	OrderID book.OrderID `json:"order_id"`
+	MakerID book.OrderID `json:"maker_id,omitempty"`
+	Side    string       `json:"side,omitempty"`
+	Price   int64        `json:"price,omitempty"`
+	Qty     int64        `json:"qty,omitempty"`
+	Reason  string       `json:"reason,omitempty"`
+	*eventLevel
+}
+
+// eventLevel is the level an event changed. It is embedded by pointer, so
+// its fields appear together, zeros included, or not at all.
+type eventLevel struct {
+	LevelSide   string `json:"level_side"`
+	LevelQty    int64  `json:"level_qty"`
+	LevelOrders uint32 `json:"level_orders"`
 }
 
 type levelJSON struct {
@@ -109,8 +116,7 @@ func toEventsJSON(evs []book.Event) []eventJSON {
 			Side: sideName(e.Side), Price: int64(e.Price), Qty: int64(e.Qty), Reason: reasonName(e.Reason),
 		}
 		if e.LevelSide.Valid() {
-			q := int64(e.LevelQty)
-			out[i].LevelSide, out[i].LevelQty = e.LevelSide.String(), &q
+			out[i].eventLevel = &eventLevel{LevelSide: e.LevelSide.String(), LevelQty: int64(e.LevelQty), LevelOrders: e.LevelOrders}
 		}
 	}
 	return out

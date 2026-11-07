@@ -1,0 +1,68 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+                              │ before.txt  │             after.txt              │
+                              │   sec/op    │   sec/op     vs base               │
+Apply/sd=5-4                    146.8n ± 4%   148.2n ± 2%       ~ (p=0.912 n=10)
+Apply/sd=50-4                   157.7n ± 4%   151.2n ± 8%       ~ (p=0.165 n=10)
+ApplyDeep/resting=10k/sd=5-4    160.4n ± 4%   152.7n ± 5%  -4.77% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   153.5n ± 7%   146.3n ± 2%  -4.69% (p=0.001 n=10)
+ApplyDeep/resting=1M/sd=5-4     187.5n ± 2%   185.7n ± 2%       ~ (p=0.255 n=10)
+ApplyDeep/resting=1M/sd=50-4    196.7n ± 2%   198.2n ± 4%       ~ (p=0.123 n=10)
+geomean                         166.1n        162.5n       -2.19%
+
+                              │ before.txt  │              after.txt               │
+                              │ allocs/cmd  │ allocs/cmd   vs base                 │
+Apply/sd=5-4                    594.5m ± 0%   594.5m ± 0%       ~ (p=1.000 n=10)
+Apply/sd=50-4                   683.7m ± 0%   683.7m ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=5-4    592.3m ± 0%   592.3m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   682.5m ± 0%   682.5m ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=5-4     592.3m ± 0%   592.2m ± 0%       ~ (p=0.370 n=10)
+ApplyDeep/resting=1M/sd=50-4    682.5m ± 0%   682.5m ± 0%       ~ (p=1.000 n=10) ¹
+geomean                         636.4m        636.4m       -0.00%
+¹ all samples are equal
+
+                              │ before.txt  │             after.txt              │
+                              │   cmds/s    │   cmds/s     vs base               │
+Apply/sd=5-4                    6.813M ± 4%   6.746M ± 2%       ~ (p=0.912 n=10)
+Apply/sd=50-4                   6.340M ± 4%   6.615M ± 7%       ~ (p=0.165 n=10)
+ApplyDeep/resting=10k/sd=5-4    6.234M ± 4%   6.547M ± 5%  +5.03% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   6.514M ± 7%   6.835M ± 2%  +4.92% (p=0.001 n=10)
+ApplyDeep/resting=1M/sd=5-4     5.331M ± 2%   5.387M ± 2%       ~ (p=0.247 n=10)
+ApplyDeep/resting=1M/sd=50-4    5.085M ± 2%   5.045M ± 3%       ~ (p=0.123 n=10)
+geomean                         6.019M        6.153M       +2.23%
+
+                              │ before.txt  │              after.txt               │
+                              │ trades/cmd  │ trades/cmd   vs base                 │
+Apply/sd=5-4                    368.1m ± 0%   368.1m ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                   528.2m ± 0%   528.2m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    368.1m ± 0%   368.1m ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=50-4   528.2m ± 0%   528.2m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=1M/sd=5-4     368.1m ± 0%   368.1m ± 0%       ~ (p=0.474 n=10)
+ApplyDeep/resting=1M/sd=50-4    528.2m ± 0%   528.2m ± 0%       ~ (p=1.000 n=10)
+geomean                         440.9m        440.9m       +0.00%
+¹ all samples are equal
+
+                              │ before.txt │              after.txt              │
+                              │    B/op    │    B/op     vs base                 │
+Apply/sd=5-4                    73.00 ± 0%   73.00 ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                   70.00 ± 0%   70.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=5-4    55.00 ± 0%   55.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=50-4   61.00 ± 0%   61.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=5-4     55.00 ± 0%   55.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=50-4    61.00 ± 0%   61.00 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                         62.13        62.13       +0.00%
+¹ all samples are equal
+
+                              │  before.txt  │              after.txt              │
+                              │  allocs/op   │ allocs/op   vs base                 │
+Apply/sd=5-4                    0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                   0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=5-4    0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=50-4   0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=5-4     0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=50-4    0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                    ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean

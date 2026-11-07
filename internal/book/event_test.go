@@ -36,8 +36,8 @@ func TestEventKindString(t *testing.T) {
 func sampleEvents() map[string]Event {
 	return map[string]Event{
 		"accepted":           {Seq: 1, Timestamp: 10, Kind: EventAccepted, OrderID: 1, Side: Sell, Price: 100, Qty: 10},
-		"rested":             {Seq: 2, Timestamp: 10, Kind: EventRested, OrderID: 1, Side: Sell, Price: 100, Qty: 10, LevelSide: Sell, LevelQty: 10},
-		"trade":              {Seq: 4, Timestamp: 11, Kind: EventTrade, OrderID: 2, MakerID: 1, Side: Buy, Price: 100, Qty: 3, LevelSide: Sell, LevelQty: 7},
+		"rested":             {Seq: 2, Timestamp: 10, Kind: EventRested, OrderID: 1, Side: Sell, Price: 100, Qty: 10, LevelSide: Sell, LevelQty: 10, LevelOrders: 1},
+		"trade":              {Seq: 4, Timestamp: 11, Kind: EventTrade, OrderID: 2, MakerID: 1, Side: Buy, Price: 100, Qty: 3, LevelSide: Sell, LevelQty: 7, LevelOrders: 1},
 		"rejected":           {Seq: 5, Timestamp: 12, Kind: EventRejected, OrderID: 9, Reason: ReasonUnknownOrder},
 		"trade emptying":     {Seq: 9, Timestamp: 14, Kind: EventTrade, OrderID: 4, MakerID: 1, Side: Buy, Price: 100, Qty: 7, LevelSide: Sell, LevelQty: 0},
 		"canceled remainder": {Seq: 10, Timestamp: 14, Kind: EventCanceled, OrderID: 4, Side: Buy, Qty: 1, Reason: ReasonIOCRemainder},
@@ -83,8 +83,8 @@ func TestEventLevelUpdate(t *testing.T) {
 		ok   bool
 	}{
 		{"accepted", LevelUpdate{}, false},
-		{"rested", LevelUpdate{Side: Sell, Price: 100, Qty: 10}, true},
-		{"trade", LevelUpdate{Side: Sell, Price: 100, Qty: 7}, true},
+		{"rested", LevelUpdate{Side: Sell, Price: 100, Qty: 10, Orders: 1}, true},
+		{"trade", LevelUpdate{Side: Sell, Price: 100, Qty: 7, Orders: 1}, true},
 		{"rejected", LevelUpdate{}, false},
 		{"trade emptying", LevelUpdate{Side: Sell, Price: 100, Qty: 0}, true},
 		{"canceled remainder", LevelUpdate{}, false},

@@ -64,7 +64,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D011 Event sequences, level totals, and Seq
 - Date: 2026-11-04
-- Decision: A new order's event sequence is Rejected, or Accepted, zero or more Trades, then Rested or Canceled; a cancel produces Rejected or Canceled; a command of unknown kind produces `Rejected(invalid_command)`. Quantity conservation holds after the last event of each command. Events that change resting orders (Trade, Rested, and a Canceled that removes a resting order) carry the side of the affected level and its absolute total quantity after the event. Seq starts at 1 in each book and increases by 1 per event, rejections included; a Trade's Seq is its trade sequence number. Each WebSocket channel uses its own contiguous counter kept by the engine
+- Decision: A new order's event sequence is Rejected, or Accepted, zero or more Trades, then Rested or Canceled; a cancel produces Rejected or Canceled; a command of unknown kind produces `Rejected(invalid_command)`. Quantity conservation holds after the last event of each command. Events that change resting orders (Trade, Rested, and a Canceled that removes a resting order) carry the side of the affected level and its absolute total quantity after the event, and its order count since D035. Seq starts at 1 in each book and increases by 1 per event, rejections included; a Trade's Seq is its trade sequence number. Each WebSocket channel uses its own contiguous counter kept by the engine
 - Rationale: Quantity conservation can be checked from the event stream alone; only the book can obtain level totals cheaply, and with absolute values the engine can produce book_delta by keeping the last value per (side, price), without maintaining a second order book; a channel sees only some events, so using Seq directly would leave clients unable to tell a real gap from filtered events
 - Alternatives: a separate BookDelta event (more events, and one Qty field name with two meanings); events without level information (the engine would have to maintain a mirror of the book)
 
@@ -154,7 +154,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D026 WebSocket snapshots hold the whole book; the send backlog is bounded in bytes
 - Date: 2026-11-05
-- Decision: `book_snapshot` holds every level, so snapshot plus deltas always reproduces the book. Each connection's unsent messages are limited to 1 MB beyond the one being queued, and one message unsent for 10 s also marks a slow consumer (close 1008)
+- Decision: `book_snapshot` holds every level, so snapshot plus deltas always reproduces the book; deltas carry order counts since D035. Each connection's unsent messages are limited to 1 MB beyond the one being queued, and one message unsent for 10 s also marks a slow consumer (close 1008)
 - Rationale: With a capped snapshot, deltas for levels below the cap left the client's book incomplete. A byte bound keeps the memory a non-reading client can pin small even when snapshots are large
 - Alternatives: a capped snapshot with deltas filtered to the visible depth (the server tracks each client's window); a message-count bound only (a backlog of snapshots costs megabytes)
 
@@ -205,3 +205,9 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: Every action in `.github/workflows/ci.yml` is referenced by the full commit SHA of a release, with the release tag in a comment. Pins move to a new release only by hand. The pinned releases run on Node.js 24, which GitHub's runners now require
 - Rationale: A tag can be moved to other code; a SHA cannot. GitHub's security hardening guide and the OpenSSF Scorecard recommend full SHAs, and the Docker images are already pinned by digest (D032)
 - Alternatives: major tags such as `@v4` (follow whatever the tag points to)
+
+## D035 Level updates carry the level's order count
+- Date: 2026-11-07
+- Decision: `book.Event` has `LevelOrders uint32`, the order count of the level it changed, after the event, next to `LevelQty`. REST events carry it as `level_orders` and `book_delta` changes as `orders`, so deltas reproduce the `orders` of snapshots and REST depth. `LevelUpdate` gains `Orders`, and the level's own count becomes a `uint32`
+- Rationale: Snapshots and depth had order counts that deltas could not keep up, so snapshot plus deltas did not reproduce the book (D026). Bitfinex's book channel likewise sends the count in snapshots and updates. The field fills the 4 bytes of padding after Event's one-byte fields, so Event stays 64 bytes; BenchmarkApply and BenchmarkApplyDeep show no change (bench-results/level-orders). 2^32 orders on one level would need over 500 GB
+- Alternatives: dropping `orders` from snapshots and depth (loses information clients use); a client counting orders from the trade and order events (needs every event of the book, not the L2 channel)

@@ -32,9 +32,10 @@ type clientMessage struct {
 }
 
 type levelChange struct {
-	Side  string `json:"side"`
-	Price int64  `json:"price"`
-	Qty   int64  `json:"qty"`
+	Side   string `json:"side"`
+	Price  int64  `json:"price"`
+	Qty    int64  `json:"qty"`
+	Orders uint32 `json:"orders"`
 }
 
 // serverMessage is every message the server sends; fields a type does not
@@ -358,7 +359,7 @@ func tradeMessage(name string, e book.Event) serverMessage {
 // command changed, at its final total. ok is false if no level changed.
 func bookDelta(name string, evs []book.Event) (msg serverMessage, ok bool) {
 	var changes []levelChange
-	at := map[book.LevelUpdate]int{} // keyed by side and price, with Qty 0
+	at := map[book.LevelUpdate]int{} // keyed by side and price, with Qty and Orders 0
 	for _, e := range evs {
 		lu, changed := e.LevelUpdate()
 		if !changed {
@@ -366,11 +367,11 @@ func bookDelta(name string, evs []book.Event) (msg serverMessage, ok bool) {
 		}
 		key := book.LevelUpdate{Side: lu.Side, Price: lu.Price}
 		if i, seen := at[key]; seen {
-			changes[i].Qty = int64(lu.Qty)
+			changes[i].Qty, changes[i].Orders = int64(lu.Qty), lu.Orders
 			continue
 		}
 		at[key] = len(changes)
-		changes = append(changes, levelChange{Side: lu.Side.String(), Price: int64(lu.Price), Qty: int64(lu.Qty)})
+		changes = append(changes, levelChange{Side: lu.Side.String(), Price: int64(lu.Price), Qty: int64(lu.Qty), Orders: lu.Orders})
 	}
 	if len(changes) == 0 {
 		return serverMessage{}, false

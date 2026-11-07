@@ -74,10 +74,10 @@ The events of one command, in order, as defined in `internal/book/doc.go`:
 ```json
 { "seq": 7, "ts": 1730000000000000000, "type": "trade", "order_id": 2305,
   "maker_id": 1281, "side": "buy", "price": 6500000, "qty": 40,
-  "level_side": "sell", "level_qty": 0 }
+  "level_side": "sell", "level_qty": 0, "level_orders": 0 }
 ```
 
-`type` is `accepted`, `rejected`, `trade`, `rested` or `canceled`. Fields a type does not use are omitted, except that `level_qty` is present whenever `level_side` is.
+`type` is `accepted`, `rejected`, `trade`, `rested` or `canceled`. Fields a type does not use are omitted. An event that changed a price level carries `level_side`, `level_qty` and `level_orders`, the level's total quantity and order count after the event at `price`; the three are always present together, even when 0.
 
 ## Market data
 
@@ -105,12 +105,12 @@ Client messages:
 Data messages (`book_snapshot`, `book_delta`, `trade`) carry the `channel`, a `seq` that counts the subscription's data messages from 1 with no gaps (subscribing again starts a new count), and `book_seq`, the book event sequence number they reflect. `subscribed`, `unsubscribed` and `error` carry no `seq`; a `subscribed` acknowledgement comes before the channel's first data message.
 
 - `book_snapshot`: the first message of a `book:` channel, with every level in `bids` and `asks`.
-- `book_delta`: the levels one command changed, each with its new total quantity (0 removes the level): `"changes": [ { "side": "sell", "price": 6500100, "qty": 0 } ]`.
+- `book_delta`: the levels one command changed, each with its new total quantity and order count (0 removes the level): `"changes": [ { "side": "sell", "price": 6500100, "qty": 0, "orders": 0 } ]`.
 - `trade`: one execution, with `price`, `qty`, `taker_side`, `taker_order_id`, `maker_order_id` and `ts`.
 - `subscribed` and `unsubscribed`: acknowledge a channel.
 - `error`: a bad message, with `code` and `message`; the connection stays open.
 
-A snapshot followed by its deltas reproduces the book. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages, or one message unsent for 10 s) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
+A snapshot followed by its deltas reproduces the book's levels, order counts included. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages, or one message unsent for 10 s) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
 
 ## Operations
 

@@ -47,8 +47,8 @@ func ExampleEvent_LevelUpdate() {
 	events := []book.Event{
 		{Seq: 7, Kind: book.EventAccepted, OrderID: 9, Side: book.Buy, Price: 101, Qty: 15},
 		{Seq: 8, Kind: book.EventTrade, OrderID: 9, MakerID: 1, Side: book.Buy, Price: 100, Qty: 10, LevelSide: book.Sell, LevelQty: 0},
-		{Seq: 9, Kind: book.EventTrade, OrderID: 9, MakerID: 2, Side: book.Buy, Price: 101, Qty: 3, LevelSide: book.Sell, LevelQty: 5},
-		{Seq: 10, Kind: book.EventTrade, OrderID: 9, MakerID: 3, Side: book.Buy, Price: 101, Qty: 2, LevelSide: book.Sell, LevelQty: 3},
+		{Seq: 9, Kind: book.EventTrade, OrderID: 9, MakerID: 2, Side: book.Buy, Price: 101, Qty: 3, LevelSide: book.Sell, LevelQty: 5, LevelOrders: 1},
+		{Seq: 10, Kind: book.EventTrade, OrderID: 9, MakerID: 3, Side: book.Buy, Price: 101, Qty: 2, LevelSide: book.Sell, LevelQty: 3, LevelOrders: 1},
 	}
 
 	var deltas []book.LevelUpdate
@@ -66,12 +66,12 @@ func ExampleEvent_LevelUpdate() {
 		}
 	}
 	for _, d := range deltas {
-		fmt.Printf("book_delta: %v %d -> %d\n", d.Side, d.Price, d.Qty)
+		fmt.Printf("book_delta: %v %d -> qty %d, orders %d\n", d.Side, d.Price, d.Qty, d.Orders)
 	}
 	// Output:
 	// trade #8: buy 10 @ 100, taker 9, maker 1
 	// trade #9: buy 3 @ 101, taker 9, maker 2
 	// trade #10: buy 2 @ 101, taker 9, maker 3
-	// book_delta: sell 100 -> 0
-	// book_delta: sell 101 -> 3
+	// book_delta: sell 100 -> qty 0, orders 0
+	// book_delta: sell 101 -> qty 3, orders 1
 }

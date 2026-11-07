@@ -27,7 +27,7 @@ func queueIDs(t *testing.T, l *levelNode) []OrderID {
 	if l.tail != prev {
 		t.Fatal("tail is not the last order")
 	}
-	if l.count != len(ids) || l.totalQty != total {
+	if int(l.count) != len(ids) || l.totalQty != total {
 		t.Fatalf("count, totalQty = %d, %d; queue holds %d orders totalling %d", l.count, l.totalQty, len(ids), total)
 	}
 	return ids

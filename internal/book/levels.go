@@ -44,7 +44,7 @@ package book
 type priceLevel struct {
 	price      Price
 	totalQty   Qty        // sum of Remaining over the level's orders
-	count      int        // number of orders in the queue
+	count      uint32     // number of orders in the queue; 2^32 orders would need over 500 GB
 	head, tail *orderNode // oldest and newest order; nil when the level is empty
 }
 

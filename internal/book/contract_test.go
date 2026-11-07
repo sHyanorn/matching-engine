@@ -69,7 +69,7 @@ func TestLayout(t *testing.T) {
 		{"Event", unsafe.Sizeof(Event{}), 64},
 		{"Order", unsafe.Sizeof(Order{}), 64},
 		{"Trade", unsafe.Sizeof(Trade{}), 56},
-		{"LevelUpdate", unsafe.Sizeof(LevelUpdate{}), 24},
+		{"LevelUpdate", unsafe.Sizeof(LevelUpdate{}), 32},
 	}
 	for _, tt := range tests {
 		if tt.got != tt.want {
@@ -106,7 +106,7 @@ func assertPlainData(t *testing.T, typ reflect.Type, path string) {
 			f := typ.Field(i)
 			assertPlainData(t, f.Type, path+"."+f.Name)
 		}
-	case reflect.Uint8, reflect.Uint64, reflect.Int64:
+	case reflect.Uint8, reflect.Uint32, reflect.Uint64, reflect.Int64:
 	default:
 		t.Errorf("%s has kind %s; only fixed-size integers are allowed", path, typ.Kind())
 	}
