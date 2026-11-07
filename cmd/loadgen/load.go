@@ -149,20 +149,20 @@ send:
 	if err := ctx.Err(); err != nil {
 		return report{}, err
 	}
-	replied := 0
+	var replied tradeSum
 	for _, w := range workers {
-		replied += w.trades.n
+		replied = replied.plus(w.trades)
 	}
 	wait := cfg.pushWait
 	if wait == 0 {
 		wait = 5 * time.Second
 	}
-	missing := l.join.wait(wait, &l.tape.pushed, replied)
+	missing := l.join.wait(wait, &l.tape.pushed, replied.n)
 	closing.Store(true)
 	_ = stream.Close(websocket.StatusNormalClosure, "")
 	err = <-streamErr // the reader has stopped: l.tape is final
 	tradesAfter, metricsErrAfter := l.tradesTotal(ctx)
-	r := l.report(workers, missing, err, tradesAfter-tradesBefore, errors.Join(metricsErr, metricsErrAfter))
+	r := l.report(workers, replied, missing, err, tradesAfter-tradesBefore, errors.Join(metricsErr, metricsErrAfter))
 	r.Latency["hiccup"] = summarize(<-hiccups)
 	return r, nil
 }

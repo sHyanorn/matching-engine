@@ -247,14 +247,13 @@ func (t *tradeJoin) wait(timeout time.Duration, pushed *atomic.Int64, trades int
 // report gathers the workers' results. A run is valid only if the target
 // rate was met, every request succeeded, and every trade was pushed once
 // and in order (check.go).
-func (l *loader) report(workers []*worker, missing int, streamErr error, rose int, metricsErr error) report {
+func (l *loader) report(workers []*worker, replied tradeSum, missing int, streamErr error, rose int, metricsErr error) report {
 	r := report{
 		Symbol: l.cfg.symbol, TargetRate: l.cfg.rate, Warmup: l.cfg.warmup.Seconds(), Duration: l.cfg.duration.Seconds(),
 		Conns: l.cfg.conns, Seed: l.cfg.seed, SD: l.cfg.sd, Go: runtime.Version(), CPUs: runtime.NumCPU(),
 		Outcomes: map[string]int{},
 	}
 	var sent int
-	var replied tradeSum
 	var firstErr string
 	var reply, service, lag []int64
 	for _, w := range workers {
@@ -262,8 +261,6 @@ func (l *loader) report(workers []*worker, missing int, streamErr error, rose in
 			r.Outcomes[k] += n
 		}
 		sent += w.sent
-		replied.n += w.trades.n
-		replied.sum += w.trades.sum
 		if firstErr == "" {
 			firstErr = w.firstErr
 		}
@@ -284,14 +281,15 @@ func (l *loader) report(workers []*worker, missing int, streamErr error, rose in
 	if streamErr != nil {
 		r.Problems = append(r.Problems, fmt.Sprintf("trade stream ended: %v", streamErr))
 	}
-	pushed := &l.tape
-	r.Trades = tradeCounts{Replies: replied.n, Pushes: pushed.n, Metric: rose}
+	tp := &l.tape
+	pushed := int(tp.pushed.Load())
+	r.Trades = tradeCounts{Replies: replied.n, Pushes: pushed, Metric: rose}
 	switch {
-	case pushed.problem != "":
-		r.Problems = append(r.Problems, pushed.problem)
-	case pushed.n != replied.n:
-		r.Problems = append(r.Problems, fmt.Sprintf("%d trade pushes for %d trades in the replies", pushed.n, replied.n))
-	case pushed.sum != replied.sum:
+	case tp.problem != "":
+		r.Problems = append(r.Problems, tp.problem)
+	case pushed != replied.n:
+		r.Problems = append(r.Problems, fmt.Sprintf("%d trade pushes for %d trades in the replies", pushed, replied.n))
+	case tp.sum != replied.sum:
 		r.Problems = append(r.Problems, "the trade pushes differ from the trades in the replies")
 	}
 	switch {

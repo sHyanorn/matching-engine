@@ -51,11 +51,14 @@ func (s *tradeSum) add(t trade) {
 	s.sum += t.hash()
 }
 
+// plus returns the count and sum of the trades in s and o.
+func (s tradeSum) plus(o tradeSum) tradeSum { return tradeSum{s.n + o.n, s.sum + o.sum} }
+
 // tape checks the trade pushes as they arrive. Only the stream reader
 // touches it, except pushed, which the run polls while it waits.
 type tape struct {
-	tradeSum
 	pushed  atomic.Int64
+	sum     uint64 // of the pushes' hashes
 	seq     uint64 // of the last push
 	bookSeq uint64 // of the last push
 	problem string // the first push out of sequence
@@ -71,7 +74,7 @@ func (t *tape) push(seq uint64, tr trade) {
 		t.problem = fmt.Sprintf("trade push book_seq %d after %d", tr.bookSeq, t.bookSeq)
 	}
 	t.seq, t.bookSeq = seq, tr.bookSeq
-	t.add(tr)
+	t.sum += tr.hash()
 	t.pushed.Add(1)
 }
 
