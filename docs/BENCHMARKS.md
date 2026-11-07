@@ -1,6 +1,6 @@
 # Benchmarks
 
-Every number here comes from one machine and can be measured again with the commands at the end. The raw results are in [`bench-results/`](../bench-results).
+Every number here comes from 4 vCPU cloud VMs of one type and can be measured again with the commands at the end. VMs of this type differ in speed, so each section names the results it comes from, and only results from one sweep or one benchmark run compare with each other. The raw results are in [`bench-results/`](../bench-results).
 
 **Machine**: a cloud VM with an Intel Xeon at 2.10 GHz, 4 vCPUs and 16 GB, Linux 6.18 on ext4, Go 1.24.7. In the end-to-end runs the load generator and the engine share the 4 vCPUs.
 
@@ -49,7 +49,7 @@ Latency from order to trade push, in ms ([`bench-results/e2e-review/default`](..
 - **Capacity.** At 60k requests/s the two processes use up the 4 vCPUs: loadgen sent 1.5% too few requests and fell so far behind on the trade stream that the engine disconnected it as a slow consumer. The engine alone takes about 2 cores at 50k/s. The SPEC target, a p99 under 5 ms at 50,000 orders/s (about 71k requests/s in this flow), is out of reach on this machine; the p99 is under 5 ms up to 15k requests/s.
 - **Engine CPU per request** is the process's CPU time over the run divided by the requests it answered. It falls as the rate rises because the fixed costs, from idle wakeups to GC, are shared by more requests.
 - **The tail** above p99 depends on single pauses. The hiccup meter runs no engine code, yet it saw pauses of up to 53 ms, in the 25k/s run with a 10.3 ms p99. This cloud VM stalls now and then for up to about 128 ms, as one earlier 10k/s run recorded ([`after-fsync`](../bench-results/m5-e2e/after-fsync)). The spread between runs at one rate shows how far to trust a single run.
-- **An earlier sweep** of the same code on a VM of the same type ([`after-fsync`](../bench-results/m5-e2e/after-fsync)) gave a p99 of 3.82 ms at 10k/s and was invalid at 40k/s. That VM ran `BenchmarkApply` in 224 ns per command against 147 ns on this one ([`level-orders`](../bench-results/level-orders/before.txt)), so most of the difference is the machine. The sweeps under Optimizations ran there and compare only with each other.
+- **An earlier sweep** at an earlier commit ([`after-fsync`](../bench-results/m5-e2e/after-fsync), 8862f98, before D035 and D036) gave a p99 of 3.82 ms at 10k/s and was invalid at 40k/s, on another VM of this type. The core table above also comes from an earlier VM: `BenchmarkApply` took 224 ns per command there ([`m5-core`](../bench-results/m5-core/baseline.txt)) and 147 ns on the VM of this sweep ([`level-orders`](../bench-results/level-orders/before.txt)). So VMs of this type differ by up to half, and the sweeps under Optimizations compare only with each other.
 
 ### An fsync before every reply
 
@@ -67,8 +67,8 @@ With `-sync-interval=-1ns` the engine fsyncs each batch before it replies, so a 
 
 ![Latency by percentile at 20k/s, fsync every 10 ms against before every reply](img/latency-durability.svg)
 
-- An fsync on this VM's disk takes 0.16 ms on average. Every command of a batch waits for it, so the p50 rises by 0.3 to 0.6 ms and the p99 by 1 to 10 ms up to 30k/s.
-- The fsyncs group commands: at 10k/s about 5,400 batches a second were synced, at 30k/s about 3,800, each holding about 8 requests. At 30k/s the symbol's goroutine spends about three quarters of its time in fsync, and at 40k/s it falls behind: the runs stay valid, as no request failed, but requests queue for a quarter of a second.
+- An fsync on this VM's disk takes 0.16 ms on average at 10k/s and up to 0.26 ms at 40k/s, as the batches it syncs grow. Every command of a batch waits for it, so the p50 rises by 0.3 to 0.6 ms and the p99 by 1 to 10 ms up to 30k/s.
+- The fsyncs group commands: at 10k/s about 5,400 batches a second were synced, about 2 requests each, and at 30k/s about 3,800, about 8 requests each. At 30k/s the symbol's goroutine spends about three quarters of its time in fsync, and at 40k/s it falls behind: the runs stay valid, as no request failed, but requests queue for a quarter of a second.
 - The interval fsync bounds what a machine crash loses to one interval of commands, plus those taken during an fsync still running (D031), and costs little; an fsync per batch loses nothing acknowledged and costs latency at every rate, and capacity from 40k/s. On a disk with slower fsyncs, such as the Windows runners' system disk below, the cost grows with the fsync time.
 
 ## Where the time goes

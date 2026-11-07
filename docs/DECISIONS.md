@@ -209,7 +209,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 ## D035 Level updates carry the level's order count
 - Date: 2026-11-07
 - Decision: `book.Event` has `LevelOrders uint32`, the order count of the level it changed, after the event, next to `LevelQty`. REST events carry it as `level_orders` and `book_delta` changes as `orders`, so deltas reproduce the `orders` of snapshots and REST depth. `LevelUpdate` gains `Orders`, and the level's own count becomes a `uint32`
-- Rationale: Snapshots and depth had order counts that deltas could not keep up, so snapshot plus deltas did not reproduce the book (D026). Bitfinex's book channel likewise sends the count in snapshots and updates. The field fills the 4 bytes of padding after Event's one-byte fields, so Event stays 64 bytes; BenchmarkApply and BenchmarkApplyDeep show no change (bench-results/level-orders). 2^32 orders on one level would need over 500 GB
+- Rationale: Snapshots and depth had order counts that deltas could not keep up, so snapshot plus deltas did not reproduce the book (D026). Bitfinex's book channel likewise sends the count in snapshots and updates. The field fills the 4 bytes of padding after Event's one-byte fields, so Event stays 64 bytes; BenchmarkApply and BenchmarkApplyDeep show no slowdown (bench-results/level-orders). 2^32 orders on one level would need over 500 GB
 - Alternatives: dropping `orders` from snapshots and depth (loses information clients use); a client counting orders from the trade and order events (needs every event of the book, not the L2 channel)
 
 ## D036 loadgen checks every trade push

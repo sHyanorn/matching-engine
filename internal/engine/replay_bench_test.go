@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -98,5 +99,8 @@ func TestReplayOfFlowLog(t *testing.T) {
 	}
 	if events != wantEvents || d.LastSeq != want.LastSeq() {
 		t.Errorf("replay gave %d events up to seq %d, want %d up to %d", events, d.LastSeq, wantEvents, want.LastSeq())
+	}
+	if wb, wa := want.Depth(book.Buy, 1000, nil), want.Depth(book.Sell, 1000, nil); !slices.Equal(d.Bids, wb) || !slices.Equal(d.Asks, wa) || len(wb) == 0 || len(wa) == 0 {
+		t.Errorf("replayed book\nbids %v\nasks %v\nwant\nbids %v\nasks %v", d.Bids, d.Asks, wb, wa)
 	}
 }

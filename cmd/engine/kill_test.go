@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -44,8 +46,28 @@ type process struct {
 }
 
 // startProcess runs the engine binary on dir and waits for its listening
-// line. The process is killed when the test ends, if it still runs.
+// line. An engine that finds dir still locked is started again: Windows
+// releases the lock of a killed process some time after it exits. The
+// process is killed when the test ends, if it still runs, and its stderr
+// logged if the test failed.
 func startProcess(t *testing.T, bin, dir string) *process {
+	t.Helper()
+	for deadline := time.Now().Add(waitFor); ; time.Sleep(50 * time.Millisecond) {
+		p, line := tryStart(t, bin, dir)
+		if addr, ok := strings.CutPrefix(strings.TrimSpace(line), "listening on "); ok {
+			p.base = "http://" + addr
+			return p
+		}
+		p.kill(t) // it has exited, or it hangs before listening
+		if !strings.Contains(p.stderr.String(), "in use by another engine") || time.Now().After(deadline) {
+			t.Fatalf("stdout %q, want \"listening on HOST:PORT\"", line)
+		}
+	}
+}
+
+// tryStart starts the engine and returns its first line of stdout, or what
+// it wrote before it exited or waitFor passed.
+func tryStart(t *testing.T, bin, dir string) (*process, string) {
 	t.Helper()
 	p := &process{cmd: exec.Command(bin, "-addr", "127.0.0.1:0", "-data", dir, "-symbols", symbol)}
 	p.cmd.Stderr = &p.stderr
@@ -56,7 +78,12 @@ func startProcess(t *testing.T, bin, dir string) *process {
 	if err := p.cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { p.kill(t) })
+	t.Cleanup(func() {
+		p.kill(t)
+		if t.Failed() {
+			t.Logf("stderr of engine %d:\n%s", p.cmd.Process.Pid, &p.stderr)
+		}
+	})
 	lines := make(chan string, 1)
 	go func() {
 		br := bufio.NewReader(stdout)
@@ -66,15 +93,10 @@ func startProcess(t *testing.T, bin, dir string) *process {
 	}()
 	select {
 	case line := <-lines:
-		addr, ok := strings.CutPrefix(strings.TrimSpace(line), "listening on ")
-		if !ok {
-			t.Fatalf("stdout %q, want \"listening on HOST:PORT\"", line)
-		}
-		p.base = "http://" + addr
+		return p, line
 	case <-time.After(waitFor):
-		t.Fatalf("no listening line within %v", waitFor)
+		return p, ""
 	}
-	return p
 }
 
 // kill ends the process at once, as a crash would: SIGKILL on Unix,
@@ -85,7 +107,7 @@ func (p *process) kill(t *testing.T) {
 	if p.cmd.ProcessState != nil {
 		return
 	}
-	if err := p.cmd.Process.Kill(); err != nil {
+	if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		t.Errorf("kill: %v", err)
 	}
 	_ = p.cmd.Wait() // reports the kill
@@ -313,9 +335,5 @@ func TestKillUnderLoad(t *testing.T) {
 	}
 	if slices.ContainsFunc(issued, func(r orderReply) bool { return r.Order.OrderID == fresh.Order.OrderID }) {
 		t.Errorf("new order after restart reuses ID %d", fresh.Order.OrderID)
-	}
-	second.kill(t)
-	if t.Failed() {
-		t.Logf("first engine's stderr:\n%s\nsecond engine's stderr:\n%s", &first.stderr, &second.stderr)
 	}
 }

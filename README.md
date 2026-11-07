@@ -6,7 +6,7 @@ A limit order book matching engine in Go: price-time priority matching, REST and
 
 ## Highlights
 
-Measured on a 4 vCPU cloud VM; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Measured on 4 vCPU cloud VMs of one type, which differ in speed; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Metric | Value |
 |---|---|
