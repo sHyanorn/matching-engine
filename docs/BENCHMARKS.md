@@ -19,7 +19,7 @@ Every number here comes from one machine and can be measured again with the comm
 
 The SPEC target of 1M operations per second on one symbol holds with 3 to 4.5 times to spare. Go's `allocs/op` prints 0 for these runs because it rounds down; `allocs/cmd` keeps the fraction. An order that rests allocates its node, a new price level its tree node, and the ID map grows now and then.
 
-**Memory**: 1,000,000 resting orders on 1,000 price levels per side hold 127.7 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`).
+**Memory**: in the matching core alone, 1,000,000 resting orders on 1,000 price levels per side hold 127.7 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`). The engine process holds more, among it the status of every resting order and of the last 100,000 finished ones per symbol (D022).
 
 ## End to end
 

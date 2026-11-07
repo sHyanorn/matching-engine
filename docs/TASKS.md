@@ -54,5 +54,5 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] loadgen checks every trade push: none missing, duplicated or out of order
 - [x] Recovery test that kills the engine under load and restarts it
 - [x] Benchmark replay of the command log
-- [ ] Tighten README and API wording to match the implementation
+- [x] Tighten README and API wording to match the implementation
 - [ ] Rerun the end-to-end sweep, and a sweep with an fsync per batch
