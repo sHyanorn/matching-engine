@@ -52,7 +52,7 @@ Check off each item when it is done. All tests must pass at the end of every mil
 ## Review follow-ups
 - [x] `book_delta` and REST events carry each changed level's order count
 - [x] loadgen checks every trade push: none missing, duplicated or out of order
-- [ ] Recovery test that kills the engine under load and restarts it
+- [x] Recovery test that kills the engine under load and restarts it
 - [ ] Benchmark replay of the command log
 - [ ] Tighten README and API wording to match the implementation
 - [ ] Rerun the end-to-end sweep, and a sweep with an fsync per batch
