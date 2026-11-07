@@ -34,7 +34,7 @@ A `log_failed` reply to `POST` or `DELETE` that also holds `order` (when there i
 - `side`: `buy` or `sell`. `type`: `limit` or `market`.
 - `tif`: `gtc`, `ioc` or `fok`; optional, defaulting to `gtc` for limit orders and `ioc` for market orders.
 - `price`: required for limit orders, omitted or 0 for market orders.
-- `client_id`: optional, at most 64 bytes, echoed back in order status.
+- `client_id`: optional, at most 64 bytes, echoed back in order status. It is not checked for uniqueness: a retried request places a second order.
 - The body is one JSON object. Field names are case-sensitive; unknown and repeated fields are rejected.
 
 `200 OK` once the order has been matched, with the order's status and the events it produced:
