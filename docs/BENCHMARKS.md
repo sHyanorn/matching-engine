@@ -31,22 +31,45 @@ Method ([D030](DECISIONS.md)):
 - A 1 ms sleep loop in loadgen records pauses of the generator and the machine (hiccups, after jHiccup).
 - More connections than the load needs only add work on both sides: at 15k/s, 512 connections gave a p99 of 11.2 ms against 7.26 ms with 64 ([`conns-64`](../bench-results/m5-e2e/conns-64), [`conns-512`](../bench-results/m5-e2e/conns-512)).
 
-Latency from order to trade push, in ms, after the optimizations below ([`bench-results/m5-e2e/after-fsync`](../bench-results/m5-e2e/after-fsync)):
+Latency from order to trade push, in ms ([`bench-results/e2e-review/default`](../bench-results/e2e-review/default)):
 
 | Requests/s | Valid runs | p50 | p90 | p99 | p99.9 | max | p99 of each run | Engine CPU per request | Worst hiccup |
 |---|---|---|---|---|---|---|---|---|---|
-| 10k/s | 3 of 3 | 0.30 | 0.57 | 3.82 | 11.2 | 18.0 | 3.81, 3.82, 7.68 | 131 µs | 6 ms |
-| 15k/s | 3 of 3 | 0.35 | 1.10 | 7.41 | 12.5 | 16.6 | 7.24, 7.41, 7.81 | 105 µs | 10 ms |
-| 20k/s | 3 of 3 | 0.39 | 2.42 | 11.6 | 19.2 | 29.5 | 11.5, 11.6, 11.7 | 84 µs | 11 ms |
-| 25k/s | 3 of 3 | 0.56 | 6.28 | 19.8 | 28.2 | 37.3 | 19.6, 19.8, 28.7 | 71 µs | 12 ms |
-| 30k/s | 3 of 3 | 0.98 | 15.8 | 42.3 | 92.7 | 103.0 | 40.2, 42.3, 47.7 | 62 µs | 50 ms |
-| 40k/s | 0 of 1 | | | | | | sent 39.2k/s | | |
+| 10k/s | 3 of 3 | 0.20 | 0.82 | 1.76 | 5.96 | 9.33 | 1.73, 1.76, 1.89 | 95 µs | 6 ms |
+| 15k/s | 3 of 3 | 0.18 | 0.33 | 3.37 | 7.35 | 12.5 | 3.16, 3.37, 3.44 | 82 µs | 8 ms |
+| 20k/s | 3 of 3 | 0.19 | 0.37 | 5.14 | 8.96 | 13.5 | 5.03, 5.14, 5.57 | 70 µs | 7 ms |
+| 25k/s | 3 of 3 | 0.20 | 0.51 | 7.41 | 11.9 | 19.0 | 7.10, 7.41, 10.3 | 62 µs | 53 ms |
+| 30k/s | 3 of 3 | 0.22 | 1.64 | 10.7 | 22.6 | 31.9 | 10.6, 10.7, 10.9 | 54 µs | 12 ms |
+| 40k/s | 3 of 3 | 0.32 | 7.24 | 22.7 | 28.7 | 36.5 | 21.5, 22.7, 24.3 | 45 µs | 15 ms |
+| 50k/s | 3 of 3 | 0.98 | 21.2 | 41.1 | 48.5 | 53.7 | 40.0, 41.1, 43.4 | 39 µs | 22 ms |
+| 60k/s | 0 of 1 | | | | | | sent 59.1k/s | | |
 
 ![p50, p99 and p99.9 by load](img/latency-by-load.svg)
 
-- **Capacity.** Near 40k requests/s the two processes use up the 4 vCPUs; the engine alone takes about 1.8 cores at 25k/s. So the SPEC target, a p99 under 5 ms at 50,000 orders/s (about 71k requests/s in this flow), is out of reach on this machine. The p99 is under 5 ms at 10k requests/s.
+- **Capacity.** At 60k requests/s the two processes use up the 4 vCPUs: loadgen sent 1.5% too few requests and fell so far behind on the trade stream that the engine disconnected it as a slow consumer. The engine alone takes about 2 cores at 50k/s. The SPEC target, a p99 under 5 ms at 50,000 orders/s (about 71k requests/s in this flow), is out of reach on this machine; the p99 is under 5 ms up to 15k requests/s.
 - **Engine CPU per request** is the process's CPU time over the run divided by the requests it answered. It falls as the rate rises because the fixed costs, from idle wakeups to GC, are shared by more requests.
-- **The tail** above p99 depends on single pauses. The hiccup meter runs no engine code, yet it saw pauses of up to 50 ms; the 10k/s run with a 7.68 ms p99 had one of 128 ms. The spread between runs at one rate shows how far to trust a single run.
+- **The tail** above p99 depends on single pauses. The hiccup meter runs no engine code, yet it saw pauses of up to 53 ms, in the 25k/s run with a 10.3 ms p99. This cloud VM stalls now and then for up to about 128 ms, as one earlier 10k/s run recorded ([`after-fsync`](../bench-results/m5-e2e/after-fsync)). The spread between runs at one rate shows how far to trust a single run.
+- **An earlier sweep** of the same code on a VM of the same type ([`after-fsync`](../bench-results/m5-e2e/after-fsync)) gave a p99 of 3.82 ms at 10k/s and was invalid at 40k/s. That VM ran `BenchmarkApply` in 224 ns per command against 147 ns on this one ([`level-orders`](../bench-results/level-orders/before.txt)), so most of the difference is the machine. The sweeps under Optimizations ran there and compare only with each other.
+
+### An fsync before every reply
+
+With `-sync-interval=-1ns` the engine fsyncs each batch before it replies, so a machine crash loses no acknowledged command either ([`bench-results/e2e-review/fsync-each-batch`](../bench-results/e2e-review/fsync-each-batch)):
+
+| Requests/s | Valid runs | p50 | p90 | p99 | p99.9 | max | p99 of each run | Engine CPU per request |
+|---|---|---|---|---|---|---|---|---|
+| 10k/s | 3 of 3 | 0.48 | 0.72 | 2.81 | 15.6 | 37.3 | 2.57, 2.81, 3.33 | 115 µs |
+| 15k/s | 3 of 3 | 0.53 | 0.85 | 4.85 | 9.54 | 15.2 | 3.95, 4.85, 5.70 | 86 µs |
+| 20k/s | 3 of 3 | 0.58 | 1.07 | 7.99 | 12.4 | 17.6 | 7.39, 7.99, 8.66 | 70 µs |
+| 25k/s | 3 of 3 | 0.72 | 3.50 | 14.5 | 20.6 | 24.8 | 12.7, 14.5, 14.6 | 62 µs |
+| 30k/s | 3 of 3 | 0.83 | 6.17 | 21.2 | 31.7 | 41.8 | 20.9, 21.2, 28.7 | 54 µs |
+| 40k/s | 3 of 3 | 63.7 | 212 | 254 | 267 | 270 | 67.4, 254, 296 | 44 µs |
+| 50k/s | 0 of 1 | | | | | | sent 38.2k/s | |
+
+![Latency by percentile at 20k/s, fsync every 10 ms against before every reply](img/latency-durability.svg)
+
+- An fsync on this VM's disk takes 0.16 ms on average. Every command of a batch waits for it, so the p50 rises by 0.3 to 0.6 ms and the p99 by 1 to 10 ms up to 30k/s.
+- The fsyncs group commands: at 10k/s about 5,400 batches a second were synced, at 30k/s about 3,800, each holding about 8 requests. At 30k/s the symbol's goroutine spends about three quarters of its time in fsync, and at 40k/s it falls behind: the runs stay valid, as no request failed, but requests queue for a quarter of a second.
+- The interval fsync bounds what a machine crash loses to one interval of commands, plus those taken during an fsync still running (D031), and costs little; an fsync per batch loses nothing acknowledged and costs latency at every rate, and capacity from 40k/s. On a disk with slower fsyncs, such as the Windows runners' system disk below, the cost grows with the fsync time.
 
 ## Where the time goes
 
@@ -58,7 +81,7 @@ Reading and writing HTTP takes the largest share, about 19% in system calls alon
 
 ## Optimizations
 
-Each change was measured with the full sweep above; [`bench-results/m5-e2e`](../bench-results/m5-e2e) holds the three sweeps.
+Each change was measured with the full sweep above, on the earlier VM; [`bench-results/m5-e2e`](../bench-results/m5-e2e) holds the three sweeps.
 
 | Requests/s | p99 before | Keys scanned | And fsync aside | Engine CPU per request |
 |---|---|---|---|---|
@@ -116,7 +139,12 @@ make e2e OUT=bench-results/e2e
 ```
 
 ```bash
+ENGINE_FLAGS=-sync-interval=-1ns make e2e OUT=bench-results/e2e-fsync
+```
+
+```bash
 python3 scripts/plot.py sweep docs/img/latency-by-load.svg bench-results/e2e
+python3 scripts/plot.py percentiles docs/img/latency-durability.svg 20000 "fsync every 10 ms=bench-results/e2e" "fsync before every reply=bench-results/e2e-fsync"
 ```
 
 The engine serves profiles with `-pprof`, for example `go run ./cmd/engine -pprof 127.0.0.1:6060`, then `go tool pprof -http=: 'http://127.0.0.1:6060/debug/pprof/profile?seconds=10'` while loadgen runs.

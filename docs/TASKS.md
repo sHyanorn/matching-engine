@@ -55,4 +55,4 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Recovery test that kills the engine under load and restarts it
 - [x] Benchmark replay of the command log
 - [x] Tighten README and API wording to match the implementation
-- [ ] Rerun the end-to-end sweep, and a sweep with an fsync per batch
+- [x] Rerun the end-to-end sweep, and a sweep with an fsync per batch
