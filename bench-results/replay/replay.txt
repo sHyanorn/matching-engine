@@ -1,0 +1,19 @@
+# BenchmarkReplay (internal/engine/replay_bench_test.go): engine.New and Close on a log of 1M flow commands
+# at the commit that adds this file; go1.24.7 linux/amd64; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPU cloud VM, ext4
+# command: go test -run='^$' -bench='^BenchmarkReplay$' -benchmem -count=10 ./internal/engine
+# ns/op and B/op are per start; cmds/s and ns/cmd per replayed command; bytes/cmd is the log size per command (no client_id).
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkReplay-4   	       2	 521574704 ns/op	        45.00 bytes/cmd	   1917271 cmds/s	       521.6 ns/cmd	187706964 B/op	 1295924 allocs/op
+BenchmarkReplay-4   	       2	 527308005 ns/op	        45.00 bytes/cmd	   1896425 cmds/s	       527.3 ns/cmd	187965252 B/op	 1295954 allocs/op
+BenchmarkReplay-4   	       2	 570208679 ns/op	        45.00 bytes/cmd	   1753744 cmds/s	       570.2 ns/cmd	187835836 B/op	 1295939 allocs/op
+BenchmarkReplay-4   	       2	 558140302 ns/op	        45.00 bytes/cmd	   1791664 cmds/s	       558.1 ns/cmd	187891180 B/op	 1295944 allocs/op
+BenchmarkReplay-4   	       2	 537955992 ns/op	        45.00 bytes/cmd	   1858888 cmds/s	       538.0 ns/cmd	187817396 B/op	 1295936 allocs/op
+BenchmarkReplay-4   	       2	 530921016 ns/op	        45.00 bytes/cmd	   1883519 cmds/s	       530.9 ns/cmd	187798980 B/op	 1295935 allocs/op
+BenchmarkReplay-4   	       2	 518797062 ns/op	        45.00 bytes/cmd	   1927536 cmds/s	       518.8 ns/cmd	187651340 B/op	 1295920 allocs/op
+BenchmarkReplay-4   	       2	 557290300 ns/op	        45.00 bytes/cmd	   1794397 cmds/s	       557.3 ns/cmd	187725076 B/op	 1295926 allocs/op
+BenchmarkReplay-4   	       2	 518162522 ns/op	        45.00 bytes/cmd	   1929896 cmds/s	       518.2 ns/cmd	187854372 B/op	 1295941 allocs/op
+BenchmarkReplay-4   	       2	 568184563 ns/op	        45.00 bytes/cmd	   1759991 cmds/s	       568.2 ns/cmd	187448164 B/op	 1295897 allocs/op
+PASS
