@@ -77,6 +77,9 @@ func TestMeasure(t *testing.T) {
 	if n := r.Latency["trade_push"].Count; n != r.Outcomes["order_traded"] {
 		t.Errorf("%d trade push samples, want one per order that traded, %d", n, r.Outcomes["order_traded"])
 	}
+	if tc := r.Trades; tc.Replies < r.Outcomes["order_traded"] || tc.Pushes != tc.Replies || tc.Metric != tc.Replies {
+		t.Errorf("trades %+v, want equal counts, at least one per order that traded (%d)", tc, r.Outcomes["order_traded"])
+	}
 }
 
 // A stall of the book's goroutine delays every request due during it, not

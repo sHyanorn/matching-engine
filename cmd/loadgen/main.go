@@ -4,7 +4,8 @@
 // Latency counts from the time each request was due, so it covers the
 // whole path from a REST order to the trade push on the WebSocket, and any
 // wait for a free connection. A run is valid only if the target rate was
-// met and every request succeeded; loadgen exits with an error otherwise.
+// met, every request succeeded and every trade was pushed once and in
+// order (check.go); loadgen exits with an error otherwise.
 package main
 
 import (
@@ -109,6 +110,7 @@ func printReport(w io.Writer, r report) error {
 	fmt.Fprintf(&b, "%s: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, %d connections\n",
 		r.Symbol, r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Conns)
 	fmt.Fprintf(&b, "%s\n", strings.Join(counts, ", "))
+	fmt.Fprintf(&b, "trades: %d in replies, %d pushed, counter rose %d\n", r.Trades.Replies, r.Trades.Pushes, r.Trades.Metric)
 	fmt.Fprintf(&b, "%-20s %9s %8s %8s %8s %8s %8s %8s\n", "latency (µs)", "count", "p50", "p90", "p99", "p99.9", "p99.99", "max")
 	for _, row := range latencyRows {
 		s := r.Latency[row.key]

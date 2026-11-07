@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ type config struct {
 	conns    int
 	seed     uint64
 	sd       float64
+	pushWait time.Duration // for pushes still missing at the end; 0 means 5 s
 }
 
 // report is the result of a measurement, written as JSON.
@@ -41,7 +43,16 @@ type report struct {
 	Valid      bool               `json:"valid"`
 	Problems   []string           `json:"problems,omitempty"`
 	Outcomes   map[string]int     `json:"outcomes"`
+	Trades     tradeCounts        `json:"trades"`
 	Latency    map[string]summary `json:"latency_us"`
+}
+
+// tradeCounts are the trades of the whole run, warmup included, as each
+// source counts them; a valid run has them equal.
+type tradeCounts struct {
+	Replies int `json:"replies"`
+	Pushes  int `json:"pushes"`
+	Metric  int `json:"metric"` // the rise of matching_engine_trades_total
 }
 
 // job is one request of the flow, due at planned.
@@ -58,6 +69,7 @@ type loader struct {
 	end  time.Time       // of the measurement window
 	ids  []atomic.Uint64 // order ID by flow order number, once its reply is in
 	join tradeJoin
+	tape tape
 }
 
 // measure offers cfg's flow and measures it. Every request is due at a
@@ -70,6 +82,7 @@ func measure(ctx context.Context, cfg config) (report, error) {
 	l := &loader{cfg: cfg, base: "http://" + cfg.addr}
 	l.join.init()
 
+	tradesBefore, metricsErr := l.tradesTotal(ctx)
 	stream, err := l.subscribe(ctx)
 	if err != nil {
 		return report{}, fmt.Errorf("subscribing to trades:%s: %w", cfg.symbol, err)
@@ -136,10 +149,20 @@ send:
 	if err := ctx.Err(); err != nil {
 		return report{}, err
 	}
-	missing := l.join.wait(5 * time.Second)
+	replied := 0
+	for _, w := range workers {
+		replied += w.trades.n
+	}
+	wait := cfg.pushWait
+	if wait == 0 {
+		wait = 5 * time.Second
+	}
+	missing := l.join.wait(wait, &l.tape.pushed, replied)
 	closing.Store(true)
 	_ = stream.Close(websocket.StatusNormalClosure, "")
-	r := l.report(workers, missing, <-streamErr)
+	err = <-streamErr // the reader has stopped: l.tape is final
+	tradesAfter, metricsErrAfter := l.tradesTotal(ctx)
+	r := l.report(workers, missing, err, tradesAfter-tradesBefore, errors.Join(metricsErr, metricsErrAfter))
 	r.Latency["hiccup"] = summarize(<-hiccups)
 	return r, nil
 }
@@ -196,9 +219,9 @@ func (l *loader) subscribe(ctx context.Context) (*websocket.Conn, error) {
 	return c, nil
 }
 
-// readTrades notes when the first trade push for each taker order arrives,
-// until the stream ends. It returns nil if the stream ended because the
-// run closed it.
+// readTrades checks every trade push on l.tape and notes when the first
+// push for each taker order arrives, until the stream ends. It returns nil
+// if the stream ended because the run closed it.
 func (l *loader) readTrades(c *websocket.Conn, closing *atomic.Bool) error {
 	var last uint64
 	for {
@@ -212,7 +235,11 @@ func (l *loader) readTrades(c *websocket.Conn, closing *atomic.Bool) error {
 		}
 		var m struct {
 			Type          string
+			Seq           uint64
+			BookSeq       uint64 `json:"book_seq"`
+			Price, Qty    int64
 			TakerOrderID  uint64 `json:"taker_order_id"`
+			MakerOrderID  uint64 `json:"maker_order_id"`
 			Code, Message string
 		}
 		if err := json.Unmarshal(data, &m); err != nil {
@@ -220,6 +247,7 @@ func (l *loader) readTrades(c *websocket.Conn, closing *atomic.Bool) error {
 		}
 		switch m.Type {
 		case "trade":
+			l.tape.push(m.Seq, trade{bookSeq: m.BookSeq, taker: m.TakerOrderID, maker: m.MakerOrderID, price: m.Price, qty: m.Qty})
 			if m.TakerOrderID != last { // one order's trades come together
 				last = m.TakerOrderID
 				l.join.push(m.TakerOrderID, at)
