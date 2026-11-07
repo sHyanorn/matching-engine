@@ -27,7 +27,7 @@ Method ([D030](DECISIONS.md)):
 
 - [`cmd/loadgen`](../cmd/loadgen) offers the same flow at a fixed rate of requests, 70% of them new orders and 30% cancels. Request i is due at t0 + i/rate whatever the replies, and goes out over one of 64 keep-alive connections. Latency counts from the due time, so a stall is charged to every request it delayed.
 - The latency reported here runs from the due time of a new order to the first trade push for it on the WebSocket. The JSON reports also hold the reply latency of every request, the service time (from the actual send) and the send lag.
-- Each run starts a fresh engine on an empty data directory (fsync every 10 ms, one symbol), discards a 10 s warmup and measures 30 s. Each rate runs three times, and the run with the median p99 stands for it. A run is valid only if 99% of the target rate went out, no request failed and every trade was pushed.
+- Each run starts a fresh engine on an empty data directory (fsync every 10 ms, one symbol), discards a 10 s warmup and measures 30 s. Each rate runs three times, and the run with the median p99 stands for it. A run is valid only if 99% of the target rate went out, no request failed, and every trade was pushed once and in order ([D036](DECISIONS.md)): the push numbers run without gaps, and the pushes, the trades in the replies and the engine's trade counter agree in number and, by a hash of each trade, in content.
 - A 1 ms sleep loop in loadgen records pauses of the generator and the machine (hiccups, after jHiccup).
 - More connections than the load needs only add work on both sides: at 15k/s, 512 connections gave a p99 of 11.2 ms against 7.26 ms with 64 ([`conns-64`](../bench-results/m5-e2e/conns-64), [`conns-512`](../bench-results/m5-e2e/conns-512)).
 

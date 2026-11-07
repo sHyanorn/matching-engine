@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,7 +23,8 @@ type worker struct {
 
 	outcomes map[string]int
 	firstErr string
-	sent     int // measured requests sent before the window ended
+	sent     int      // measured requests sent before the window ended
+	trades   tradeSum // in the replies, warmup included
 	// Latency samples in nanoseconds, of measured requests that succeeded:
 	// planned to reply, sent to reply, and planned to sent.
 	reply, service, lag []int64
@@ -62,7 +64,7 @@ func (w *worker) handle(ctx context.Context, j job) {
 	status, data, err := w.do(ctx, method, path, body)
 	done := time.Now()
 
-	outcome, id, traded := classify(j, status, data, err)
+	outcome, id, traded := classify(j, status, data, err, &w.trades)
 	if id != 0 {
 		w.l.ids[j.op.Order].Store(id)
 		if traded {
@@ -89,8 +91,8 @@ func (w *worker) handle(ctx context.Context, j job) {
 }
 
 // classify names a reply's outcome. For a new order it also returns the
-// order's ID and whether the order traded.
-func classify(j job, status int, data []byte, err error) (outcome string, id uint64, traded bool) {
+// order's ID and whether the order traded, and adds its trades to trades.
+func classify(j job, status int, data []byte, err error, trades *tradeSum) (outcome string, id uint64, traded bool) {
 	switch {
 	case err != nil:
 		return "error", 0, false
@@ -122,7 +124,11 @@ func classify(j job, status int, data []byte, err error) (outcome string, id uin
 	if err != nil || id == 0 {
 		return "error", 0, false
 	}
-	if bytes.Contains(rest[end:], tradeEvent) {
+	n := trades.n
+	if !scanTrades(rest[end:], trades) {
+		return "error", 0, false
+	}
+	if trades.n > n {
 		return "order_traded", id, true
 	}
 	return "order_rested", id, false
@@ -218,9 +224,11 @@ func (t *tradeJoin) record(j job, at time.Time) {
 	}
 }
 
-// wait waits up to timeout for the pushes still missing, and returns how
-// many measured orders never got theirs.
-func (t *tradeJoin) wait(timeout time.Duration) int {
+// wait waits up to timeout for the pushes still missing: the first push
+// of every measured order that traded, and as many pushes in all as the
+// replies held trades. It returns how many measured orders never got
+// their first push.
+func (t *tradeJoin) wait(timeout time.Duration, pushed *atomic.Int64, trades int) int {
 	for deadline := time.Now().Add(timeout); ; time.Sleep(10 * time.Millisecond) {
 		t.mu.Lock()
 		missing := 0
@@ -230,21 +238,23 @@ func (t *tradeJoin) wait(timeout time.Duration) int {
 			}
 		}
 		t.mu.Unlock()
-		if missing == 0 || time.Now().After(deadline) {
+		if missing == 0 && pushed.Load() >= int64(trades) || time.Now().After(deadline) {
 			return missing
 		}
 	}
 }
 
 // report gathers the workers' results. A run is valid only if the target
-// rate was met, every request succeeded and every trade was pushed.
-func (l *loader) report(workers []*worker, missing int, streamErr error) report {
+// rate was met, every request succeeded, and every trade was pushed once
+// and in order (check.go).
+func (l *loader) report(workers []*worker, missing int, streamErr error, rose int, metricsErr error) report {
 	r := report{
 		Symbol: l.cfg.symbol, TargetRate: l.cfg.rate, Warmup: l.cfg.warmup.Seconds(), Duration: l.cfg.duration.Seconds(),
 		Conns: l.cfg.conns, Seed: l.cfg.seed, SD: l.cfg.sd, Go: runtime.Version(), CPUs: runtime.NumCPU(),
 		Outcomes: map[string]int{},
 	}
 	var sent int
+	var replied tradeSum
 	var firstErr string
 	var reply, service, lag []int64
 	for _, w := range workers {
@@ -252,6 +262,8 @@ func (l *loader) report(workers []*worker, missing int, streamErr error) report 
 			r.Outcomes[k] += n
 		}
 		sent += w.sent
+		replied.n += w.trades.n
+		replied.sum += w.trades.sum
 		if firstErr == "" {
 			firstErr = w.firstErr
 		}
@@ -271,6 +283,22 @@ func (l *loader) report(workers []*worker, missing int, streamErr error) report 
 	}
 	if streamErr != nil {
 		r.Problems = append(r.Problems, fmt.Sprintf("trade stream ended: %v", streamErr))
+	}
+	pushed := &l.tape
+	r.Trades = tradeCounts{Replies: replied.n, Pushes: pushed.n, Metric: rose}
+	switch {
+	case pushed.problem != "":
+		r.Problems = append(r.Problems, pushed.problem)
+	case pushed.n != replied.n:
+		r.Problems = append(r.Problems, fmt.Sprintf("%d trade pushes for %d trades in the replies", pushed.n, replied.n))
+	case pushed.sum != replied.sum:
+		r.Problems = append(r.Problems, "the trade pushes differ from the trades in the replies")
+	}
+	switch {
+	case metricsErr != nil:
+		r.Problems = append(r.Problems, fmt.Sprintf("reading matching_engine_trades_total: %v", metricsErr))
+	case rose != replied.n:
+		r.Problems = append(r.Problems, fmt.Sprintf("matching_engine_trades_total rose by %d for %d trades in the replies", rose, replied.n))
 	}
 	r.Valid = len(r.Problems) == 0
 	r.Latency = map[string]summary{

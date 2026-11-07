@@ -1,0 +1,18 @@
+# loadgen's own CPU time, before and after the per-trade push check (D030)
+# before: loadgen at 757e02b; after: loadgen at the commit that adds this
+# file. Both against the same engine binary (the after commit), fresh data
+# directory per run, 20,000 requests/s, 10 s warmup + 30 s, 64 connections,
+# runs alternating before/after. go1.24.7 linux/amd64, Intel Xeon @ 2.10GHz,
+# 4 vCPU cloud VM; loadgen and engine share the 4 vCPUs.
+# command: cpu.sh OUT 20000 3 (needs engine, loadgen-before and loadgen-after
+# next to it); CPU is user + system seconds from bash's time.
+#
+# run       loadgen CPU s   trade push p50 / p90 / p99 / p99.9 (µs)   trades (replies = pushes = metric)
+before-1    49.7            191 / 396 / 5438 / 10397
+before-2    49.4            188 / 379 / 5043 /  8835
+before-3    49.2            187 / 372 / 5691 / 10724
+after-1     50.2            191 / 380 / 5532 /  9939                   292963
+after-2     50.0            192 / 404 / 5813 / 10352                   292894
+after-3     49.9            190 / 378 / 5297 /  9942                   293058
+#
+# median CPU 49.4 s -> 50.0 s (+1.2%), about 0.7 µs per request of 800,000.
