@@ -49,8 +49,8 @@ func testConfig(addr string) config {
 func TestMeasure(t *testing.T) {
 	cfg := testConfig(startEngine(t, nil))
 	// 1% of the window, the shortfall a valid run may have, must be more
-	// than a busy machine's scheduling delay.
-	cfg.rate, cfg.duration = 1000, 2*time.Second
+	// than a busy machine's scheduling delay: 40 ms here.
+	cfg.rate, cfg.duration = 1000, 4*time.Second
 	r, err := measure(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestMeasure(t *testing.T) {
 			t.Errorf("%d %s samples, want one per succeeded request, %d", n, k, succeeded)
 		}
 	}
-	if r.Latency["hiccup"].Count < 500 { // a 1 ms sleep loop over 2 s
+	if r.Latency["hiccup"].Count < 1000 { // a 1 ms sleep loop over 4 s
 		t.Errorf("%d hiccup samples, want one per 1 ms sleep", r.Latency["hiccup"].Count)
 	}
 	if n := r.Latency["trade_push"].Count; n != r.Outcomes["order_traded"] {
@@ -121,7 +121,7 @@ func TestRunWritesReport(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "r.json")
 	var stdout bytes.Buffer
 	err := run(context.Background(), []string{
-		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "200ms", "-duration", "2s", "-conns", "16", "-out", out,
+		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "200ms", "-duration", "4s", "-conns", "16", "-out", out,
 	}, &stdout)
 	if err != nil {
 		t.Fatal(err)
