@@ -351,17 +351,18 @@ type orderStatus struct {
 
 // event is one entry of a reply's events array: the fields of book.Event.
 type event struct {
-	Seq       uint64 `json:"seq"`
-	TS        int64  `json:"ts"`
-	Type      string `json:"type"`
-	OrderID   uint64 `json:"order_id"`
-	MakerID   uint64 `json:"maker_id"`
-	Side      string `json:"side"`
-	Price     int64  `json:"price"`
-	Qty       int64  `json:"qty"`
-	Reason    string `json:"reason"`
-	LevelSide string `json:"level_side"`
-	LevelQty  int64  `json:"level_qty"`
+	Seq         uint64 `json:"seq"`
+	TS          int64  `json:"ts"`
+	Type        string `json:"type"`
+	OrderID     uint64 `json:"order_id"`
+	MakerID     uint64 `json:"maker_id"`
+	Side        string `json:"side"`
+	Price       int64  `json:"price"`
+	Qty         int64  `json:"qty"`
+	Reason      string `json:"reason"`
+	LevelSide   string `json:"level_side"`
+	LevelQty    int64  `json:"level_qty"`
+	LevelOrders uint32 `json:"level_orders"`
 }
 
 // orderReply is the reply to POST /v1/orders and DELETE /v1/orders/{id}.
@@ -488,14 +489,14 @@ func checkEventFields(t *testing.T, i int, raw map[string]json.RawMessage, w eve
 	case "rejected":
 		required = append(required, "reason")
 	case "trade":
-		required = append(required, "maker_id", "side", "price", "qty", "level_side", "level_qty")
+		required = append(required, "maker_id", "side", "price", "qty", "level_side", "level_qty", "level_orders")
 	case "rested":
-		required = append(required, "side", "price", "qty", "level_side", "level_qty")
+		required = append(required, "side", "price", "qty", "level_side", "level_qty", "level_orders")
 	case "canceled":
 		required = append(required, "side", "qty", "reason")
 		priceField()
 		if w.LevelSide != "" {
-			required = append(required, "level_side", "level_qty")
+			required = append(required, "level_side", "level_qty", "level_orders")
 		}
 	default:
 		t.Fatalf("unknown event type %q in test", w.Type)
@@ -706,9 +707,10 @@ func (e *testEnv) metricsAfter(t *testing.T, before metricSet, rises ...rise) me
 // WebSocket helpers
 
 type change struct {
-	Side  string `json:"side"`
-	Price int64  `json:"price"`
-	Qty   int64  `json:"qty"`
+	Side   string `json:"side"`
+	Price  int64  `json:"price"`
+	Qty    int64  `json:"qty"`
+	Orders int    `json:"orders"`
 }
 
 // streamMsg holds the fields of every server message type.
@@ -1005,14 +1007,14 @@ func TestPlaceOrderReplies(t *testing.T) {
 	})
 	checkEvents(t, s1, 1, s1.Order.TS,
 		event{Type: "accepted", OrderID: id1, Side: "sell", Price: 6500100, Qty: 5},
-		event{Type: "rested", OrderID: id1, Side: "sell", Price: 6500100, Qty: 5, LevelSide: "sell", LevelQty: 5},
+		event{Type: "rested", OrderID: id1, Side: "sell", Price: 6500100, Qty: 5, LevelSide: "sell", LevelQty: 5, LevelOrders: 1},
 	)
 
 	s2 := env.place(t, limitOrder("sell", 6500200, 3))
 	id2 := s2.Order.OrderID
 	checkEvents(t, s2, 3, s2.Order.TS,
 		event{Type: "accepted", OrderID: id2, Side: "sell", Price: 6500200, Qty: 3},
-		event{Type: "rested", OrderID: id2, Side: "sell", Price: 6500200, Qty: 3, LevelSide: "sell", LevelQty: 3},
+		event{Type: "rested", OrderID: id2, Side: "sell", Price: 6500200, Qty: 3, LevelSide: "sell", LevelQty: 3, LevelOrders: 1},
 	)
 	if id2 == id1 || s2.Order.TS <= s1.Order.TS {
 		t.Errorf("second order: id %d, ts %d; want a new id and a later ts than %d, %d", id2, s2.Order.TS, id1, s1.Order.TS)
@@ -1038,7 +1040,7 @@ func TestPlaceOrderReplies(t *testing.T) {
 	idb := b.Order.OrderID
 	checkEvents(t, b, 9, b.Order.TS,
 		event{Type: "accepted", OrderID: idb, Side: "buy", Price: 6499900, Qty: 7},
-		event{Type: "rested", OrderID: idb, Side: "buy", Price: 6499900, Qty: 7, LevelSide: "buy", LevelQty: 7},
+		event{Type: "rested", OrderID: idb, Side: "buy", Price: 6499900, Qty: 7, LevelSide: "buy", LevelQty: 7, LevelOrders: 1},
 	)
 
 	// A crossing GTC sell fills against the bid and rests the remainder.
@@ -1051,7 +1053,7 @@ func TestPlaceOrderReplies(t *testing.T) {
 	checkEvents(t, p, 11, p.Order.TS,
 		event{Type: "accepted", OrderID: idp, Side: "sell", Price: 6499900, Qty: 10},
 		event{Type: "trade", OrderID: idp, MakerID: idb, Side: "sell", Price: 6499900, Qty: 7, LevelSide: "buy"},
-		event{Type: "rested", OrderID: idp, Side: "sell", Price: 6499900, Qty: 3, LevelSide: "sell", LevelQty: 3},
+		event{Type: "rested", OrderID: idp, Side: "sell", Price: 6499900, Qty: 3, LevelSide: "sell", LevelQty: 3, LevelOrders: 1},
 	)
 
 	// A limit IOC trades at the maker's price; its remainder is canceled
@@ -1274,7 +1276,7 @@ func TestCancelPartlyFilledOrder(t *testing.T) {
 	// A fully filled order ends with its last trade.
 	checkEvents(t, taker, 3, taker.Order.TS,
 		event{Type: "accepted", OrderID: tid, Side: "buy", Price: 200, Qty: 4},
-		event{Type: "trade", OrderID: tid, MakerID: mid, Side: "buy", Price: 200, Qty: 4, LevelSide: "sell", LevelQty: 6},
+		event{Type: "trade", OrderID: tid, MakerID: mid, Side: "buy", Price: 200, Qty: 4, LevelSide: "sell", LevelQty: 6, LevelOrders: 1},
 	)
 
 	// The maker rests, partly filled.
@@ -1591,16 +1593,16 @@ func TestMetrics(t *testing.T) {
 // WebSocket /v1/stream
 
 // bookState is an L2 book rebuilt from a snapshot and deltas:
-// side -> price -> qty.
-type bookState map[string]map[int64]int64
+// side -> price -> level.
+type bookState map[string]map[int64]level
 
 func newBookState(snap streamMsg) bookState {
 	b := bookState{"buy": {}, "sell": {}}
 	for _, l := range snap.Bids {
-		b["buy"][l.Price] = l.Qty
+		b["buy"][l.Price] = l
 	}
 	for _, l := range snap.Asks {
-		b["sell"][l.Price] = l.Qty
+		b["sell"][l.Price] = l
 	}
 	return b
 }
@@ -1612,24 +1614,21 @@ func (b bookState) apply(t *testing.T, changes []change) {
 		if !ok {
 			t.Fatalf("change on unknown side %q", c.Side)
 		}
+		if (c.Qty == 0) != (c.Orders == 0) {
+			t.Fatalf("change %+v: qty and orders must be 0 together", c)
+		}
 		if c.Qty == 0 {
 			delete(side, c.Price)
 		} else {
-			side[c.Price] = c.Qty
+			side[c.Price] = level{c.Price, c.Qty, c.Orders}
 		}
 	}
 }
 
-// priceQty is a level without its order count, which deltas do not carry.
-type priceQty struct{ Price, Qty int64 }
-
 // levels returns one side, best price first.
-func (b bookState) levels(side string) []priceQty {
-	var out []priceQty
-	for p, q := range b[side] {
-		out = append(out, priceQty{p, q})
-	}
-	slices.SortFunc(out, func(x, y priceQty) int {
+func (b bookState) levels(side string) []level {
+	out := slices.Collect(maps.Values(b[side]))
+	slices.SortFunc(out, func(x, y level) int {
 		if side == "buy" {
 			return cmp.Compare(y.Price, x.Price)
 		}
@@ -1638,12 +1637,16 @@ func (b bookState) levels(side string) []priceQty {
 	return out
 }
 
-func priceQtys(ls []level) []priceQty {
-	var out []priceQty
-	for _, l := range ls {
-		out = append(out, priceQty{l.Price, l.Qty})
+// requireSameBook fails t unless b holds exactly the levels of the REST
+// depth bk: price, quantity and order count.
+func (b bookState) requireSameBook(t *testing.T, label string, bk bookReply) {
+	t.Helper()
+	if got, want := b.levels("buy"), bk.Bids; !slices.Equal(got, want) {
+		t.Errorf("%s: rebuilt bids %+v, want %+v", label, got, want)
 	}
-	return out
+	if got, want := b.levels("sell"), bk.Asks; !slices.Equal(got, want) {
+		t.Errorf("%s: rebuilt asks %+v, want %+v", label, got, want)
+	}
 }
 
 func sortedChanges(cs []change) []change {
@@ -1702,33 +1705,29 @@ func TestStreamSnapshotDeltasAndTrades(t *testing.T) {
 	if snap.BookSeq != before.Seq {
 		t.Errorf("snapshot book_seq %d, want %d", snap.BookSeq, before.Seq)
 	}
-	if got, want := priceQtys(snap.Bids), priceQtys(before.Bids); !slices.Equal(got, want) {
-		t.Errorf("snapshot bids %+v, want %+v", got, want)
-	}
-	if got, want := priceQtys(snap.Asks), priceQtys(before.Asks); !slices.Equal(got, want) {
-		t.Errorf("snapshot asks %+v, want %+v", got, want)
-	}
 	state := newBookState(snap)
+	state.requireSameBook(t, "snapshot", before)
 
 	// Each command below changes the book, so each yields one delta naming
-	// every level it changed once, with the level's new total.
+	// every level it changed once, with the level's new total and order
+	// count. After each delta the rebuilt book equals the REST depth.
 	steps := []struct {
 		name    string
 		act     func() orderReply
 		changes []change
 	}{
 		{"buy sweeps two ask levels", func() orderReply { return env.place(t, limitOrder("buy", 102, 6)) },
-			[]change{{"sell", 101, 0}, {"sell", 102, 2}}},
+			[]change{{"sell", 101, 0, 0}, {"sell", 102, 2, 1}}},
 		{"sell rests at a new level", func() orderReply { return env.place(t, limitOrder("sell", 100, 2)) },
-			[]change{{"sell", 100, 2}}},
+			[]change{{"sell", 100, 2, 1}}},
 		{"buy joins a bid level", func() orderReply { return env.place(t, limitOrder("buy", 99, 1)) },
-			[]change{{"buy", 99, 5}}},
+			[]change{{"buy", 99, 5, 2}}},
 		{"cancel shrinks a level", func() orderReply { return env.cancel(t, o3.Order.OrderID) },
-			[]change{{"buy", 99, 1}}},
+			[]change{{"buy", 99, 1, 1}}},
 		{"market sell empties the bids", func() orderReply { return env.place(t, marketOrder("sell", 3)) },
-			[]change{{"buy", 99, 0}}},
+			[]change{{"buy", 99, 0, 0}}},
 		{"buy trades, then rests", func() orderReply { return env.place(t, limitOrder("buy", 100, 4)) },
-			[]change{{"sell", 100, 0}, {"buy", 100, 2}}},
+			[]change{{"sell", 100, 0, 0}, {"buy", 100, 2, 1}}},
 	}
 	var trades []event
 	lastBookSeq := snap.BookSeq
@@ -1756,16 +1755,11 @@ func TestStreamSnapshotDeltasAndTrades(t *testing.T) {
 		}
 		lastBookSeq = d.BookSeq
 		state.apply(t, d.Changes)
+		state.requireSameBook(t, st.name, env.book(t, btc, "?depth=1000"))
 	}
 
 	// The snapshot plus the deltas is the book.
 	after := env.book(t, btc, "?depth=1000")
-	if got, want := state.levels("buy"), priceQtys(after.Bids); !slices.Equal(got, want) {
-		t.Errorf("rebuilt bids %+v, want %+v", got, want)
-	}
-	if got, want := state.levels("sell"), priceQtys(after.Asks); !slices.Equal(got, want) {
-		t.Errorf("rebuilt asks %+v, want %+v", got, want)
-	}
 	if lastBookSeq != after.Seq {
 		t.Errorf("last delta book_seq %d, book seq %d", lastBookSeq, after.Seq)
 	}

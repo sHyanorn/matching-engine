@@ -147,6 +147,7 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
 			out = b.emit(out, cmd.Timestamp, Event{
 				Kind: EventTrade, OrderID: cmd.OrderID, MakerID: maker.ID, Side: cmd.Side,
 				Price: level.price, Qty: q, LevelSide: cmd.Side.Opposite(), LevelQty: level.totalQty,
+				LevelOrders: level.count,
 			})
 		}
 		if level.head == nil {
@@ -188,7 +189,7 @@ func (b *Book) rest(out []Event, cmd Command, remaining Qty) []Event {
 	b.orders[o.ID] = o
 	out = b.emit(out, cmd.Timestamp, Event{
 		Kind: EventRested, OrderID: o.ID, Side: o.Side, Price: o.Price, Qty: remaining,
-		LevelSide: o.Side, LevelQty: level.totalQty,
+		LevelSide: o.Side, LevelQty: level.totalQty, LevelOrders: level.count,
 	})
 	o.RestedSeq = b.seq // the Seq of the Rested event just emitted
 	return out
@@ -209,6 +210,6 @@ func (b *Book) cancel(out []Event, cmd Command) []Event {
 	}
 	return b.emit(out, cmd.Timestamp, Event{
 		Kind: EventCanceled, OrderID: o.ID, Side: o.Side, Price: o.Price, Qty: o.Remaining,
-		Reason: ReasonUserCancel, LevelSide: o.Side, LevelQty: level.totalQty,
+		Reason: ReasonUserCancel, LevelSide: o.Side, LevelQty: level.totalQty, LevelOrders: level.count,
 	})
 }

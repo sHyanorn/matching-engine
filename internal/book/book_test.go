@@ -28,7 +28,33 @@ func apply(t *testing.T, b *Book, cmd Command) []Event {
 		t.Fatalf("%+v produced %d events, last Seq %d", cmd, len(evs), b.seq)
 	}
 	checkBook(t, b)
+	checkLevelUpdates(t, b, evs)
 	return evs
+}
+
+// checkLevelUpdates requires the last event touching each level to carry
+// that level's total quantity and order count in b, 0 and 0 for a level
+// that is gone.
+func checkLevelUpdates(t *testing.T, b *Book, evs []Event) {
+	t.Helper()
+	for i, e := range evs {
+		lu, ok := e.LevelUpdate()
+		if !ok || slices.ContainsFunc(evs[i+1:], func(n Event) bool {
+			nu, ok := n.LevelUpdate()
+			return ok && nu.Side == lu.Side && nu.Price == lu.Price
+		}) {
+			continue
+		}
+		var want LevelUpdate
+		if l := b.side(lu.Side).find(lu.Price); l != nil {
+			want = LevelUpdate{Side: lu.Side, Price: lu.Price, Qty: l.totalQty, Orders: l.count}
+		} else {
+			want = LevelUpdate{Side: lu.Side, Price: lu.Price}
+		}
+		if lu != want {
+			t.Fatalf("event %d %+v reports level %+v, the book holds %+v", i, e, lu, want)
+		}
+	}
 }
 
 func TestNewBookIsEmpty(t *testing.T) {
@@ -61,7 +87,7 @@ func TestApplyRestTradeAndCancel(t *testing.T) {
 	got := apply(t, b, at(10, limit(1, Sell, 101, 10)))
 	want := []Event{
 		{Seq: 1, Timestamp: 10, Kind: EventAccepted, OrderID: 1, Side: Sell, Price: 101, Qty: 10},
-		{Seq: 2, Timestamp: 10, Kind: EventRested, OrderID: 1, Side: Sell, Price: 101, Qty: 10, LevelSide: Sell, LevelQty: 10},
+		{Seq: 2, Timestamp: 10, Kind: EventRested, OrderID: 1, Side: Sell, Price: 101, Qty: 10, LevelSide: Sell, LevelQty: 10, LevelOrders: 1},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("rest: events = %+v\nwant %+v", got, want)
@@ -72,7 +98,7 @@ func TestApplyRestTradeAndCancel(t *testing.T) {
 	want = []Event{
 		{Seq: 3, Timestamp: 11, Kind: EventAccepted, OrderID: 2, Side: Buy, Price: 102, Qty: 12},
 		{Seq: 4, Timestamp: 11, Kind: EventTrade, OrderID: 2, MakerID: 1, Side: Buy, Price: 101, Qty: 10, LevelSide: Sell, LevelQty: 0},
-		{Seq: 5, Timestamp: 11, Kind: EventRested, OrderID: 2, Side: Buy, Price: 102, Qty: 2, LevelSide: Buy, LevelQty: 2},
+		{Seq: 5, Timestamp: 11, Kind: EventRested, OrderID: 2, Side: Buy, Price: 102, Qty: 2, LevelSide: Buy, LevelQty: 2, LevelOrders: 1},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("trade: events = %+v\nwant %+v", got, want)

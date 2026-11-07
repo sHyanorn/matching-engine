@@ -85,7 +85,7 @@ func TestPlaceCancelAndQuery(t *testing.T) {
 	}
 	want := []book.Event{
 		{Seq: 1, Timestamp: 1, Kind: book.EventAccepted, OrderID: sell.OrderID, Side: book.Sell, Price: 101, Qty: 10},
-		{Seq: 2, Timestamp: 1, Kind: book.EventRested, OrderID: sell.OrderID, Side: book.Sell, Price: 101, Qty: 10, LevelSide: book.Sell, LevelQty: 10},
+		{Seq: 2, Timestamp: 1, Kind: book.EventRested, OrderID: sell.OrderID, Side: book.Sell, Price: 101, Qty: 10, LevelSide: book.Sell, LevelQty: 10, LevelOrders: 1},
 	}
 	if !slices.Equal(sell.Events, want) {
 		t.Fatalf("sell events = %+v\nwant %+v", sell.Events, want)
@@ -97,7 +97,7 @@ func TestPlaceCancelAndQuery(t *testing.T) {
 	}
 	want = []book.Event{
 		{Seq: 3, Timestamp: 2, Kind: book.EventAccepted, OrderID: buy.OrderID, Side: book.Buy, Price: 102, Qty: 4},
-		{Seq: 4, Timestamp: 2, Kind: book.EventTrade, OrderID: buy.OrderID, MakerID: sell.OrderID, Side: book.Buy, Price: 101, Qty: 4, LevelSide: book.Sell, LevelQty: 6},
+		{Seq: 4, Timestamp: 2, Kind: book.EventTrade, OrderID: buy.OrderID, MakerID: sell.OrderID, Side: book.Buy, Price: 101, Qty: 4, LevelSide: book.Sell, LevelQty: 6, LevelOrders: 1},
 	}
 	if !slices.Equal(buy.Events, want) {
 		t.Fatalf("buy events = %+v\nwant %+v", buy.Events, want)

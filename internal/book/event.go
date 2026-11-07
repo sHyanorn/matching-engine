@@ -38,11 +38,12 @@ func (k EventKind) String() string { return enumString(eventKindNames[:], k, "Ev
 // integers (64 bytes). It is comparable with ==, so tests and the replay
 // check compare whole event slices with slices.Equal, and the book appends it
 // to a caller-owned slice without allocating, which one struct per kind boxed
-// in an interface could not do.
+// in an interface could not do. LevelOrders fills the padding after the four
+// one-byte fields, so it costs no space.
 //
 // Fields used by each Kind; every other field is zero:
 //
-//	Kind      OrderID  MakerID  Side        Price             Qty        Reason  LevelSide, LevelQty
+//	Kind      OrderID  MakerID  Side        Price             Qty        Reason  LevelSide, LevelQty, LevelOrders
 //	Accepted  order    -        order side  limit; market: 0  submitted  -       -
 //	Rejected  command  -        -           -                 -          why     -
 //	Trade     taker    maker    taker side  maker's price     traded     -       maker's level
@@ -55,10 +56,11 @@ func (k EventKind) String() string { return enumString(eventKindNames[:], k, "Ev
 // order and [ReasonIOCRemainder] for an IOC or market remainder, which never
 // rested.
 //
-// LevelSide and LevelQty put L2 changes into the stream. An event that
-// changed the resting book sets LevelSide to the side of the one level it
-// changed and LevelQty to that level's total resting quantity after the event
-// (0 means the level is now empty); the level's price is always Price.
+// LevelSide, LevelQty and LevelOrders put L2 changes into the stream. An
+// event that changed the resting book sets LevelSide to the side of the one
+// level it changed, and LevelQty and LevelOrders to that level's total
+// resting quantity and number of orders after the event (0 means the level
+// is now empty); the level's price is always Price.
 // Totals are absolute, not differences, so a consumer such as the engine
 // building book_delta keeps the last value per level and needs no copy of
 // the book. LevelSide 0 means the event did not change the book.
@@ -70,10 +72,11 @@ type Event struct {
 	// Timestamp is Command.Timestamp of the command that caused the event.
 	Timestamp int64
 
-	Kind      EventKind
-	Side      Side
-	Reason    Reason
-	LevelSide Side
+	Kind        EventKind
+	Side        Side
+	Reason      Reason
+	LevelSide   Side
+	LevelOrders uint32
 
 	OrderID  OrderID
 	MakerID  OrderID
@@ -113,12 +116,13 @@ func (e Event) Trade() (Trade, bool) {
 }
 
 // LevelUpdate is the state of one price level right after an event changed
-// it: the total resting quantity at Price on Side, where Qty 0 means the
-// level is now empty.
+// it: the total resting quantity at Price on Side and the number of orders
+// making it up, where Qty 0 (and so Orders 0) means the level is now empty.
 type LevelUpdate struct {
-	Side  Side
-	Price Price
-	Qty   Qty
+	Side   Side
+	Price  Price
+	Qty    Qty
+	Orders uint32
 }
 
 // LevelUpdate returns the price level e changed, and false if e did not
@@ -127,5 +131,5 @@ func (e Event) LevelUpdate() (LevelUpdate, bool) {
 	if !e.LevelSide.Valid() {
 		return LevelUpdate{}, false
 	}
-	return LevelUpdate{Side: e.LevelSide, Price: e.Price, Qty: e.LevelQty}, true
+	return LevelUpdate{Side: e.LevelSide, Price: e.Price, Qty: e.LevelQty, Orders: e.LevelOrders}, true
 }

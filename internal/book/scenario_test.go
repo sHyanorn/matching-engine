@@ -110,29 +110,30 @@ func evRejected(seq uint64, id OrderID, why Reason) Event {
 }
 
 // evTrade: taker, on side, trades qty with maker at the maker's price, after
-// which the maker's level on the other side holds levelQty.
-func evTrade(seq uint64, taker, maker OrderID, side Side, price Price, qty, levelQty Qty) Event {
+// which the maker's level on the other side holds levelQty in levelOrders
+// orders.
+func evTrade(seq uint64, taker, maker OrderID, side Side, price Price, qty, levelQty Qty, levelOrders uint32) Event {
 	return Event{
 		Seq: seq, Timestamp: cmdTS, Kind: EventTrade, OrderID: taker, MakerID: maker,
-		Side: side, Price: price, Qty: qty, LevelSide: side.Opposite(), LevelQty: levelQty,
+		Side: side, Price: price, Qty: qty, LevelSide: side.Opposite(), LevelQty: levelQty, LevelOrders: levelOrders,
 	}
 }
 
 // evRested: qty of order id rests at price, after which its level holds
-// levelQty.
-func evRested(seq uint64, id OrderID, side Side, price Price, qty, levelQty Qty) Event {
+// levelQty in levelOrders orders.
+func evRested(seq uint64, id OrderID, side Side, price Price, qty, levelQty Qty, levelOrders uint32) Event {
 	return Event{
 		Seq: seq, Timestamp: cmdTS, Kind: EventRested, OrderID: id,
-		Side: side, Price: price, Qty: qty, LevelSide: side, LevelQty: levelQty,
+		Side: side, Price: price, Qty: qty, LevelSide: side, LevelQty: levelQty, LevelOrders: levelOrders,
 	}
 }
 
 // evCanceled: a cancel removed resting order id, which had qty left at
-// price, after which its level holds levelQty.
-func evCanceled(seq uint64, id OrderID, side Side, price Price, qty, levelQty Qty) Event {
+// price, after which its level holds levelQty in levelOrders orders.
+func evCanceled(seq uint64, id OrderID, side Side, price Price, qty, levelQty Qty, levelOrders uint32) Event {
 	return Event{
 		Seq: seq, Timestamp: cmdTS, Kind: EventCanceled, OrderID: id, Side: side, Price: price,
-		Qty: qty, Reason: ReasonUserCancel, LevelSide: side, LevelQty: levelQty,
+		Qty: qty, Reason: ReasonUserCancel, LevelSide: side, LevelQty: levelQty, LevelOrders: levelOrders,
 	}
 }
 
@@ -266,7 +267,7 @@ type scenarioRun struct {
 	b      *Book
 	ids    []OrderID                // every non-zero OrderID the scenario uses, sorted
 	seq    uint64                   // Seq of the last event seen
-	l2     map[l2Key]Qty            // non-empty levels, followed from LevelUpdate alone
+	l2     map[l2Key]LevelUpdate    // non-empty levels, followed from LevelUpdate alone
 	ledger map[OrderID]*ledgerEntry // latest accepted order with each ID
 }
 
@@ -294,7 +295,7 @@ func newScenarioRun(t *testing.T, sc scenario) *scenarioRun {
 		}
 	}
 	slices.Sort(ids)
-	r := &scenarioRun{t: t, b: b, ids: ids, l2: make(map[l2Key]Qty), ledger: make(map[OrderID]*ledgerEntry)}
+	r := &scenarioRun{t: t, b: b, ids: ids, l2: make(map[l2Key]LevelUpdate), ledger: make(map[OrderID]*ledgerEntry)}
 	if n := len(r.resting()); n != 0 || r.depth(Buy) != nil || r.depth(Sell) != nil {
 		t.Fatalf("New() is not empty: %d orders, bids %+v, asks %+v", n, r.depth(Buy), r.depth(Sell))
 	}
@@ -484,28 +485,30 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 		}
 	}
 
-	// The last event touching a level carries the level's total afterwards.
-	last := make(map[l2Key]Qty)
+	// The last event touching a level carries the level's total and order
+	// count afterwards.
+	last := make(map[l2Key]LevelUpdate)
 	for _, e := range evs {
 		if lu, ok := e.LevelUpdate(); ok {
-			last[l2Key{lu.Side, lu.Price}] = lu.Qty
+			last[l2Key{lu.Side, lu.Price}] = lu
 		}
 	}
 	for _, k := range slices.SortedFunc(maps.Keys(last), compareL2Key) {
-		if inDepth := fromDepth[k].qty; inDepth != last[k] {
-			t.Errorf("%s: last event touching %v %d says LevelQty %d, but Depth has %d", label, k.side, k.price, last[k], inDepth)
+		lu := last[k]
+		if inDepth := fromDepth[k]; inDepth != (total{lu.Qty, int(lu.Orders)}) {
+			t.Errorf("%s: last event touching %v %d says LevelQty %d in %d orders, but Depth has %+v", label, k.side, k.price, lu.Qty, lu.Orders, inDepth)
 		}
-		if last[k] == 0 {
+		if lu.Qty == 0 {
 			delete(r.l2, k)
 		} else {
-			r.l2[k] = last[k]
+			r.l2[k] = lu
 		}
 	}
 
 	// The whole depth follows from the stream, and from the resting orders.
 	fromStream := make(map[l2Key]total)
-	for k, q := range r.l2 {
-		fromStream[k] = total{q, fromDepth[k].orders} // the stream carries no order counts
+	for k, lu := range r.l2 {
+		fromStream[k] = total{lu.Qty, int(lu.Orders)}
 	}
 	if !maps.Equal(fromStream, fromDepth) {
 		t.Errorf("%s: levels followed from LevelUpdate events %v, but Depth has %v", label, r.l2, fromDepth)
@@ -553,10 +556,14 @@ func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error 
 	if len(evs) == 0 {
 		return errors.New("no events")
 	}
-	// Level totals before c, updated as the expected events change them.
+	// Level totals and order counts before c, updated as the expected events
+	// change them.
 	level := make(map[l2Key]Qty)
+	orders := make(map[l2Key]uint32)
 	for _, o := range before {
-		level[l2Key{o.Side, o.Price}] += o.Remaining
+		k := l2Key{o.Side, o.Price}
+		level[k] += o.Remaining
+		orders[k]++
 	}
 	match := func(e, want Event) error {
 		want.Seq, want.Timestamp = e.Seq, e.Timestamp
@@ -586,7 +593,7 @@ func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error 
 		k := l2Key{o.Side, o.Price}
 		return only(Event{
 			Kind: EventCanceled, OrderID: o.ID, Side: o.Side, Price: o.Price, Qty: o.Remaining,
-			Reason: ReasonUserCancel, LevelSide: o.Side, LevelQty: level[k] - o.Remaining,
+			Reason: ReasonUserCancel, LevelSide: o.Side, LevelQty: level[k] - o.Remaining, LevelOrders: orders[k] - 1,
 		})
 	}
 
@@ -636,9 +643,12 @@ func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error 
 		q := min(left, m.Remaining)
 		k := l2Key{m.Side, m.Price}
 		level[k] -= q
+		if q == m.Remaining {
+			orders[k]-- // the maker is filled and leaves its level
+		}
 		want := Event{
 			Kind: EventTrade, OrderID: c.OrderID, MakerID: m.ID, Side: c.Side, Price: m.Price,
-			Qty: q, LevelSide: m.Side, LevelQty: level[k],
+			Qty: q, LevelSide: m.Side, LevelQty: level[k], LevelOrders: orders[k],
 		}
 		if err := match(rest[0], want); err != nil {
 			return err
@@ -658,7 +668,10 @@ func checkCommandEvents(c Command, evs []Event, before map[OrderID]Order) error 
 	want := Event{Kind: EventCanceled, OrderID: c.OrderID, Side: c.Side, Price: c.Price, Qty: left, Reason: ReasonIOCRemainder}
 	if c.TIF == GTC {
 		k := l2Key{c.Side, c.Price}
-		want = Event{Kind: EventRested, OrderID: c.OrderID, Side: c.Side, Price: c.Price, Qty: left, LevelSide: c.Side, LevelQty: level[k] + left}
+		want = Event{
+			Kind: EventRested, OrderID: c.OrderID, Side: c.Side, Price: c.Price, Qty: left,
+			LevelSide: c.Side, LevelQty: level[k] + left, LevelOrders: orders[k] + 1,
+		}
 	}
 	if len(rest) != 1 {
 		return fmt.Errorf("%d events after the trades, want only %+v", len(rest), want)
@@ -716,7 +729,7 @@ var m1Scenarios = append([]scenario{
 		cmd:  limit(1, Buy, 100, 10),
 		want: []Event{
 			evAccepted(1, 1, Buy, 100, 10),
-			evRested(2, 1, Buy, 100, 10, 10),
+			evRested(2, 1, Buy, 100, 10, 10, 1),
 		},
 		wantBids: []Level{lvl(100, 10, 1)},
 		wantOrders: map[OrderID]Order{
@@ -728,7 +741,7 @@ var m1Scenarios = append([]scenario{
 		cmd:  limit(1, Sell, 105, 7),
 		want: []Event{
 			evAccepted(1, 1, Sell, 105, 7),
-			evRested(2, 1, Sell, 105, 7, 7),
+			evRested(2, 1, Sell, 105, 7, 7, 1),
 		},
 		wantAsks: []Level{lvl(105, 7, 1)},
 		wantOrders: map[OrderID]Order{
@@ -741,7 +754,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Buy, 100, 5),
 		want: []Event{
 			evAccepted(3, 2, Buy, 100, 5),
-			evRested(4, 2, Buy, 100, 5, 15),
+			evRested(4, 2, Buy, 100, 5, 15, 2),
 		},
 		wantBids: []Level{lvl(100, 15, 2)},
 		wantOrders: map[OrderID]Order{
@@ -755,7 +768,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Sell, 101, 5),
 		want: []Event{
 			evAccepted(5, 3, Sell, 101, 5),
-			evRested(6, 3, Sell, 101, 5, 12),
+			evRested(6, 3, Sell, 101, 5, 12, 3),
 		},
 		wantAsks: []Level{lvl(101, 12, 3)},
 		wantOrders: map[OrderID]Order{
@@ -769,7 +782,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Buy, 101, 2),
 		want: []Event{
 			evAccepted(5, 3, Buy, 101, 2),
-			evRested(6, 3, Buy, 101, 2, 2),
+			evRested(6, 3, Buy, 101, 2, 2, 1),
 		},
 		wantBids: []Level{lvl(101, 2, 1), lvl(99, 5, 1)},
 		wantAsks: []Level{lvl(103, 5, 1)},
@@ -780,7 +793,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Sell, 102, 4),
 		want: []Event{
 			evAccepted(5, 3, Sell, 102, 4),
-			evRested(6, 3, Sell, 102, 4, 4),
+			evRested(6, 3, Sell, 102, 4, 4, 1),
 		},
 		wantBids: []Level{lvl(99, 5, 1)},
 		wantAsks: []Level{lvl(102, 4, 1), lvl(103, 5, 1)},
@@ -791,7 +804,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Sell, 101, 5),
 		want: []Event{
 			evAccepted(3, 2, Sell, 101, 5),
-			evRested(4, 2, Sell, 101, 5, 5),
+			evRested(4, 2, Sell, 101, 5, 5, 1),
 		},
 		wantBids: []Level{lvl(100, 5, 1)},
 		wantAsks: []Level{lvl(101, 5, 1)},
@@ -806,7 +819,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Buy, 100, 5),
 		want: []Event{
 			evAccepted(3, 2, Buy, 100, 5),
-			evRested(4, 2, Buy, 100, 5, 5),
+			evRested(4, 2, Buy, 100, 5, 5, 1),
 		},
 		wantBids: []Level{lvl(100, 5, 1)},
 		wantAsks: []Level{lvl(101, 5, 1)},
@@ -819,7 +832,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Buy, 100, 10),
 		want: []Event{
 			evAccepted(3, 2, Buy, 100, 10),
-			evTrade(4, 2, 1, Buy, 100, 10, 0),
+			evTrade(4, 2, 1, Buy, 100, 10, 0, 0),
 		},
 		wantGone: []OrderID{1, 2},
 		wantQty: map[OrderID]orderQty{
@@ -833,7 +846,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Sell, 100, 10),
 		want: []Event{
 			evAccepted(3, 2, Sell, 100, 10),
-			evTrade(4, 2, 1, Sell, 100, 10, 0),
+			evTrade(4, 2, 1, Sell, 100, 10, 0, 0),
 		},
 		wantGone: []OrderID{1, 2},
 	},
@@ -843,8 +856,8 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Buy, 100, 10),
 		want: []Event{
 			evAccepted(3, 2, Buy, 100, 10),
-			evTrade(4, 2, 1, Buy, 100, 4, 0),
-			evRested(5, 2, Buy, 100, 6, 6),
+			evTrade(4, 2, 1, Buy, 100, 4, 0, 0),
+			evRested(5, 2, Buy, 100, 6, 6, 1),
 		},
 		wantBids: []Level{lvl(100, 6, 1)},
 		wantOrders: map[OrderID]Order{
@@ -861,8 +874,8 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Sell, 99, 8),
 		want: []Event{
 			evAccepted(3, 2, Sell, 99, 8),
-			evTrade(4, 2, 1, Sell, 100, 3, 0),
-			evRested(5, 2, Sell, 99, 5, 5),
+			evTrade(4, 2, 1, Sell, 100, 3, 0, 0),
+			evRested(5, 2, Sell, 99, 5, 5, 1),
 		},
 		wantAsks: []Level{lvl(99, 5, 1)},
 		wantOrders: map[OrderID]Order{
@@ -876,7 +889,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Buy, 100, 5),
 		want: []Event{
 			evAccepted(5, 3, Buy, 100, 5),
-			evTrade(6, 3, 1, Buy, 100, 5, 7),
+			evTrade(6, 3, 1, Buy, 100, 5, 7, 1),
 		},
 		wantAsks: []Level{lvl(100, 7, 1)},
 		wantOrders: map[OrderID]Order{
@@ -890,7 +903,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Buy, 100, 4),
 		want: []Event{
 			evAccepted(5, 3, Buy, 100, 4),
-			evTrade(6, 3, 1, Buy, 100, 4, 9),
+			evTrade(6, 3, 1, Buy, 100, 4, 9, 2),
 		},
 		wantAsks: []Level{lvl(100, 9, 2)},
 		wantOrders: map[OrderID]Order{
@@ -905,8 +918,8 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(4, Buy, 100, 7),
 		want: []Event{
 			evAccepted(7, 4, Buy, 100, 7),
-			evTrade(8, 4, 1, Buy, 100, 6, 3),
-			evTrade(9, 4, 2, Buy, 100, 1, 2),
+			evTrade(8, 4, 1, Buy, 100, 6, 3, 1),
+			evTrade(9, 4, 2, Buy, 100, 1, 2, 1),
 		},
 		wantAsks: []Level{lvl(100, 2, 1)},
 		wantOrders: map[OrderID]Order{
@@ -926,9 +939,9 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(5, Buy, 100, 8),
 		want: []Event{
 			evAccepted(7, 5, Buy, 100, 8),
-			evTrade(8, 5, 30, Buy, 100, 2, 7),
-			evTrade(9, 5, 10, Buy, 100, 3, 4),
-			evTrade(10, 5, 20, Buy, 100, 3, 1),
+			evTrade(8, 5, 30, Buy, 100, 2, 7, 2),
+			evTrade(9, 5, 10, Buy, 100, 3, 4, 1),
+			evTrade(10, 5, 20, Buy, 100, 3, 1, 1),
 		},
 		wantAsks: []Level{lvl(100, 1, 1)},
 		wantOrders: map[OrderID]Order{
@@ -947,10 +960,10 @@ var m1Scenarios = append([]scenario{
 		cmd: limit(5, Buy, 102, 20),
 		want: []Event{
 			evAccepted(9, 5, Buy, 102, 20),
-			evTrade(10, 5, 2, Buy, 100, 3, 0),
-			evTrade(11, 5, 1, Buy, 101, 5, 0),
-			evTrade(12, 5, 4, Buy, 102, 2, 0),
-			evRested(13, 5, Buy, 102, 10, 10),
+			evTrade(10, 5, 2, Buy, 100, 3, 0, 0),
+			evTrade(11, 5, 1, Buy, 101, 5, 0, 0),
+			evTrade(12, 5, 4, Buy, 102, 2, 0, 0),
+			evRested(13, 5, Buy, 102, 10, 10, 1),
 		},
 		wantBids: []Level{lvl(102, 10, 1)},
 		wantAsks: []Level{lvl(103, 4, 1)},
@@ -971,9 +984,9 @@ var m1Scenarios = append([]scenario{
 		cmd: limit(5, Sell, 99, 10),
 		want: []Event{
 			evAccepted(9, 5, Sell, 99, 10),
-			evTrade(10, 5, 2, Sell, 100, 3, 0),
-			evTrade(11, 5, 3, Sell, 99, 5, 0),
-			evRested(12, 5, Sell, 99, 2, 2),
+			evTrade(10, 5, 2, Sell, 100, 3, 0, 0),
+			evTrade(11, 5, 3, Sell, 99, 5, 0, 0),
+			evRested(12, 5, Sell, 99, 2, 2, 1),
 		},
 		wantBids: []Level{lvl(98, 4, 1), lvl(97, 1, 1)},
 		wantAsks: []Level{lvl(99, 2, 1)},
@@ -989,8 +1002,8 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Buy, 105, 5),
 		want: []Event{
 			evAccepted(5, 3, Buy, 105, 5),
-			evTrade(6, 3, 1, Buy, 100, 2, 0),
-			evTrade(7, 3, 2, Buy, 101, 3, 0),
+			evTrade(6, 3, 1, Buy, 100, 2, 0, 0),
+			evTrade(7, 3, 2, Buy, 101, 3, 0, 0),
 		},
 		wantGone: []OrderID{1, 2, 3},
 	},
@@ -1000,7 +1013,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(2, Sell, 100, 3),
 		want: []Event{
 			evAccepted(3, 2, Sell, 100, 3),
-			evTrade(4, 2, 1, Sell, 105, 3, 2),
+			evTrade(4, 2, 1, Sell, 105, 3, 2, 1),
 		},
 		wantBids: []Level{lvl(105, 2, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1014,7 +1027,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(4, Buy, 100, 3),
 		want: []Event{
 			evAccepted(7, 4, Buy, 100, 3),
-			evTrade(8, 4, 1, Buy, 100, 3, 0),
+			evTrade(8, 4, 1, Buy, 100, 3, 0, 0),
 		},
 		wantBids: []Level{lvl(99, 2, 1)},
 		wantAsks: []Level{lvl(101, 4, 1)},
@@ -1027,7 +1040,7 @@ var m1Scenarios = append([]scenario{
 		setup: threeBidsAt100,
 		cmd:   cancel(1),
 		want: []Event{
-			evCanceled(7, 1, Buy, 100, 1, 5),
+			evCanceled(7, 1, Buy, 100, 1, 5, 2),
 		},
 		wantBids: []Level{lvl(100, 5, 2)},
 		wantOrders: map[OrderID]Order{
@@ -1041,7 +1054,7 @@ var m1Scenarios = append([]scenario{
 		setup: threeBidsAt100,
 		cmd:   cancel(2),
 		want: []Event{
-			evCanceled(7, 2, Buy, 100, 2, 4),
+			evCanceled(7, 2, Buy, 100, 2, 4, 2),
 		},
 		wantBids: []Level{lvl(100, 4, 2)},
 		wantOrders: map[OrderID]Order{
@@ -1055,7 +1068,7 @@ var m1Scenarios = append([]scenario{
 		setup: threeBidsAt100,
 		cmd:   cancel(3),
 		want: []Event{
-			evCanceled(7, 3, Buy, 100, 3, 3),
+			evCanceled(7, 3, Buy, 100, 3, 3, 2),
 		},
 		wantBids: []Level{lvl(100, 3, 2)},
 		wantOrders: map[OrderID]Order{
@@ -1070,8 +1083,8 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(4, Sell, 100, 4),
 		want: []Event{
 			evAccepted(8, 4, Sell, 100, 4),
-			evTrade(9, 4, 1, Sell, 100, 1, 3),
-			evTrade(10, 4, 3, Sell, 100, 3, 0),
+			evTrade(9, 4, 1, Sell, 100, 1, 3, 1),
+			evTrade(10, 4, 3, Sell, 100, 3, 0, 0),
 		},
 		wantGone: []OrderID{1, 2, 3, 4},
 	},
@@ -1080,7 +1093,7 @@ var m1Scenarios = append([]scenario{
 		setup: []Command{limit(1, Sell, 100, 5), limit(2, Sell, 101, 6)},
 		cmd:   cancel(1),
 		want: []Event{
-			evCanceled(5, 1, Sell, 100, 5, 0),
+			evCanceled(5, 1, Sell, 100, 5, 0, 0),
 		},
 		wantAsks: []Level{lvl(101, 6, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1094,7 +1107,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(3, Buy, 100, 2),
 		want: []Event{
 			evAccepted(6, 3, Buy, 100, 2),
-			evTrade(7, 3, 2, Buy, 100, 2, 4),
+			evTrade(7, 3, 2, Buy, 100, 2, 4, 1),
 		},
 		wantAsks: []Level{lvl(100, 4, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1107,7 +1120,7 @@ var m1Scenarios = append([]scenario{
 		setup: []Command{limit(1, Sell, 100, 10), limit(2, Buy, 100, 4)},
 		cmd:   cancel(1),
 		want: []Event{
-			evCanceled(5, 1, Sell, 100, 6, 0),
+			evCanceled(5, 1, Sell, 100, 6, 0, 0),
 		},
 		wantGone: []OrderID{1, 2},
 		wantQty: map[OrderID]orderQty{
@@ -1119,7 +1132,7 @@ var m1Scenarios = append([]scenario{
 		setup: []Command{limit(1, Sell, 100, 4), limit(2, Buy, 101, 10)},
 		cmd:   cancel(2),
 		want: []Event{
-			evCanceled(6, 2, Buy, 101, 6, 0),
+			evCanceled(6, 2, Buy, 101, 6, 0, 0),
 		},
 		wantGone: []OrderID{1, 2},
 		wantQty: map[OrderID]orderQty{
@@ -1203,7 +1216,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(1, Buy, 99, 3),
 		want: []Event{
 			evAccepted(5, 1, Buy, 99, 3),
-			evRested(6, 1, Buy, 99, 3, 3),
+			evRested(6, 1, Buy, 99, 3, 3, 1),
 		},
 		wantBids: []Level{lvl(99, 3, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1216,7 +1229,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(1, Sell, 101, 2),
 		want: []Event{
 			evAccepted(4, 1, Sell, 101, 2),
-			evRested(5, 1, Sell, 101, 2, 2),
+			evRested(5, 1, Sell, 101, 2, 2, 1),
 		},
 		wantAsks: []Level{lvl(101, 2, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1231,7 +1244,7 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(10, Sell, 101, 5),
 		want: []Event{
 			evAccepted(19, 10, Sell, 101, 5),
-			evRested(20, 10, Sell, 101, 5, 12),
+			evRested(20, 10, Sell, 101, 5, 12, 2),
 		},
 		wantBids: []Level{lvl(99, 9, 2), lvl(98, 6, 1), lvl(97, 5, 2)},
 		wantAsks: []Level{lvl(101, 12, 2), lvl(102, 4, 2), lvl(104, 2, 1)},
@@ -1247,8 +1260,8 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(10, Buy, 102, 9),
 		want: []Event{
 			evAccepted(19, 10, Buy, 102, 9),
-			evTrade(20, 10, 4, Buy, 101, 7, 0),
-			evTrade(21, 10, 2, Buy, 102, 2, 2),
+			evTrade(20, 10, 4, Buy, 101, 7, 0, 0),
+			evTrade(21, 10, 2, Buy, 102, 2, 2, 2),
 		},
 		wantBids: []Level{lvl(99, 9, 2), lvl(98, 6, 1), lvl(97, 5, 2)},
 		wantAsks: []Level{lvl(102, 2, 2), lvl(104, 2, 1)},
@@ -1264,10 +1277,10 @@ var m1Scenarios = append([]scenario{
 		cmd:   limit(10, Sell, 97, 16),
 		want: []Event{
 			evAccepted(19, 10, Sell, 97, 16),
-			evTrade(20, 10, 1, Sell, 99, 5, 4),
-			evTrade(21, 10, 5, Sell, 99, 4, 0),
-			evTrade(22, 10, 7, Sell, 98, 6, 0),
-			evTrade(23, 10, 3, Sell, 97, 1, 4),
+			evTrade(20, 10, 1, Sell, 99, 5, 4, 1),
+			evTrade(21, 10, 5, Sell, 99, 4, 0, 0),
+			evTrade(22, 10, 7, Sell, 98, 6, 0, 0),
+			evTrade(23, 10, 3, Sell, 97, 1, 4, 2),
 		},
 		wantBids: []Level{lvl(97, 4, 2)},
 		wantAsks: []Level{lvl(101, 7, 1), lvl(102, 4, 2), lvl(104, 2, 1)},
@@ -1345,9 +1358,9 @@ var m2Scenarios = []scenario{
 		cmd:   market(4, Buy, 8),
 		want: []Event{
 			evAccepted(7, 4, Buy, 0, 8),
-			evTrade(8, 4, 1, Buy, 100, 2, 0),
-			evTrade(9, 4, 2, Buy, 105, 3, 0),
-			evTrade(10, 4, 3, Buy, 200, 3, 1),
+			evTrade(8, 4, 1, Buy, 100, 2, 0, 0),
+			evTrade(9, 4, 2, Buy, 105, 3, 0, 0),
+			evTrade(10, 4, 3, Buy, 200, 3, 1, 1),
 		},
 		wantAsks: []Level{lvl(200, 1, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1361,9 +1374,9 @@ var m2Scenarios = []scenario{
 		cmd:   market(4, Sell, 10),
 		want: []Event{
 			evAccepted(7, 4, Sell, 0, 10),
-			evTrade(8, 4, 1, Sell, 100, 2, 0),
-			evTrade(9, 4, 2, Sell, 90, 3, 0),
-			evTrade(10, 4, 3, Sell, 1, 5, 0),
+			evTrade(8, 4, 1, Sell, 100, 2, 0, 0),
+			evTrade(9, 4, 2, Sell, 90, 3, 0, 0),
+			evTrade(10, 4, 3, Sell, 1, 5, 0, 0),
 		},
 		wantGone: []OrderID{1, 2, 3, 4},
 		wantQty: map[OrderID]orderQty{
@@ -1402,8 +1415,8 @@ var m2Scenarios = []scenario{
 		cmd:   market(3, Buy, 10),
 		want: []Event{
 			evAccepted(5, 3, Buy, 0, 10),
-			evTrade(6, 3, 1, Buy, 100, 3, 0),
-			evTrade(7, 3, 2, Buy, 101, 2, 0),
+			evTrade(6, 3, 1, Buy, 100, 3, 0, 0),
+			evTrade(7, 3, 2, Buy, 101, 2, 0, 0),
 			evIOCRemainder(8, 3, Buy, 0, 5),
 		},
 		wantGone: []OrderID{1, 2, 3},
@@ -1419,7 +1432,7 @@ var m2Scenarios = []scenario{
 		cmd:   ioc(3, Buy, 101, 10),
 		want: []Event{
 			evAccepted(5, 3, Buy, 101, 10),
-			evTrade(6, 3, 1, Buy, 100, 3, 0),
+			evTrade(6, 3, 1, Buy, 100, 3, 0, 0),
 			evIOCRemainder(7, 3, Buy, 101, 7),
 		},
 		wantAsks: []Level{lvl(102, 5, 1)},
@@ -1437,8 +1450,8 @@ var m2Scenarios = []scenario{
 		cmd:   ioc(3, Sell, 100, 12),
 		want: []Event{
 			evAccepted(5, 3, Sell, 100, 12),
-			evTrade(6, 3, 1, Sell, 100, 4, 6),
-			evTrade(7, 3, 2, Sell, 100, 6, 0),
+			evTrade(6, 3, 1, Sell, 100, 4, 6, 1),
+			evTrade(7, 3, 2, Sell, 100, 6, 0, 0),
 			evIOCRemainder(8, 3, Sell, 100, 2),
 		},
 		wantGone: []OrderID{1, 2, 3},
@@ -1449,8 +1462,8 @@ var m2Scenarios = []scenario{
 		cmd:   ioc(3, Sell, 100, 5),
 		want: []Event{
 			evAccepted(5, 3, Sell, 100, 5),
-			evTrade(6, 3, 1, Sell, 100, 4, 6),
-			evTrade(7, 3, 2, Sell, 100, 1, 5),
+			evTrade(6, 3, 1, Sell, 100, 4, 6, 1),
+			evTrade(7, 3, 2, Sell, 100, 1, 5, 1),
 		},
 		wantBids: []Level{lvl(100, 5, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1478,9 +1491,9 @@ var m2Scenarios = []scenario{
 		cmd:   fok(4, Buy, 102, 7),
 		want: []Event{
 			evAccepted(7, 4, Buy, 102, 7),
-			evTrade(8, 4, 1, Buy, 100, 2, 0),
-			evTrade(9, 4, 2, Buy, 101, 3, 0),
-			evTrade(10, 4, 3, Buy, 102, 2, 2),
+			evTrade(8, 4, 1, Buy, 100, 2, 0, 0),
+			evTrade(9, 4, 2, Buy, 101, 3, 0, 0),
+			evTrade(10, 4, 3, Buy, 102, 2, 2, 1),
 		},
 		wantAsks: []Level{lvl(102, 2, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1494,8 +1507,8 @@ var m2Scenarios = []scenario{
 		cmd:   fok(4, Sell, 99, 10),
 		want: []Event{
 			evAccepted(7, 4, Sell, 99, 10),
-			evTrade(8, 4, 1, Sell, 100, 4, 0),
-			evTrade(9, 4, 2, Sell, 99, 6, 0),
+			evTrade(8, 4, 1, Sell, 100, 4, 0, 0),
+			evTrade(9, 4, 2, Sell, 99, 6, 0, 0),
 		},
 		wantBids: []Level{lvl(98, 5, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1556,8 +1569,8 @@ var m2Scenarios = []scenario{
 		cmd:   marketFOK(3, Buy, 5),
 		want: []Event{
 			evAccepted(5, 3, Buy, 0, 5),
-			evTrade(6, 3, 1, Buy, 100, 2, 0),
-			evTrade(7, 3, 2, Buy, 150, 3, 0),
+			evTrade(6, 3, 1, Buy, 100, 2, 0, 0),
+			evTrade(7, 3, 2, Buy, 150, 3, 0, 0),
 		},
 		wantGone: []OrderID{1, 2, 3},
 	},
@@ -1583,8 +1596,8 @@ var m2Scenarios = []scenario{
 		cmd:   market(4, Sell, 5),
 		want: []Event{
 			evAccepted(7, 4, Sell, 0, 5),
-			evTrade(8, 4, 1, Sell, 100, 3, 4),
-			evTrade(9, 4, 2, Sell, 100, 2, 2),
+			evTrade(8, 4, 1, Sell, 100, 3, 4, 1),
+			evTrade(9, 4, 2, Sell, 100, 2, 2, 1),
 		},
 		wantBids: []Level{lvl(100, 2, 1), lvl(99, 5, 1)},
 		wantOrders: map[OrderID]Order{
@@ -1598,7 +1611,7 @@ var m2Scenarios = []scenario{
 		cmd:   market(2, Buy, MaxQty),
 		want: []Event{
 			evAccepted(3, 2, Buy, 0, MaxQty),
-			evTrade(4, 2, 1, Buy, MaxPrice, MaxQty, 0),
+			evTrade(4, 2, 1, Buy, MaxPrice, MaxQty, 0, 0),
 		},
 		wantGone: []OrderID{1, 2},
 		wantQty: map[OrderID]orderQty{
@@ -1611,8 +1624,8 @@ var m2Scenarios = []scenario{
 		cmd:   ioc(4, Buy, 102, 10),
 		want: []Event{
 			evAccepted(7, 4, Buy, 102, 10),
-			evTrade(8, 4, 1, Buy, 100, 2, 0),
-			evTrade(9, 4, 2, Buy, 101, 3, 0),
+			evTrade(8, 4, 1, Buy, 100, 2, 0, 0),
+			evTrade(9, 4, 2, Buy, 101, 3, 0, 0),
 			evIOCRemainder(10, 4, Buy, 102, 5),
 		},
 		wantAsks: []Level{lvl(103, 4, 1)},
@@ -1627,9 +1640,9 @@ var m2Scenarios = []scenario{
 		cmd:   fok(5, Sell, 100, 7),
 		want: []Event{
 			evAccepted(9, 5, Sell, 100, 7),
-			evTrade(10, 5, 1, Sell, 101, 2, 1),
-			evTrade(11, 5, 2, Sell, 101, 1, 0),
-			evTrade(12, 5, 3, Sell, 100, 4, 0),
+			evTrade(10, 5, 1, Sell, 101, 2, 1, 1),
+			evTrade(11, 5, 2, Sell, 101, 1, 0, 0),
+			evTrade(12, 5, 3, Sell, 100, 4, 0, 0),
 		},
 		wantBids: []Level{lvl(99, 9, 1)},
 		wantGone: []OrderID{1, 2, 3, 5},
@@ -1651,8 +1664,8 @@ var m2Scenarios = []scenario{
 		cmd: market(6, Buy, 12),
 		want: []Event{
 			evAccepted(12, 6, Buy, 0, 12),
-			evTrade(13, 6, 1, Buy, 100, 3, 0),
-			evTrade(14, 6, 2, Buy, 101, 5, 0),
+			evTrade(13, 6, 1, Buy, 100, 3, 0, 0),
+			evTrade(14, 6, 2, Buy, 101, 5, 0, 0),
 			evIOCRemainder(15, 6, Buy, 0, 4),
 		},
 		wantGone: []OrderID{1, 2, 3, 4, 5, 6},

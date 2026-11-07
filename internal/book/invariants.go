@@ -102,7 +102,7 @@ func (b *Book) checkLevel(s Side, l *levelNode) (int, error) {
 	switch {
 	case l.tail != prev:
 		return 0, errors.New("tail is not the last order of the queue")
-	case l.count != count:
+	case int(l.count) != count:
 		return 0, fmt.Errorf("order count is %d, the queue holds %d", l.count, count)
 	case l.totalQty != total:
 		return 0, fmt.Errorf("total quantity is %d, the queue holds %d", l.totalQty, total)
