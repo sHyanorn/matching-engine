@@ -21,7 +21,7 @@ import (
 func tamperProxy(t *testing.T, addr string, tamper func(n int, msg []byte) [][]byte) string {
 	t.Helper()
 	upstream := &url.URL{Scheme: "http", Host: addr}
-	rp := httputil.NewSingleHostReverseProxy(upstream)
+	rp := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(upstream) }}
 	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/stream" {
 			rp.ServeHTTP(w, r)

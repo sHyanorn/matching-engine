@@ -57,3 +57,4 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Tighten README and API wording to match the implementation
 - [x] Rerun the end-to-end sweep, and a sweep with an fsync per batch
 - [x] Rerun the core benchmarks on the machine of the end-to-end sweep
+- [x] Build with Go 1.27.3

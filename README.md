@@ -56,7 +56,7 @@ Open http://localhost:8080 for the live book, and send it order flow:
 docker compose run --rm loadgen -rate 2000 -warmup 0s -duration 60s
 ```
 
-With Go 1.24, from the repository root:
+With Go 1.27, from the repository root:
 
 ```bash
 go run ./cmd/engine

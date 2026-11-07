@@ -1,0 +1,82 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+                              │  go1247.txt  │             go1273.txt              │
+                              │    sec/op    │    sec/op     vs base               │
+Apply/sd=5-4                    188.3n ± 14%   190.3n ±  9%       ~ (p=0.631 n=10)
+Apply/sd=50-4                   205.9n ±  7%   195.9n ±  4%       ~ (p=0.093 n=10)
+ApplyDeep/resting=10k/sd=5-4    204.5n ±  7%   201.7n ±  9%       ~ (p=0.684 n=10)
+ApplyDeep/resting=10k/sd=50-4   201.5n ±  8%   186.6n ±  9%  -7.42% (p=0.029 n=10)
+ApplyDeep/resting=1M/sd=5-4     217.7n ±  5%   215.0n ±  9%       ~ (p=0.796 n=10)
+ApplyDeep/resting=1M/sd=50-4    232.9n ±  3%   229.4n ± 15%       ~ (p=0.853 n=10)
+RestingOrders-4                 468.3m ±  6%   446.2m ±  9%       ~ (p=0.143 n=10)
+geomean                         1.681µ         1.632µ        -2.90%
+
+                              │ go1247.txt  │              go1273.txt              │
+                              │ allocs/cmd  │ allocs/cmd   vs base                 │
+Apply/sd=5-4                    594.5m ± 0%   594.5m ± 0%       ~ (p=1.000 n=10)
+Apply/sd=50-4                   683.7m ± 0%   683.7m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    592.3m ± 0%   592.3m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   682.5m ± 0%   682.5m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=1M/sd=5-4     592.3m ± 0%   592.3m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=1M/sd=50-4    682.5m ± 0%   682.5m ± 0%       ~ (p=1.000 n=10) ¹
+geomean                         636.4m        636.4m       +0.00%
+¹ all samples are equal
+
+                              │  go1247.txt  │             go1273.txt              │
+                              │    cmds/s    │    cmds/s     vs base               │
+Apply/sd=5-4                    5.310M ± 12%   5.254M ±  9%       ~ (p=0.631 n=10)
+Apply/sd=50-4                   4.855M ±  8%   5.106M ±  4%       ~ (p=0.105 n=10)
+ApplyDeep/resting=10k/sd=5-4    4.890M ±  8%   4.959M ±  8%       ~ (p=0.684 n=10)
+ApplyDeep/resting=10k/sd=50-4   4.962M ±  7%   5.359M ±  9%  +7.98% (p=0.029 n=10)
+ApplyDeep/resting=1M/sd=5-4     4.594M ±  5%   4.650M ±  8%       ~ (p=0.796 n=10)
+ApplyDeep/resting=1M/sd=50-4    4.295M ±  3%   4.359M ± 13%       ~ (p=0.853 n=10)
+geomean                         4.807M         4.935M        +2.66%
+
+                              │ go1247.txt  │             go1273.txt             │
+                              │ trades/cmd  │ trades/cmd   vs base               │
+Apply/sd=5-4                    368.1m ± 0%   368.1m ± 0%       ~ (p=0.303 n=10)
+Apply/sd=50-4                   528.2m ± 0%   528.2m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    368.1m ± 0%   368.1m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   528.2m ± 0%   528.2m ± 0%       ~ (p=0.582 n=10)
+ApplyDeep/resting=1M/sd=5-4     368.1m ± 0%   368.1m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=1M/sd=50-4    528.2m ± 0%   528.1m ± 0%       ~ (p=0.370 n=10)
+geomean                         440.9m        440.9m       -0.00%
+
+                              │  go1247.txt  │              go1273.txt               │
+                              │     B/op     │     B/op      vs base                 │
+Apply/sd=5-4                      73.00 ± 0%     73.00 ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                     70.00 ± 0%     70.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=5-4      55.00 ± 0%     55.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=50-4     61.00 ± 0%     61.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=5-4       55.00 ± 0%     55.00 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=50-4      61.00 ± 0%     61.00 ± 0%       ~ (p=1.000 n=10) ¹
+RestingOrders-4                 163.7Mi ± 0%   163.7Mi ± 0%       ~ (p=0.631 n=10)
+geomean                           517.0          517.0       -0.00%
+¹ all samples are equal
+
+                              │  go1247.txt   │              go1273.txt              │
+                              │   allocs/op   │  allocs/op   vs base                 │
+Apply/sd=5-4                     0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                    0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=5-4     0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=50-4    0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=5-4      0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=50-4     0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹
+RestingOrders-4                 1.010M ± 0%     1.010M ± 0%       ~ (p=0.616 n=10)
+geomean                                     ²                -0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+
+                │ go1247.txt │          go1273.txt          │
+                │  B/order   │  B/order    vs base          │
+RestingOrders-4   133.9 ± 0%   133.9 ± 0%  ~ (p=0.495 n=10)
+
+                │ go1247.txt │          go1273.txt          │
+                │    MiB     │    MiB      vs base          │
+RestingOrders-4   127.7 ± 0%   127.7 ± 0%  ~ (p=0.495 n=10)
+
+                │ go1247.txt  │          go1273.txt           │
+                │  sec/order  │  sec/order   vs base          │
+RestingOrders-4   468.2n ± 6%   446.3n ± 9%  ~ (p=0.143 n=10)

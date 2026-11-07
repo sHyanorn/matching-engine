@@ -2,7 +2,7 @@
 # Needs BuildKit (the default builder), for the mounts below and for
 # WORKDIR to create /data owned by the image's nonroot user.
 
-FROM --platform=$BUILDPLATFORM golang:1.24.7@sha256:2c5f7a0c252a17cf6aa30ddee15caa0f485ee29410a6ea64cddb62eea2b07bdf AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:e519d3b0a5b285e5aa53ab9eef02bc6bbb9cb04608389b743a136a9ce75f0d1e AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 RUN --mount=type=cache,target=/go/pkg/mod \
