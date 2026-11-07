@@ -1,0 +1,10 @@
+BTC-USD: target 60000/s, achieved 59101/s over 30s after 10s warmup, 64 connections
+cancel_canceled 178564, cancel_finished 59271, cancel_skipped 33, cancel_unknown 302684, order_rested 904335, order_traded 355113
+trades: 878333 in replies, 840312 pushed, counter rose 878333
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+order to trade push     334613    80772   475616   509165   529551   531832   534343
+request to reply       1799967    95133   477460   509231   528786   530712   540036
+service time           1799967      737     1994     5466     9094    15857    28181
+send lag               1799967    94008   476427   507997   527729   528984   529333
+loadgen hiccup           23296      119     2449     7536    13949    18002    20002
+invalid: achieved 59101/s, below 99% of the target; 20500 orders that traded got no trade push; trade stream ended: failed to get reader: received close frame: status = StatusPolicyViolation and reason = "slow consumer"; 840312 trade pushes for 878333 trades in the replies

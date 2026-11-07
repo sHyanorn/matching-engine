@@ -11,7 +11,7 @@ Measured on a 4 vCPU cloud VM; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 | Metric | Value |
 |---|---|
 | Core throughput, one symbol | 3.0M to 4.5M commands/s |
-| End-to-end p99, order to trade push | 3.8 ms at 10k requests/s (70% orders, 30% cancels) |
+| End-to-end p99, order to trade push | 1.8 ms at 10k requests/s, 41 ms at 50k (70% orders, 30% cancels) |
 | Matching core heap, 1M resting orders (`BenchmarkRestingOrders`) | 128 MiB |
 | Test coverage | 92% of statements |
 
