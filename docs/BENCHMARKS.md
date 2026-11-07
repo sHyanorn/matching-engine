@@ -1,25 +1,25 @@
 # Benchmarks
 
-Every number here comes from 4 vCPU cloud VMs of one type and can be measured again with the commands at the end. VMs of this type differ in speed, so each section names the results it comes from, and only results from one sweep or one benchmark run compare with each other. The raw results are in [`bench-results/`](../bench-results).
+Every number here comes from one machine and can be measured again with the commands at the end, except where a section says otherwise: the optimization sweeps ran on another, slower VM of the same type, and the Windows figures come from GitHub's runners. The raw results are in [`bench-results/`](../bench-results).
 
 **Machine**: a cloud VM with an Intel Xeon at 2.10 GHz, 4 vCPUs and 16 GB, Linux 6.18 on ext4, Go 1.24.7. In the end-to-end runs the load generator and the engine share the 4 vCPUs.
 
 ## Matching core
 
-`BenchmarkApply` replays 65,536 commands of the SPEC §9 order flow ([`internal/flow`](../internal/flow)): GTC limit orders priced around the mid with a normal spread of 5 or 50 ticks, and about 30% cancels of earlier orders, some of them already filled. Each pass starts from an empty book. `BenchmarkApplyDeep` runs the same flow on a book that also holds 10k or 1M resting orders outside the flow's prices, as a book does after hours of trading. The figures are medians of 10 runs ([`bench-results/m5-core/baseline.txt`](../bench-results/m5-core/baseline.txt)).
+`BenchmarkApply` replays 65,536 commands of the SPEC §9 order flow ([`internal/flow`](../internal/flow)): GTC limit orders priced around the mid with a normal spread of 5 or 50 ticks, and about 30% cancels of earlier orders, some of them already filled. Each pass starts from an empty book. `BenchmarkApplyDeep` runs the same flow on a book that also holds 10k or 1M resting orders outside the flow's prices, as a book does after hours of trading. The figures are medians of 10 runs ([`bench-results/core-current`](../bench-results/core-current/benchstat.txt)).
 
 | Book | Spread | ns per command | Commands per second | Allocations per command |
 |---|---|---|---|---|
-| empty | 5 ticks | 224 ± 7% | 4.47M | 0.59 |
-| empty | 50 ticks | 242 ± 7% | 4.13M | 0.68 |
-| 10k resting | 5 ticks | 237 ± 4% | 4.22M | 0.59 |
-| 10k resting | 50 ticks | 245 ± 9% | 4.09M | 0.68 |
-| 1M resting | 5 ticks | 280 ± 8% | 3.57M | 0.59 |
-| 1M resting | 50 ticks | 334 ± 14% | 3.00M | 0.68 |
+| empty | 5 ticks | 144 ± 3% | 6.95M | 0.59 |
+| empty | 50 ticks | 151 ± 4% | 6.61M | 0.68 |
+| 10k resting | 5 ticks | 155 ± 5% | 6.46M | 0.59 |
+| 10k resting | 50 ticks | 144 ± 3% | 6.93M | 0.68 |
+| 1M resting | 5 ticks | 186 ± 2% | 5.39M | 0.59 |
+| 1M resting | 50 ticks | 198 ± 2% | 5.05M | 0.68 |
 
-The SPEC target of 1M operations per second on one symbol holds with 3 to 4.5 times to spare. Go's `allocs/op` prints 0 for these runs because it rounds down; `allocs/cmd` keeps the fraction. An order that rests allocates its node, a new price level its tree node, and the ID map grows now and then.
+The SPEC target of 1M operations per second on one symbol holds with 5 to 7 times to spare. An earlier run on another VM of this type ([`m5-core`](../bench-results/m5-core/baseline.txt)) took 224 to 334 ns, 1.5 to 1.7 times as long. Go's `allocs/op` prints 0 for these runs because it rounds down; `allocs/cmd` keeps the fraction. An order that rests allocates its node, a new price level its tree node, and the ID map grows now and then.
 
-**Memory**: in the matching core alone, 1,000,000 resting orders on 1,000 price levels per side hold 127.7 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`). The engine process holds more, among it the status of every resting order and of the last 100,000 finished ones per symbol (D022).
+**Memory**: in the matching core alone, 1,000,000 resting orders on 1,000 price levels per side hold 127.7 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`), as in the earlier run. The engine process holds more, among it the status of every resting order and of the last 100,000 finished ones per symbol (D022).
 
 ## End to end
 
@@ -49,7 +49,7 @@ Latency from order to trade push, in ms ([`bench-results/e2e-review/default`](..
 - **Capacity.** At 60k requests/s the two processes use up the 4 vCPUs: loadgen sent 1.5% too few requests and fell so far behind on the trade stream that the engine disconnected it as a slow consumer. The engine alone takes about 2 cores at 50k/s. The SPEC target, a p99 under 5 ms at 50,000 orders/s (about 71k requests/s in this flow), is out of reach on this machine; the p99 is under 5 ms up to 15k requests/s.
 - **Engine CPU per request** is the process's CPU time over the run divided by the requests it answered. It falls as the rate rises because the fixed costs, from idle wakeups to GC, are shared by more requests.
 - **The tail** above p99 depends on single pauses. The hiccup meter runs no engine code, yet it saw pauses of up to 53 ms, in the 25k/s run with a 10.3 ms p99. This cloud VM stalls now and then for up to about 128 ms, as one earlier 10k/s run recorded ([`after-fsync`](../bench-results/m5-e2e/after-fsync)). The spread between runs at one rate shows how far to trust a single run.
-- **An earlier sweep** at an earlier commit ([`after-fsync`](../bench-results/m5-e2e/after-fsync), ec2f59e, before D035 and D036) gave a p99 of 3.82 ms at 10k/s and was invalid at 40k/s, on another VM of this type. The core table above also comes from an earlier VM: `BenchmarkApply` took 224 ns per command there ([`m5-core`](../bench-results/m5-core/baseline.txt)) and 147 ns on the VM of this sweep ([`level-orders`](../bench-results/level-orders/before.txt)). So VMs of this type differ by up to half, and the sweeps under Optimizations compare only with each other.
+- **An earlier sweep** at an earlier commit ([`after-fsync`](../bench-results/m5-e2e/after-fsync), ec2f59e, before D035 and D036) ran on another VM of this type, a slower one: its engine took 131 µs of CPU per request at 10k/s against 95 µs here, its p99 there was 3.82 ms, and 40k/s was invalid. The sweeps under Optimizations ran on that VM too; each compares steps measured there, so their comparisons hold.
 
 ### An fsync before every reply
 
@@ -81,7 +81,7 @@ Reading and writing HTTP takes the largest share, about 19% in system calls alon
 
 ## Optimizations
 
-Each change was measured with the full sweep above, on the earlier VM; [`bench-results/m5-e2e`](../bench-results/m5-e2e) holds the three sweeps.
+Each change was measured with the full sweep above, on the slower VM; [`bench-results/m5-e2e`](../bench-results/m5-e2e) holds the three sweeps.
 
 | Requests/s | p99 before | Keys scanned | And fsync aside | Engine CPU per request |
 |---|---|---|---|---|
