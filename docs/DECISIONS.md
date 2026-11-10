@@ -52,7 +52,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D009 Command.Validate is the single stateless validation
 - Date: 2026-11-04
-- Decision: `Validate()` returns a Reason (ReasonNone when valid) and runs its checks in a fixed order. Market orders must be IOC or FOK with Price 0; limit orders must have Price in [1, MaxPrice]; cancels may carry only OrderID and Timestamp. The API uses it to return 400 directly, and commands that fail it are neither logged nor applied; the book checks every command again. The API fills in Kind and OrderID for new orders itself, so invalid_command or invalid_order_id on a new order indicates an API bug and should return 500
+- Decision: `Validate()` returns a Reason (ReasonNone when valid) and runs its checks in a fixed order. Market orders must be IOC or FOK with Price 0; limit orders must have Price in [1, MaxPrice]; cancels may carry only OrderID and Timestamp. The API uses it to return 400 directly, and commands that fail it are neither logged nor applied; the book checks every command again. The engine fills in Kind and a new order's OrderID itself, and the API checks a cancel's ID before the engine sees it, so invalid_command or invalid_order_id from the engine indicates a server bug and returns 500
 - Rationale: Both layers share one function, so their conclusions cannot diverge; the fixed order makes the reason deterministic when several checks fail, keeping replay results stable; each intent has exactly one valid representation and unused fields must be 0, so future features such as order amendment can use those fields without affecting old logs
 - Alternatives: returning error (allocates, and callers need type assertions); ignoring TIF and Price on market orders (non-canonical log)
 
@@ -94,7 +94,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D016 One command log per symbol
 - Date: 2026-11-05
-- Decision: Each symbol's goroutine owns one append-only file, `<DataDir>/<symbol>.log`. The header holds a format version, the symbol and its index; each record holds the command's fixed fields and client_id, prefixed by its length and followed by a CRC-32C. On startup a torn last record, or a zero-filled tail, is truncated; damage anywhere else stops the engine. A new log is created by writing its header to a temporary file, syncing it and renaming it into place. D027 covers Windows, and D028 keeps a second engine out of the directory
+- Decision: Each symbol's goroutine owns one append-only file, `<DataDir>/<symbol>.log`. The header holds a format version, the symbol and its index; each record holds the command's fixed fields and client_id, prefixed by its length and followed by a CRC-32C. On startup a torn last record, or a zero-filled tail, is truncated; damage anywhere else stops the engine. A new log is created by writing its header to a temporary file, syncing it and renaming it into place. An empty log file therefore counts as damage and stops the engine: a log appears only through that rename, with its header already synced, appends only grow it, and a torn tail is never cut shorter than the header. D027 covers Windows, and D028 keeps a second engine out of the directory
 - Rationale: No lock or shared writer between symbols, and each book replays independently. The checksum tells a crash-truncated tail, which is safe to drop, from real corruption, which is not
 - Alternatives: one shared log (needs a lock or a writer goroutine); no checksum (silent corruption)
 
