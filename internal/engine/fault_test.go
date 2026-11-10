@@ -242,6 +242,7 @@ func TestFailedSyncOnTick(t *testing.T) {
 func TestQueuedCommandOutlivesContext(t *testing.T) {
 	g := testclock.New(nil)
 	e := newTestEngine(t, Config{Symbols: []string{"A"}, MaxBatch: 1, Clock: g.Now})
+	t.Cleanup(g.ReleaseAll)
 	stalled, release := g.Stall()
 	type result struct {
 		r   Result
@@ -283,6 +284,7 @@ func TestCanceledSubscribeDoesNotLeak(t *testing.T) {
 		return g.Now()
 	}
 	e = newTestEngine(t, Config{Symbols: []string{"A"}, MaxBatch: 1, Clock: clock})
+	t.Cleanup(g.ReleaseAll)
 	stalled, release := g.Stall()
 	go func() { _, _ = e.PlaceOrder(context.Background(), limitOrder("A", book.Buy, 100, 1)) }()
 	<-stalled

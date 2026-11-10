@@ -33,6 +33,7 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 	const queue = 4
 	g := testclock.New(nil)
 	e := newTestEngine(t, Config{Symbols: []string{"A", "B"}, QueueSize: queue, MaxBatch: 1, Clock: g.Now})
+	t.Cleanup(g.ReleaseAll) // before the engine's cleanup, which waits for the book
 
 	sub, err := e.Subscribe(ctx, "A", 64, 0)
 	if err != nil {
