@@ -279,6 +279,18 @@ func TestEngineRefusesBadLogs(t *testing.T) {
 	if _, err := New(Config{Symbols: []string{"A"}, DataDir: dir}); err == nil || !strings.Contains(err.Error(), "index 1") {
 		t.Errorf("reordered symbols: New err = %v", err)
 	}
+	// A log without even a header: a new log is renamed into place with
+	// its header written, so the engine never leaves one.
+	dir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "A.log"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := New(Config{Symbols: []string{"A"}, DataDir: dir}); !errors.Is(err, ErrCorruptLog) {
+		t.Errorf("empty log: New err = %v", err)
+		if err == nil {
+			mustClose(t, e)
+		}
+	}
 }
 
 // mustClose closes e and fails t if Close reports an error.

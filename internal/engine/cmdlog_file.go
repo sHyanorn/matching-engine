@@ -113,18 +113,11 @@ func openLog(path, symbol string, index int, cfg Config, apply func(logRecord) e
 }
 
 // replayLog reads f from its header to its end and leaves it positioned
-// for appending. An empty file, which only an older engine could have
-// left, gets a header.
+// for appending.
 func replayLog(f *os.File, symbol string, index int, logger *slog.Logger, apply func(logRecord) error) error {
 	info, err := f.Stat()
 	if err != nil {
 		return err
-	}
-	if info.Size() == 0 {
-		if _, err := f.Write(appendHeader(nil, symbol, index)); err != nil {
-			return err
-		}
-		return f.Sync()
 	}
 	start, err := readHeader(f, symbol, index)
 	if err != nil {
