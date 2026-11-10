@@ -205,8 +205,8 @@ func TestEngineRestart(t *testing.T) {
 		}
 	}
 	r, err := e2.PlaceOrder(ctx, limitOrder("A", book.Buy, 1, 1))
-	if err != nil || seqOf(r.OrderID) <= seqOf(last) {
-		t.Fatalf("first ID after restart = %d (counter %d), last before %d (counter %d), err %v", r.OrderID, seqOf(r.OrderID), last, seqOf(last), err)
+	if err != nil || counterOf(r.OrderID) <= counterOf(last) {
+		t.Fatalf("first ID after restart = %d (counter %d), last before %d (counter %d), err %v", r.OrderID, counterOf(r.OrderID), last, counterOf(last), err)
 	}
 }
 
@@ -322,8 +322,8 @@ func writeLog(t *testing.T, dir string, recs ...logRecord) {
 // above anything issued.
 func TestRestartCounterFromNewOrdersOnly(t *testing.T) {
 	ctx := context.Background()
-	order := func(seq uint64) logRecord {
-		return logRecord{cmd: book.Command{Kind: book.CommandNewOrder, OrderID: makeOrderID(seq, 0), Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1, Timestamp: 1}}
+	order := func(counter uint64) logRecord {
+		return logRecord{cmd: book.Command{Kind: book.CommandNewOrder, OrderID: makeOrderID(counter, 0), Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1, Timestamp: 1}}
 	}
 	cancelOf := func(id book.OrderID) logRecord {
 		return logRecord{cmd: book.Command{Kind: book.CommandCancel, OrderID: id, Timestamp: 2}}
@@ -343,8 +343,8 @@ func TestRestartCounterFromNewOrdersOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		r, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 90, 1))
-		if err != nil || seqOf(r.OrderID) != tc.want {
-			t.Errorf("%s: next ID has counter %d, err %v; want %d", tc.name, seqOf(r.OrderID), err, tc.want)
+		if err != nil || counterOf(r.OrderID) != tc.want {
+			t.Errorf("%s: next ID has counter %d, err %v; want %d", tc.name, counterOf(r.OrderID), err, tc.want)
 		}
 		mustClose(t, e)
 	}

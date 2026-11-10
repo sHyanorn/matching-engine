@@ -147,8 +147,8 @@ func TestOrderIDsCarryTheirSymbol(t *testing.T) {
 				t.Fatalf("round %d, %s: ID %d has symbol index %d (or repeats)", round, s, r.OrderID, symbolIndexOf(r.OrderID))
 			}
 			seen[r.OrderID] = true
-			if want := uint64(round*len(syms) + i + 1); seqOf(r.OrderID) != want {
-				t.Fatalf("ID %d has counter %d, want %d", r.OrderID, seqOf(r.OrderID), want)
+			if want := uint64(round*len(syms) + i + 1); counterOf(r.OrderID) != want {
+				t.Fatalf("ID %d has counter %d, want %d", r.OrderID, counterOf(r.OrderID), want)
 			}
 		}
 	}

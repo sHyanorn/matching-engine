@@ -97,7 +97,7 @@ type market struct {
 // truncated away. It returns the market, the highest order-ID counter
 // value of a logged new order, and whether it created the log, which it
 // reports even with an error.
-func openMarket(symbol string, index int, cfg Config) (m *market, maxSeq uint64, created bool, err error) {
+func openMarket(symbol string, index int, cfg Config) (m *market, maxCounter uint64, created bool, err error) {
 	m = &market{
 		symbol:       symbol,
 		index:        index,
@@ -119,12 +119,12 @@ func openMarket(symbol string, index int, cfg Config) (m *market, maxSeq uint64,
 	if err != nil {
 		return nil, 0, created, err
 	}
-	if maxSeq, err = m.replay(f, cfg.onReplay); err != nil {
+	if maxCounter, err = m.replay(f, cfg.onReplay); err != nil {
 		_ = f.Close() // the replay error is the one to report
 		return nil, 0, created, fmt.Errorf("%s: %w", path, err)
 	}
 	m.file = f
-	return m, maxSeq, created, nil
+	return m, maxCounter, created, nil
 }
 
 // createLog creates a log holding only its header, unless path exists, and
@@ -177,7 +177,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 	if err != nil {
 		return 0, err
 	}
-	var maxSeq uint64
+	var maxCounter uint64
 	good, torn, err := readRecords(f, start, info.Size(), func(rec logRecord) error {
 		c := rec.cmd
 		if r := c.Validate(); r != book.ReasonNone {
@@ -188,7 +188,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 			if symbolIndexOf(c.OrderID) != m.index {
 				return fmt.Errorf("order %d was issued for another symbol", c.OrderID)
 			}
-			maxSeq = max(maxSeq, seqOf(c.OrderID))
+			maxCounter = max(maxCounter, counterOf(c.OrderID))
 		}
 		m.out = m.book.Apply(c, m.out[:0])
 		m.orders.track(c, rec.clientID, m.out)
@@ -213,7 +213,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		return 0, err
 	}
-	return maxSeq, nil
+	return maxCounter, nil
 }
 
 // run is the market's event loop. It takes the next request, then up to

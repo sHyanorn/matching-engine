@@ -110,7 +110,8 @@ const (
 
 var symbolPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9._-]{0,31}$`)
 
-func (c *Config) setDefaults() error {
+// normalize rejects an invalid Config and fills in the defaults.
+func (c *Config) normalize() error {
 	if len(c.Symbols) == 0 {
 		return errors.New("engine: no symbols configured")
 	}
@@ -161,15 +162,15 @@ func (c *Config) setDefaults() error {
 // no locks and every book's result is deterministic. All Engine methods are
 // safe for concurrent use.
 type Engine struct {
-	markets  []*market
-	bySymbol map[string]*market
-	nextSeq  atomic.Uint64 // last counter value issued for an order ID
-	reserved atomic.Uint64 // highest counter value durably reserved (D021)
-	reserve  sync.Mutex    // serializes extending the reservation
-	ids      idStore
-	lock     *os.File // held on DataDir until Close (D028)
-	unlock   sync.Once
-	errLock  error // of releasing lock
+	markets    []*market
+	bySymbol   map[string]*market
+	lastIssued atomic.Uint64 // last counter value issued for an order ID
+	reserved   atomic.Uint64 // highest counter value durably reserved (D021)
+	reserve    sync.Mutex    // serializes extending the reservation
+	ids        idStore
+	lock       *os.File // held on DataDir until Close (D028)
+	unlock     sync.Once
+	errLock    error // of releasing lock
 
 	// mu guards closed and the sends to market queues, so Close never
 	// closes a queue while a send to it is in progress.
@@ -184,7 +185,7 @@ type Engine struct {
 // another engine has the directory, New returns ErrDataDirInUse having
 // read or written nothing in it.
 func New(cfg Config) (*Engine, error) {
-	if err := cfg.setDefaults(); err != nil {
+	if err := cfg.normalize(); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
@@ -224,9 +225,9 @@ func New(cfg Config) (*Engine, error) {
 	// deleted log, unless the symbol is new to this directory.
 	_, statErr := os.Stat(e.ids.path)
 	hasState := statErr == nil
-	var maxSeq uint64
+	var maxCounter uint64
 	for i, s := range cfg.Symbols {
-		m, seq, isNew, err := openMarket(s, i, cfg)
+		m, counter, isNew, err := openMarket(s, i, cfg)
 		path := filepath.Join(cfg.DataDir, s+".log")
 		if isNew {
 			created = append(created, path)
@@ -241,14 +242,14 @@ func New(cfg Config) (*Engine, error) {
 		}
 		e.markets = append(e.markets, m)
 		e.bySymbol[s] = m
-		maxSeq = max(maxSeq, seq)
+		maxCounter = max(maxCounter, counter)
 	}
 	start, err := e.ids.load()
 	if err != nil {
 		return fail(err)
 	}
-	start = max(start, maxSeq)
-	e.nextSeq.Store(start)
+	start = max(start, maxCounter)
+	e.lastIssued.Store(start)
 	e.reserved.Store(start)
 	if err := e.extendReservation(start); err != nil {
 		return fail(err)
@@ -327,11 +328,11 @@ func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err // nothing submitted, so no ID is taken
 	}
-	seq, err := e.nextID()
+	counter, err := e.nextID()
 	if err != nil {
 		return Result{}, err
 	}
-	id := makeOrderID(seq, m.index)
+	id := makeOrderID(counter, m.index)
 	cmd := book.Command{
 		Kind: book.CommandNewOrder, OrderID: id,
 		Side: o.Side, Type: o.Type, TIF: o.TIF, Price: o.Price, Qty: o.Qty,
@@ -438,7 +439,7 @@ func (e *Engine) QueueLen(symbol string) (int, bool) {
 // can have issued it.
 func (e *Engine) marketOf(id book.OrderID) (*market, bool) {
 	i := symbolIndexOf(id)
-	if seq := seqOf(id); seq == 0 || seq > e.nextSeq.Load() || i >= len(e.markets) {
+	if c := counterOf(id); c == 0 || c > e.lastIssued.Load() || i >= len(e.markets) {
 		return nil, false
 	}
 	return e.markets[i], true
@@ -447,13 +448,13 @@ func (e *Engine) marketOf(id book.OrderID) (*market, bool) {
 // nextID issues the next order-ID counter value, first extending the
 // durable reservation if the value lies beyond it (D021).
 func (e *Engine) nextID() (uint64, error) {
-	seq := e.nextSeq.Add(1)
-	if seq <= e.reserved.Load() {
-		return seq, nil
+	counter := e.lastIssued.Add(1)
+	if counter <= e.reserved.Load() {
+		return counter, nil
 	}
 	e.reserve.Lock()
 	defer e.reserve.Unlock()
-	if seq > e.reserved.Load() {
+	if counter > e.reserved.Load() {
 		// Not once closed: Close unlocks DataDir, and another engine may
 		// own the ids file by then.
 		e.mu.RLock()
@@ -461,11 +462,11 @@ func (e *Engine) nextID() (uint64, error) {
 		if e.closed {
 			return 0, ErrClosed
 		}
-		if err := e.extendReservation(seq); err != nil {
+		if err := e.extendReservation(counter); err != nil {
 			return 0, err
 		}
 	}
-	return seq, nil
+	return counter, nil
 }
 
 // extendReservation durably reserves the block after from. The caller

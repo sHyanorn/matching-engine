@@ -8,12 +8,12 @@ import (
 
 func TestOrderIDLayout(t *testing.T) {
 	for _, tc := range []struct {
-		seq uint64
-		sym int
+		counter uint64
+		sym     int
 	}{{1, 0}, {1, 255}, {2, 7}, {1<<45 - 1, 3}} {
-		id := makeOrderID(tc.seq, tc.sym)
-		if id == 0 || seqOf(id) != tc.seq || symbolIndexOf(id) != tc.sym {
-			t.Errorf("makeOrderID(%d, %d) = %d: seq %d, symbol %d", tc.seq, tc.sym, id, seqOf(id), symbolIndexOf(id))
+		id := makeOrderID(tc.counter, tc.sym)
+		if id == 0 || counterOf(id) != tc.counter || symbolIndexOf(id) != tc.sym {
+			t.Errorf("makeOrderID(%d, %d) = %d: counter %d, symbol %d", tc.counter, tc.sym, id, counterOf(id), symbolIndexOf(id))
 		}
 	}
 	// The first 2^45 - 1 orders stay exact as a JSON number; the next
@@ -24,7 +24,7 @@ func TestOrderIDLayout(t *testing.T) {
 	if id := makeOrderID(1<<45, 0); uint64(id) < 1<<53 {
 		t.Errorf("ID %d: the bound in ids.go is not tight", id)
 	}
-	if symbolIndexOf(book.OrderID(0x1_00)) != 0 || seqOf(book.OrderID(0x1_00)) != 1 {
+	if symbolIndexOf(book.OrderID(0x1_00)) != 0 || counterOf(book.OrderID(0x1_00)) != 1 {
 		t.Error("ID 256 is counter 1 of symbol 0")
 	}
 }
