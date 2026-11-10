@@ -87,7 +87,8 @@ type Config struct {
 	// known (D022).
 	History int
 
-	// Logger receives the engine's logs: a symbol's log failure, once
+	// Logger receives the engine's logs: at startup a command log that
+	// was not found or lost a torn tail, and a symbol's log failure, once
 	// (default: discarded).
 	Logger *slog.Logger
 
@@ -219,14 +220,24 @@ func New(cfg Config) (*Engine, error) {
 	if err := syncDir(filepath.Dir(filepath.Clean(cfg.DataDir))); err != nil {
 		return fail(err)
 	}
+	// An ids file without a symbol's log points at a wrong volume or a
+	// deleted log, unless the symbol is new to this directory.
+	_, statErr := os.Stat(e.ids.path)
+	hasState := statErr == nil
 	var maxSeq uint64
 	for i, s := range cfg.Symbols {
 		m, seq, isNew, err := openMarket(s, i, cfg)
+		path := filepath.Join(cfg.DataDir, s+".log")
 		if isNew {
-			created = append(created, filepath.Join(cfg.DataDir, s+".log"))
+			created = append(created, path)
 		}
 		if err != nil {
 			return fail(err)
+		}
+		if isNew && hasState {
+			cfg.Logger.Warn("command log missing from a data directory with earlier state, possibly a wrong volume or a deleted log; starting with an empty book", "symbol", s, "path", path)
+		} else if isNew {
+			cfg.Logger.Info("command log not found; starting with an empty book", "symbol", s, "path", path)
 		}
 		e.markets = append(e.markets, m)
 		e.bySymbol[s] = m

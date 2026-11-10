@@ -207,6 +207,7 @@ func (m *market) replay(f *os.File, observe func(symbol string, evs []book.Event
 		if err := f.Sync(); err != nil {
 			return 0, err
 		}
+		m.logger.Warn("dropped a torn tail from the command log", "symbol", m.symbol, "bytes", info.Size()-good)
 	}
 	// Writes go on at the end, after the last good record.
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
