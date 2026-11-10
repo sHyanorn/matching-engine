@@ -207,7 +207,7 @@ func New(cfg Config) (*Engine, error) {
 	var created []string
 	fail := func(err error) (*Engine, error) {
 		for _, m := range e.markets {
-			_ = m.file.Close() // err is the error to report
+			_ = m.log.close() // err is the error to report
 		}
 		for _, path := range created {
 			_ = os.Remove(path)
@@ -228,11 +228,15 @@ func New(cfg Config) (*Engine, error) {
 	hasState := statErr == nil
 	var maxCounter uint64
 	for i, s := range cfg.Symbols {
-		m, counter, isNew, err := openMarket(s, i, cfg)
 		path := filepath.Join(cfg.DataDir, s+".log")
+		isNew, err := createLog(path, s, i)
 		if isNew {
 			created = append(created, path)
 		}
+		if err != nil {
+			return fail(err)
+		}
+		m, counter, err := openMarket(path, s, i, cfg)
 		if err != nil {
 			return fail(err)
 		}
@@ -421,10 +425,7 @@ func (e *Engine) LogErr(symbol string) error {
 	if !ok {
 		return nil
 	}
-	if err := m.logErr.Load(); err != nil {
-		return *err
-	}
-	return nil
+	return m.log.err()
 }
 
 // QueueLen returns how many requests wait in symbol's queue.

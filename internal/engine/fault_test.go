@@ -61,8 +61,8 @@ func (l *faultyLog) Close() error { return l.f.Close() }
 // first use of the file.
 func injectFault(e *Engine, l *faultyLog) {
 	m := e.markets[0]
-	l.f = m.file.(*os.File)
-	m.file = l
+	l.f = m.log.file.(*os.File)
+	m.log.file = l
 }
 
 // recordSize is the encoded size of a command with no client_id.
