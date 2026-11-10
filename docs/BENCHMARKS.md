@@ -51,6 +51,12 @@ Latency from order to trade push, in ms ([`bench-results/e2e-review/default`](..
 - **The tail** above p99 depends on single pauses. The hiccup meter runs no engine code, yet it saw pauses of up to 53 ms, in the 25k/s run with a 10.3 ms p99. The slower VM of the earlier sweep below recorded a stall of up to about 128 ms in one 10k/s run ([`after-fsync`](../bench-results/m5-e2e/after-fsync)). The spread between runs at one rate shows how far to trust a single run.
 - **An earlier sweep** at an earlier commit ([`after-fsync`](../bench-results/m5-e2e/after-fsync), ec2f59e, before D035 and D036) ran on another VM of this type, a slower one: its engine took 131 µs of CPU per request at 10k/s against 95 µs here, its p99 there was 3.82 ms, and 40k/s was invalid. The sweeps under Optimizations ran on that VM too; each compares steps measured there, so their comparisons hold.
 
+### 50k requests per second on another machine
+
+The p99 at 50k/s depends on the machine. The three runs in the table had 40.0, 41.1 and 43.4 ms (median 41.1 ms). Three runs of the same sweep on a second VM, also with 4 vCPUs, had 123.5, 141.1 and 148.3 ms (median 141.1 ms); their reports are not in this repository. At 10k/s that VM reproduced the table: a p99 of 1.75 ms against 1.76 ms.
+
+50k/s is close to where the 64 connections saturate. Each carries one request at a time, so together they keep up only while a request takes under 1.28 ms on average. In the runs here the median service time was 0.43 to 0.49 ms, and waiting for a free connection (a p99 send lag of 38 to 42 ms) already made up nearly all of the p99. A small rise in the median service time makes more requests queue, and loadgen and the engine share the same 4 vCPUs. So the 50k/s row means near saturation, with a p99 between 40 and 150 ms depending on the machine.
+
 ### An fsync before every reply
 
 With `-sync-interval=-1ns` the engine fsyncs each batch before it replies, so a machine crash loses no acknowledged command either ([`bench-results/e2e-review/fsync-each-batch`](../bench-results/e2e-review/fsync-each-batch)):
