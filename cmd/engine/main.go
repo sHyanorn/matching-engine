@@ -22,6 +22,8 @@ import (
 	"github.com/sHyanorn/matching-engine/internal/engine"
 )
 
+const defaultAddr = ":8080"
+
 func main() {
 	var err error
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
@@ -42,7 +44,7 @@ func main() {
 // shell or curl. A host left empty or unspecified means this machine.
 func healthcheck(args []string) error {
 	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
-	addr := fs.String("addr", ":8080", "the engine's listen address")
+	addr := fs.String("addr", defaultAddr, "the engine's listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -74,11 +76,11 @@ func healthcheck(args []string) error {
 // "listening on HOST:PORT", to stdout.
 func run(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
-	addr := fs.String("addr", ":8080", "listen address")
+	addr := fs.String("addr", defaultAddr, "listen address")
 	data := fs.String("data", "data", "directory for the command logs")
 	symbols := fs.String("symbols", "BTC-USD,ETH-USD", "comma-separated symbols; their order must not change between runs")
-	syncInterval := fs.Duration("sync-interval", 10*time.Millisecond, "how often to fsync the command logs; negative: after every batch")
-	queueSize := fs.Int("queue-size", 4096, "capacity of each symbol's command queue")
+	syncInterval := fs.Duration("sync-interval", engine.DefaultSyncInterval, "how often to fsync the command logs; negative: after every batch")
+	queueSize := fs.Int("queue-size", engine.DefaultQueueSize, "capacity of each symbol's command queue")
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests on shutdown")
 	pprofAddr := fs.String("pprof", "", "address to serve net/http/pprof on, apart from the API; off if empty")
 	if err := fs.Parse(args); err != nil {

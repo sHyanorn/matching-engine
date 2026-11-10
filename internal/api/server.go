@@ -4,7 +4,6 @@ package api
 
 import (
 	"embed"
-	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -23,8 +22,8 @@ import (
 // Options configures a Server.
 type Options struct {
 	// SubscriberBuffer is the capacity of each WebSocket channel's engine
-	// subscription (default 1024). A client that falls this many updates
-	// behind is disconnected.
+	// subscription (default: the engine's, 1024). A client that falls this
+	// many updates behind is disconnected.
 	SubscriberBuffer int
 	// WriteTimeout bounds writing one WebSocket message (default 10s); a
 	// client that takes longer is disconnected as a slow consumer.
@@ -49,21 +48,15 @@ type Server struct {
 	wg      sync.WaitGroup // running stream handlers
 }
 
-const (
-	defaultSubscriberBuffer = 1024
-	defaultWriteTimeout     = 10 * time.Second
-)
+const defaultWriteTimeout = 10 * time.Second
 
 // New returns a Server for eng.
 func New(eng *engine.Engine, opts Options) *Server {
-	if opts.SubscriberBuffer <= 0 {
-		opts.SubscriberBuffer = defaultSubscriberBuffer
-	}
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = defaultWriteTimeout
 	}
 	if opts.Logger == nil {
-		opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		opts.Logger = slog.New(slog.DiscardHandler)
 	}
 	s := &Server{
 		eng:     eng,

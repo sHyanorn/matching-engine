@@ -102,11 +102,13 @@ type Config struct {
 	onReplay func(symbol string, evs []book.Event)
 }
 
+// Defaults of the Config fields a command-line flag can set.
 const (
-	defaultQueueSize    = 4096
-	defaultMaxBatch     = 256
-	defaultSyncInterval = 10 * time.Millisecond
+	DefaultQueueSize    = 4096
+	DefaultSyncInterval = 10 * time.Millisecond
 )
+
+const defaultMaxBatch = 256
 
 var symbolPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9._-]{0,31}$`)
 
@@ -134,10 +136,10 @@ func (c *Config) normalize() error {
 		return errors.New("engine: no data directory configured")
 	}
 	if c.QueueSize <= 0 {
-		c.QueueSize = defaultQueueSize
+		c.QueueSize = DefaultQueueSize
 	}
 	if c.SyncInterval == 0 {
-		c.SyncInterval = defaultSyncInterval
+		c.SyncInterval = DefaultSyncInterval
 	}
 	switch {
 	case c.History == 0:

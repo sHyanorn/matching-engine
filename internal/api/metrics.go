@@ -21,6 +21,10 @@ type metrics struct {
 	wsClosed *prometheus.CounterVec
 }
 
+// durationBuckets are the buckets of every duration histogram: 50µs to
+// about 1.6s.
+var durationBuckets = prometheus.ExponentialBuckets(0.00005, 2, 16)
+
 var (
 	orderResults  = []string{"accepted", "rejected", "invalid", "busy", "failed"}
 	cancelResults = []string{"canceled", "unknown", "finished", "busy", "failed"}
@@ -40,7 +44,7 @@ func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 		}, []string{"symbol"}),
 		latency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "matching_engine_http_request_duration_seconds", Help: "HTTP request handling time.",
-			Buckets: prometheus.ExponentialBuckets(0.00005, 2, 16), // 50µs to about 1.6s
+			Buckets: durationBuckets,
 		}, []string{"route", "code"}),
 		streams: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "matching_engine_ws_connections", Help: "Open WebSocket connections.",
@@ -97,7 +101,7 @@ type FsyncTimes struct{ h *prometheus.HistogramVec }
 func NewFsyncTimes() *FsyncTimes {
 	return &FsyncTimes{h: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "matching_engine_log_fsync_duration_seconds", Help: "Time to fsync a symbol's command log.",
-		Buckets: prometheus.ExponentialBuckets(0.00005, 2, 16), // 50µs to about 1.6s
+		Buckets: durationBuckets,
 	}, []string{"symbol"})}
 }
 
