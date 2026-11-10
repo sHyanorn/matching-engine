@@ -5,8 +5,8 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 ## D001 Use Go
 - Date: 2026-11-04
 - Decision: Implement in Go
-- Rationale: Widely valued for backend roles; goroutines and channels fit the event-loop model; built-in benchmarking, fuzzing, and pprof
-- Alternatives: Rust (faster, but a steeper learning curve); TypeScript (already familiar, but poorly suited to showcasing low-level performance)
+- Rationale: Goroutines and channels fit the event-loop model; built-in benchmarking, fuzzing, and pprof
+- Alternatives: Rust (faster, but a steeper learning curve); TypeScript (already familiar, but poorly suited to low-level performance work)
 
 ## D002 Integer prices and quantities
 - Date: 2026-11-04
