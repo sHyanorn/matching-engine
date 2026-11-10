@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/testclock"
 )
 
 // faultyLog wraps a market's log file and injects failures: writes stop
@@ -99,7 +100,7 @@ func TestShortWriteAppliesOnlyLoggedCommands(t *testing.T) {
 
 func shortWrite(t *testing.T, interval time.Duration) {
 	ctx := context.Background()
-	g := newGateClock()
+	g := testclock.New(nil)
 	cfg := Config{Symbols: []string{"A"}, DataDir: t.TempDir(), Clock: g.Now, SyncInterval: interval}
 	e, err := New(cfg)
 	if err != nil {
@@ -108,13 +109,13 @@ func shortWrite(t *testing.T, interval time.Duration) {
 	// The first batch (one order) and two records of the second fit.
 	injectFault(e, &faultyLog{limit: 3*recordSize + 20})
 
-	g.armed.Store(true)
+	stalled, release := g.Stall()
 	first := make(chan error, 1)
 	go func() {
 		_, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1))
 		first <- err
 	}()
-	<-g.stopped
+	<-stalled
 	errs := make([]error, 4)
 	events := make([][]book.Event, 4)
 	var wg sync.WaitGroup
@@ -127,7 +128,7 @@ func shortWrite(t *testing.T, interval time.Duration) {
 		}()
 		waitFor(t, "the order to be queued", func() bool { return len(e.markets[0].in) == i+1 })
 	}
-	close(g.release)
+	release()
 	wg.Wait()
 	if err := <-first; err != nil {
 		t.Fatalf("first order: %v", err)
@@ -239,9 +240,9 @@ func TestFailedSyncOnTick(t *testing.T) {
 // waited for, even after its context ends (D020). A query is not: it gives
 // up with its context, and the engine is unharmed.
 func TestQueuedCommandOutlivesContext(t *testing.T) {
-	g := newGateClock()
+	g := testclock.New(nil)
 	e := newTestEngine(t, Config{Symbols: []string{"A"}, MaxBatch: 1, Clock: g.Now})
-	g.armed.Store(true)
+	stalled, release := g.Stall()
 	type result struct {
 		r   Result
 		err error
@@ -253,14 +254,14 @@ func TestQueuedCommandOutlivesContext(t *testing.T) {
 		r, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1))
 		done <- result{r, err}
 	}()
-	<-g.stopped // the order is being processed
+	<-stalled // the order is being processed
 	query, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	if _, err := e.Depth(query, "A", 1); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("query on a stalled market: %v", err)
 	}
 	time.Sleep(40 * time.Millisecond) // well past the order's deadline
-	close(g.release)
+	release()
 	res := <-done
 	if res.err != nil || len(res.r.Events) != 2 {
 		t.Fatalf("order whose context ended while queued: %v, %d events", res.err, len(res.r.Events))
@@ -274,7 +275,7 @@ func TestQueuedCommandOutlivesContext(t *testing.T) {
 // The subscription the caller never received must be removed, long before
 // its large buffer could fill and drop it as a slow consumer.
 func TestCanceledSubscribeDoesNotLeak(t *testing.T) {
-	g := newGateClock()
+	g := testclock.New(nil)
 	var subs atomic.Int64
 	var e *Engine
 	clock := func() int64 {
@@ -282,16 +283,16 @@ func TestCanceledSubscribeDoesNotLeak(t *testing.T) {
 		return g.Now()
 	}
 	e = newTestEngine(t, Config{Symbols: []string{"A"}, MaxBatch: 1, Clock: clock})
-	g.armed.Store(true)
+	stalled, release := g.Stall()
 	go func() { _, _ = e.PlaceOrder(context.Background(), limitOrder("A", book.Buy, 100, 1)) }()
-	<-g.stopped
+	<-stalled
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	const buffer = 1024
 	if _, err := e.Subscribe(ctx, "A", buffer, 0); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Subscribe = %v, want its deadline", err)
 	}
-	close(g.release)
+	release()
 	for range 100 { // far fewer updates than the buffer holds
 		_, _ = e.PlaceOrder(context.Background(), limitOrder("A", book.Buy, 100, 1))
 		if subs.Load() == 0 {
@@ -305,14 +306,14 @@ func TestCanceledSubscribeDoesNotLeak(t *testing.T) {
 // TestConcurrentCloseWaits: a second Close while the first is in progress
 // waits for the shutdown too.
 func TestConcurrentCloseWaits(t *testing.T) {
-	g := newGateClock()
+	g := testclock.New(nil)
 	e, err := New(Config{Symbols: []string{"A"}, DataDir: t.TempDir(), Clock: g.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.armed.Store(true)
+	stalled, release := g.Stall()
 	go func() { _, _ = e.PlaceOrder(context.Background(), limitOrder("A", book.Buy, 100, 1)) }()
-	<-g.stopped
+	<-stalled
 	closed := make(chan error, 2)
 	for range 2 {
 		go func() { closed <- e.Close() }()
@@ -322,7 +323,7 @@ func TestConcurrentCloseWaits(t *testing.T) {
 		t.Fatalf("Close returned %v while the market was still running", err)
 	case <-time.After(30 * time.Millisecond):
 	}
-	close(g.release)
+	release()
 	for range 2 {
 		if err := <-closed; err != nil {
 			t.Fatal(err)

@@ -16,8 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +23,7 @@ import (
 
 	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/engine"
+	"github.com/sHyanorn/matching-engine/internal/testclock"
 )
 
 // These tests drive the real HTTP handler, backed by a real engine on a
@@ -48,59 +47,6 @@ const (
 // ---------------------------------------------------------------------------
 // Test environment
 
-// testClock is the engine's Config.Clock. It returns strictly increasing
-// timestamps and can stall the book goroutine that calls it next: the
-// engine calls Clock once per command on the symbol's goroutine, so a stall
-// holds that goroutine in the middle of a batch while its queue fills up.
-type testClock struct {
-	n atomic.Int64
-
-	mu       sync.Mutex
-	armed    bool
-	entered  chan struct{}
-	release  chan struct{}
-	releases []func()
-}
-
-func (c *testClock) now() int64 {
-	c.mu.Lock()
-	stall, entered, release := c.armed, c.entered, c.release
-	c.armed = false
-	c.mu.Unlock()
-	if stall {
-		close(entered)
-		<-release
-	}
-	return baseTS + c.n.Add(1)*1000
-}
-
-// stall makes the next call to now block until release is called. entered
-// is closed once a book goroutine is blocked in the clock; from then on
-// nothing leaves that symbol's queue.
-func (c *testClock) stall() (entered <-chan struct{}, release func()) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.armed = true
-	c.entered = make(chan struct{})
-	ch := make(chan struct{})
-	c.release = ch
-	release = sync.OnceFunc(func() { close(ch) })
-	c.releases = append(c.releases, release)
-	return c.entered, release
-}
-
-// releaseAll disarms the clock and ends every stall, so that cleanup never
-// waits on a stalled book.
-func (c *testClock) releaseAll() {
-	c.mu.Lock()
-	c.armed = false
-	rs := slices.Clone(c.releases)
-	c.mu.Unlock()
-	for _, r := range rs {
-		r()
-	}
-}
-
 type envConfig struct {
 	queueSize        int           // engine.Config.QueueSize; 0 for the default
 	subscriberBuffer int           // api.Options.SubscriberBuffer; 0 for the default
@@ -114,18 +60,18 @@ type testEnv struct {
 	eng   *engine.Engine
 	srv   *api.Server
 	http  *httptest.Server
-	clock *testClock
+	clock *testclock.Clock
 }
 
 func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	t.Helper()
-	clock := &testClock{}
+	clock := testclock.New(func(call int64) int64 { return baseTS + call*1000 })
 	fsync := api.NewFsyncTimes()
 	eng, err := engine.New(engine.Config{
 		Symbols:   []string{btc, eth},
 		DataDir:   t.TempDir(),
 		QueueSize: cfg.queueSize,
-		Clock:     clock.now,
+		Clock:     clock.Now,
 		OnSync:    fsync.Observe,
 	})
 	if err != nil {
@@ -149,7 +95,7 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	// connections (httptest.Server.Close does not wait for hijacked ones),
 	// then the HTTP server, then the engine.
 	t.Cleanup(srv.CloseStreams)
-	t.Cleanup(clock.releaseAll)
+	t.Cleanup(clock.ReleaseAll)
 	return &testEnv{eng: eng, srv: srv, http: hs, clock: clock}
 }
 
@@ -1407,7 +1353,7 @@ func TestBusyWhenQueueFull(t *testing.T) {
 	before := env.metrics(t)
 
 	results := make(chan sendResult, 1+queue+extra)
-	entered, release := env.clock.stall()
+	entered, release := env.clock.Stall()
 	env.postAsync(results, limitOrder("buy", 100, 1).body())
 	receive(t, entered, "stalled book goroutine")
 
@@ -1846,7 +1792,7 @@ func TestStreamSlowConsumerIsDisconnected(t *testing.T) {
 	// engine drops the subscription (D018) and the server closes the
 	// connection.
 	results := make(chan sendResult, 1+queue+extra)
-	entered, release := env.clock.stall()
+	entered, release := env.clock.Stall()
 	env.postAsync(results, limitOrder("buy", 1000, 1).body())
 	receive(t, entered, "stalled book goroutine")
 	var bodies []string

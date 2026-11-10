@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/engine"
+	"github.com/sHyanorn/matching-engine/internal/testclock"
 )
 
 // startEngine serves an engine for BTC-USD on a loopback port and returns
@@ -39,6 +39,11 @@ func startEngine(t *testing.T, clock func() int64) string {
 		}
 	})
 	return strings.TrimPrefix(hs.URL, "http://")
+}
+
+// realClock stamps commands with the system time and can stall the book.
+func realClock() *testclock.Clock {
+	return testclock.New(func(int64) int64 { return time.Now().UnixNano() })
 }
 
 func testConfig(addr string) config {
@@ -88,14 +93,15 @@ func TestMeasure(t *testing.T) {
 // hides most of it.
 func TestStallIsChargedToEveryDelayedRequest(t *testing.T) {
 	const stall = 400 * time.Millisecond
-	var cmds atomic.Int64
-	clock := func() int64 {
-		if cmds.Add(1) == 800 { // about 0.2 s into the measured second
-			time.Sleep(stall)
-		}
-		return time.Now().UnixNano()
-	}
-	r, err := measure(context.Background(), testConfig(startEngine(t, clock)))
+	clock := realClock()
+	stalled, release := clock.StallAt(800) // about 0.2 s into the measured second
+	addr := startEngine(t, clock.Now)
+	go func() {
+		<-stalled
+		time.Sleep(stall)
+		release()
+	}()
+	r, err := measure(context.Background(), testConfig(addr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,16 +153,10 @@ func TestRunWritesReport(t *testing.T) {
 // Canceling a run stops it at once, even while the engine is stalled and
 // requests pile up.
 func TestCancelDuringStall(t *testing.T) {
-	stalled := make(chan struct{})
-	var cmds atomic.Int64
-	clock := func() int64 {
-		if cmds.Add(1) == 100 {
-			close(stalled)
-			time.Sleep(5 * time.Second)
-		}
-		return time.Now().UnixNano()
-	}
-	cfg := testConfig(startEngine(t, clock))
+	clock := realClock()
+	stalled, release := clock.StallAt(100)
+	cfg := testConfig(startEngine(t, clock.Now))
+	t.Cleanup(release)         // before the engine's cleanup, which waits for the book
 	cfg.duration = time.Minute // far longer than the test may take
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

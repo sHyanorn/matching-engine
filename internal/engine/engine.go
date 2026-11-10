@@ -79,7 +79,10 @@ type Config struct {
 	MaxBatch int
 
 	// Clock returns the time stamped on each command, in Unix nanoseconds
-	// (default the system clock). Tests replace it for fixed values.
+	// (default the system clock). It is called once per command, on the
+	// goroutine of the command's symbol, before the command is logged.
+	// Tests replace it for fixed values and rely on that to stall a book
+	// (internal/testclock).
 	Clock func() int64
 
 	// History is how many finished orders each symbol remembers for

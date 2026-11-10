@@ -9,29 +9,8 @@ import (
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/testclock"
 )
-
-// gateClock is a Clock that, once armed, blocks the first goroutine that
-// calls it until released. Every other call returns at once. Blocking one
-// symbol's goroutine inside its batch lets a test fill that symbol's queue.
-type gateClock struct {
-	armed   atomic.Bool
-	stopped chan struct{} // closed once a caller is blocked
-	release chan struct{}
-	now     atomic.Int64
-}
-
-func newGateClock() *gateClock {
-	return &gateClock{stopped: make(chan struct{}), release: make(chan struct{})}
-}
-
-func (g *gateClock) Now() int64 {
-	if g.armed.CompareAndSwap(true, false) {
-		close(g.stopped)
-		<-g.release
-	}
-	return g.now.Add(1)
-}
 
 // waitFor polls cond until it holds or the test times out.
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -52,7 +31,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 func TestFullQueueReturnsBusy(t *testing.T) {
 	ctx := context.Background()
 	const queue = 4
-	g := newGateClock()
+	g := testclock.New(nil)
 	e := newTestEngine(t, Config{Symbols: []string{"A", "B"}, QueueSize: queue, MaxBatch: 1, Clock: g.Now})
 
 	sub, err := e.Subscribe(ctx, "A", 64, 0)
@@ -61,7 +40,7 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 	}
 
 	// The first order on A blocks A's goroutine inside its clock call.
-	g.armed.Store(true)
+	stalled, release := g.Stall()
 	var wg sync.WaitGroup
 	var applied atomic.Int32
 	place := func() {
@@ -74,7 +53,7 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 	}
 	wg.Add(1)
 	go place()
-	<-g.stopped
+	<-stalled
 
 	// Fill A's queue exactly.
 	a := e.bySymbol["A"]
@@ -122,7 +101,7 @@ func TestFullQueueReturnsBusy(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	close(g.release)
+	release()
 	wg.Wait()
 	<-unsubscribed
 	for {
