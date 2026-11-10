@@ -1,15 +1,12 @@
 package engine
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/sHyanorn/matching-engine/internal/book"
 )
 
 // startupLogs starts an engine on cfg, closes it and returns the records
@@ -23,8 +20,14 @@ func startupLogs(t *testing.T, cfg Config, level slog.Level) []map[string]any {
 		t.Fatal(err)
 	}
 	mustClose(t, e)
+	return logRecords(t, logs.String(), level)
+}
+
+// logRecords returns the records at the given level of a JSON log.
+func logRecords(t *testing.T, logs string, level slog.Level) []map[string]any {
+	t.Helper()
 	var recs []map[string]any
-	for line := range strings.Lines(logs.String()) {
+	for line := range strings.Lines(logs) {
 		var rec map[string]any
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("log line %q: %v", line, err)
@@ -66,36 +69,5 @@ func TestMissingLogWithEarlierStateWarned(t *testing.T) {
 	warns := startupLogs(t, cfg, slog.LevelWarn)
 	if len(warns) != 1 || warns[0]["symbol"] != "A" || !strings.Contains(warns[0]["msg"].(string), "earlier state") {
 		t.Fatalf("warnings = %v, want one naming symbol A and the earlier state", warns)
-	}
-}
-
-// TestTornTailTruncationWarned appends half a record to a log and checks
-// that the start warns with the symbol and the number of bytes it dropped.
-func TestTornTailTruncationWarned(t *testing.T) {
-	dir := t.TempDir()
-	cfg := Config{Symbols: []string{"A"}, DataDir: dir}
-	e, err := New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.PlaceOrder(context.Background(), limitOrder("A", book.Sell, 100, 5)); err != nil {
-		t.Fatal(err)
-	}
-	mustClose(t, e)
-	rec := appendRecord(nil, logRecord{cmd: book.Command{Kind: book.CommandCancel, OrderID: makeOrderID(1, 0), Timestamp: 9}})
-	torn := rec[:len(rec)/2]
-	f, err := os.OpenFile(filepath.Join(dir, "A.log"), os.O_WRONLY|os.O_APPEND, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.Write(torn); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	warns := startupLogs(t, cfg, slog.LevelWarn)
-	if len(warns) != 1 || warns[0]["symbol"] != "A" || warns[0]["bytes"] != float64(len(torn)) {
-		t.Fatalf("warnings = %v, want one with symbol A and bytes %d", warns, len(torn))
 	}
 }

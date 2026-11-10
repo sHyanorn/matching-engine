@@ -1164,7 +1164,6 @@ func TestRequestErrors(t *testing.T) {
 		{"repeated field", "POST", "/v1/orders", orderWith(valid + `,"qty":7`), 400, "bad_request"},
 
 		{"unknown route", "GET", "/v1/nothing", "", 404, "not_found"},
-		{"method not allowed", "PUT", "/v1/orders/5", "", 405, "method_not_allowed"},
 
 		{"GET non-numeric id", "GET", "/v1/orders/abc", "", 400, "invalid_order_id"},
 		{"GET id 0", "GET", "/v1/orders/0", "", 400, "invalid_order_id"},

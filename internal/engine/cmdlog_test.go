@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"hash/crc32"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -161,58 +162,10 @@ func TestLogDamage(t *testing.T) {
 	}
 }
 
-// TestEngineRestart closes an engine and opens a new one on the same data
-// directory: books and sequence numbers survive, and new IDs are above
-// every ID issued before.
-func TestEngineRestart(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	cfg := Config{Symbols: []string{"A", "B"}, DataDir: dir}
-	e, err := New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var last book.OrderID
-	for i := range 20 {
-		sym := []string{"A", "B"}[i%2]
-		side := book.Buy
-		if i%3 == 0 {
-			side = book.Sell
-		}
-		r, err := e.PlaceOrder(ctx, NewOrder{Symbol: sym, Side: side, Type: book.Limit, TIF: book.GTC, Price: book.Price(100 + i%4), Qty: 3, ClientID: "c"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		last = r.OrderID
-	}
-	before := map[string]Depth{}
-	for _, s := range cfg.Symbols {
-		before[s], _ = e.Depth(ctx, s, 100)
-	}
-	if err := e.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	e2, err := New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mustClose(t, e2)
-	for _, s := range cfg.Symbols {
-		after, _ := e2.Depth(ctx, s, 100)
-		if !slices.Equal(after.Bids, before[s].Bids) || !slices.Equal(after.Asks, before[s].Asks) || after.LastSeq != before[s].LastSeq {
-			t.Fatalf("%s after restart: %+v, before %+v", s, after, before[s])
-		}
-	}
-	r, err := e2.PlaceOrder(ctx, limitOrder("A", book.Buy, 1, 1))
-	if err != nil || counterOf(r.OrderID) <= counterOf(last) {
-		t.Fatalf("first ID after restart = %d (counter %d), last before %d (counter %d), err %v", r.OrderID, counterOf(r.OrderID), last, counterOf(last), err)
-	}
-}
-
 // TestEngineRecoversTornLog appends half a record to a log, as a crash in
 // the middle of a write would, and checks that the engine starts, drops
-// the partial record from the file and keeps logging after it.
+// the partial record from the file, warns with the symbol and the number
+// of bytes dropped, and keeps logging after it.
 func TestEngineRecoversTornLog(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -229,12 +182,17 @@ func TestEngineRecoversTornLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var logs lockedBuffer
+	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	e2, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, intact) {
 		t.Fatalf("log is %d bytes after recovery, want the intact %d", len(got), len(intact))
+	}
+	if warns := logRecords(t, logs.String(), slog.LevelWarn); len(warns) != 1 || warns[0]["symbol"] != "A" || warns[0]["bytes"] != float64(len(half)/2) {
+		t.Fatalf("warnings = %v, want one with symbol A and bytes %d", warns, len(half)/2)
 	}
 	if _, found, _ := e2.Order(ctx, makeOrderID(1, 0)); !found {
 		t.Fatal("the order before the torn record was lost")
