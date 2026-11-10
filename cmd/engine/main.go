@@ -74,7 +74,7 @@ func healthcheck(args []string) error {
 // WebSocket connections are closed, and the engine drains its queues,
 // syncs and closes its logs. Before serving it writes one line,
 // "listening on HOST:PORT", to stdout.
-func run(ctx context.Context, args []string, stdout io.Writer) error {
+func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
 	addr := fs.String("addr", defaultAddr, "listen address")
 	data := fs.String("data", "data", "directory for the command logs")
@@ -100,10 +100,16 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Last on every path: the engine closes once nothing can reach it.
+	defer func() {
+		if err = errors.Join(err, eng.Close()); err == nil {
+			logger.Info("stopped")
+		}
+	}()
 	srv := api.New(eng, api.Options{Logger: logger, FsyncTimes: fsyncTimes})
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
-		return errors.Join(err, eng.Close())
+		return err
 	}
 	// The timeouts bound each request, so a stalled client cannot hold a
 	// handler or delay shutdown. A WebSocket connection is hijacked, which
@@ -118,7 +124,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if *pprofAddr != "" {
 		pl, err := net.Listen("tcp", *pprofAddr)
 		if err != nil {
-			return errors.Join(err, ln.Close(), eng.Close())
+			return errors.Join(err, ln.Close())
 		}
 		// No write timeout: a CPU profile or trace streams for as long as
 		// it was asked to run.
@@ -128,7 +134,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		logger.Info("serving pprof", "addr", pl.Addr().String())
 	}
 	if _, err := fmt.Fprintf(stdout, "listening on %s\n", ln.Addr()); err != nil {
-		return errors.Join(err, ln.Close(), eng.Close())
+		return errors.Join(err, ln.Close())
 	}
 	logger.Info("listening", "addr", ln.Addr().String(), "symbols", *symbols, "data", *data)
 
@@ -137,24 +143,19 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	select {
 	case <-ctx.Done():
 	case err := <-served: // the listener failed
-		return errors.Join(err, eng.Close())
+		return err
 	}
 
 	logger.Info("shutting down")
 	srv.BeginShutdown()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
-	errHTTP := hs.Shutdown(shutdownCtx)
+	err = hs.Shutdown(shutdownCtx)
 	srv.CloseStreams()
-	errEngine := eng.Close()
-	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
-		errHTTP = errors.Join(errHTTP, err)
+	if errServe := <-served; !errors.Is(errServe, http.ErrServerClosed) {
+		err = errors.Join(err, errServe)
 	}
-	if err := errors.Join(errHTTP, errEngine); err != nil {
-		return err
-	}
-	logger.Info("stopped")
-	return nil
+	return err
 }
 
 // pprofHandler serves the net/http/pprof endpoints.
