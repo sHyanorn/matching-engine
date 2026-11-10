@@ -51,6 +51,8 @@ func (b *Book) Apply(cmd Command, out []Event) []Event {
 
 // Order returns a copy of the resting order with this ID, and false if no
 // such order is resting. Filled and canceled orders are not kept (D013).
+// The engine follows orders from the events instead; Order is how tests
+// read the book's own view to check against.
 func (b *Book) Order(id OrderID) (Order, bool) {
 	o, ok := b.orders[id]
 	if !ok {

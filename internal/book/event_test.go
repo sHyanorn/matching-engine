@@ -45,36 +45,6 @@ func sampleEvents() map[string]Event {
 	}
 }
 
-func TestEventTrade(t *testing.T) {
-	events := sampleEvents()
-
-	got, ok := events["trade"].Trade()
-	want := Trade{Seq: 4, Timestamp: 11, TakerID: 2, MakerID: 1, Price: 100, Qty: 3, TakerSide: Buy}
-	if !ok || got != want {
-		t.Errorf("Trade() = %+v, %v; want %+v, true", got, ok, want)
-	}
-	if want.TakerSide.Opposite() != events["trade"].LevelSide {
-		t.Errorf("maker side %v != trade LevelSide %v", want.TakerSide.Opposite(), events["trade"].LevelSide)
-	}
-
-	for name, e := range events {
-		got, ok := e.Trade()
-		if ok != (e.Kind == EventTrade) {
-			t.Errorf("%s: Trade() ok = %v, want %v", name, ok, e.Kind == EventTrade)
-		}
-		if !ok && got != (Trade{}) {
-			t.Errorf("%s: Trade() = %+v, want the zero Trade", name, got)
-		}
-	}
-	// Kind alone decides, whatever the other fields hold.
-	if _, ok := (Event{Kind: EventTrade}).Trade(); !ok {
-		t.Error("zero-field EventTrade: Trade() ok = false, want true")
-	}
-	if _, ok := (Event{Kind: 0, OrderID: 1, MakerID: 2, Price: 3, Qty: 4}).Trade(); ok {
-		t.Error("Kind 0: Trade() ok = true, want false")
-	}
-}
-
 func TestEventLevelUpdate(t *testing.T) {
 	events := sampleEvents()
 	tests := []struct {

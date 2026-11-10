@@ -68,7 +68,6 @@ func TestLayout(t *testing.T) {
 		{"Command", unsafe.Sizeof(Command{}), 40},
 		{"Event", unsafe.Sizeof(Event{}), 64},
 		{"Order", unsafe.Sizeof(Order{}), 64},
-		{"Trade", unsafe.Sizeof(Trade{}), 56},
 		{"LevelUpdate", unsafe.Sizeof(LevelUpdate{}), 32},
 	}
 	for _, tt := range tests {
@@ -84,14 +83,13 @@ func TestLayout(t *testing.T) {
 // of them, a fuzzer can build them from raw values, and == compares them
 // completely (the replay test compares event slices).
 func TestPlainData(t *testing.T) {
-	for _, v := range []any{Command{}, Event{}, Order{}, Trade{}, LevelUpdate{}} {
+	for _, v := range []any{Command{}, Event{}, Order{}, LevelUpdate{}} {
 		typ := reflect.TypeOf(v)
 		assertPlainData(t, typ, typ.Name())
 	}
 	requireComparable[Command]()
 	requireComparable[Event]()
 	requireComparable[Order]()
-	requireComparable[Trade]()
 	requireComparable[LevelUpdate]()
 }
 

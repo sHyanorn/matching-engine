@@ -40,9 +40,9 @@ func ExampleCommand_Validate() {
 }
 
 // The engine turns one command's events into WebSocket messages: a trade
-// message per Trade, and one book_delta entry per changed level, keeping the
-// last absolute total. Here a limit buy of 15 @ 101 meets asks of 10 @ 100
-// (order 1) and 3 + 5 @ 101 (orders 2 and 3).
+// message per EventTrade, and one book_delta entry per changed level, keeping
+// the last absolute total. Here a limit buy of 15 @ 101 meets asks of
+// 10 @ 100 (order 1) and 3 + 5 @ 101 (orders 2 and 3).
 func ExampleEvent_LevelUpdate() {
 	events := []book.Event{
 		{Seq: 7, Kind: book.EventAccepted, OrderID: 9, Side: book.Buy, Price: 101, Qty: 15},
@@ -53,8 +53,8 @@ func ExampleEvent_LevelUpdate() {
 
 	var deltas []book.LevelUpdate
 	for _, ev := range events {
-		if tr, ok := ev.Trade(); ok {
-			fmt.Printf("trade #%d: %v %d @ %d, taker %d, maker %d\n", tr.Seq, tr.TakerSide, tr.Qty, tr.Price, tr.TakerID, tr.MakerID)
+		if ev.Kind == book.EventTrade {
+			fmt.Printf("trade #%d: %v %d @ %d, taker %d, maker %d\n", ev.Seq, ev.Side, ev.Qty, ev.Price, ev.OrderID, ev.MakerID)
 		}
 		if lu, ok := ev.LevelUpdate(); ok {
 			i := slices.IndexFunc(deltas, func(d book.LevelUpdate) bool { return d.Side == lu.Side && d.Price == lu.Price })

@@ -85,36 +85,6 @@ type Event struct {
 	LevelQty Qty
 }
 
-// Trade is one execution between the incoming (taker) order and one resting
-// (maker) order. It is the typed view of an EventTrade returned by
-// [Event.Trade], for consumers that only care about fills: the WebSocket
-// trade channel, trade history and tests that assert on fills.
-type Trade struct {
-	Seq       uint64 // the event's Seq, which is also the trade number
-	Timestamp int64
-	TakerID   OrderID
-	MakerID   OrderID
-	Price     Price // always the maker's limit price
-	Qty       Qty
-	TakerSide Side // the aggressor; the maker is on TakerSide.Opposite()
-}
-
-// Trade returns the trade e reports, and false if e is not an EventTrade.
-func (e Event) Trade() (Trade, bool) {
-	if e.Kind != EventTrade {
-		return Trade{}, false
-	}
-	return Trade{
-		Seq:       e.Seq,
-		Timestamp: e.Timestamp,
-		TakerID:   e.OrderID,
-		MakerID:   e.MakerID,
-		Price:     e.Price,
-		Qty:       e.Qty,
-		TakerSide: e.Side,
-	}, true
-}
-
 // LevelUpdate is the state of one price level right after an event changed
 // it: the total resting quantity at Price on Side and the number of orders
 // making it up, where Qty 0 (and so Orders 0) means the level is now empty.
