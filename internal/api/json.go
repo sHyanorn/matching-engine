@@ -56,9 +56,9 @@ type eventLevel struct {
 }
 
 type levelJSON struct {
-	Price  int64 `json:"price"`
-	Qty    int64 `json:"qty"`
-	Orders int   `json:"orders"`
+	Price  int64  `json:"price"`
+	Qty    int64  `json:"qty"`
+	Orders uint32 `json:"orders"`
 }
 
 type orderResponse struct {

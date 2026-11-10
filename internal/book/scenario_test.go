@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -147,7 +148,7 @@ func evIOCRemainder(seq uint64, id OrderID, side Side, price Price, qty Qty) Eve
 }
 
 // lvl is one expected depth level.
-func lvl(price Price, qty Qty, orders int) Level {
+func lvl(price Price, qty Qty, orders uint32) Level {
 	return Level{Price: price, Qty: qty, Orders: orders}
 }
 
@@ -476,7 +477,7 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 
 	type total struct {
 		qty    Qty
-		orders int
+		orders uint32
 	}
 	fromDepth := make(map[l2Key]total)
 	for _, sd := range sides {
@@ -495,7 +496,7 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 	}
 	for _, k := range slices.SortedFunc(maps.Keys(last), compareL2Key) {
 		lu := last[k]
-		if inDepth := fromDepth[k]; inDepth != (total{lu.Qty, int(lu.Orders)}) {
+		if inDepth := fromDepth[k]; inDepth != (total{lu.Qty, lu.Orders}) {
 			t.Errorf("%s: last event touching %v %d says LevelQty %d in %d orders, but Depth has %+v", label, k.side, k.price, lu.Qty, lu.Orders, inDepth)
 		}
 		if lu.Qty == 0 {
@@ -508,7 +509,7 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 	// The whole depth follows from the stream, and from the resting orders.
 	fromStream := make(map[l2Key]total)
 	for k, lu := range r.l2 {
-		fromStream[k] = total{lu.Qty, int(lu.Orders)}
+		fromStream[k] = total{lu.Qty, lu.Orders}
 	}
 	if !maps.Equal(fromStream, fromDepth) {
 		t.Errorf("%s: levels followed from LevelUpdate events %v, but Depth has %v", label, r.l2, fromDepth)
@@ -523,7 +524,7 @@ func (r *scenarioRun) checkDepth(label string, evs []Event, bids, asks []Level, 
 	}
 
 	// Depth(s, n, dst) appends the first n levels to dst.
-	sentinel := Level{Price: -1, Qty: -1, Orders: -1}
+	sentinel := Level{Price: -1, Qty: -1, Orders: math.MaxUint32}
 	for _, sd := range sides {
 		for n := range len(sd.levels) + 2 {
 			if got, want := normLevels(r.b.Depth(sd.side, n, nil)), sd.levels[:min(n, len(sd.levels))]; !slices.Equal(got, want) {
