@@ -130,9 +130,6 @@ func (t *orderTracker) track(c book.Command, clientID string, evs []book.Event) 
 func (t *orderTracker) finish(s *OrderStatus) {
 	delete(t.open, s.ID)
 	s.Remaining = 0
-	if cap(t.ring) == 0 {
-		return
-	}
 	if len(t.ring) < cap(t.ring) {
 		t.ring = append(t.ring, *s)
 		t.index[s.ID] = len(t.ring) - 1

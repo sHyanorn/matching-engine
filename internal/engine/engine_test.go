@@ -66,6 +66,10 @@ func TestNewValidatesConfig(t *testing.T) {
 	if _, err := New(Config{Symbols: []string{"A"}}); err == nil {
 		t.Error("New accepted a config without DataDir")
 	}
+	if e, err := New(Config{Symbols: []string{"A"}, DataDir: t.TempDir(), History: -1}); err == nil {
+		t.Error("New accepted a negative History")
+		_ = e.Close()
+	}
 	e, err := New(Config{Symbols: []string{"BTC-USD", "ETH_USD", "X.1"}, DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)

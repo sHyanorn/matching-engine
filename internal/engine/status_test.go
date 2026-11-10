@@ -75,9 +75,4 @@ func TestOrderHistoryIsBounded(t *testing.T) {
 			t.Errorf("order %d of 5: found %v, want %v", i+1, found, want)
 		}
 	}
-	none := newTestEngine(t, Config{Symbols: []string{"A"}, History: -1})
-	r, _ := none.PlaceOrder(ctx, NewOrder{Symbol: "A", Side: book.Buy, Type: book.Limit, TIF: book.IOC, Price: 100, Qty: 1})
-	if _, found, _ := none.Order(ctx, r.OrderID); found {
-		t.Error("History -1 still remembers finished orders")
-	}
 }

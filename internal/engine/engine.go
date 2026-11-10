@@ -83,8 +83,7 @@ type Config struct {
 	Clock func() int64
 
 	// History is how many finished orders each symbol remembers for
-	// Order (default 100,000; negative: none). Open orders are always
-	// known (D022).
+	// Order (default 100,000). Open orders are always known (D022).
 	History int
 
 	// Logger receives the engine's logs: at startup a command log that
@@ -141,11 +140,11 @@ func (c *Config) normalize() error {
 	if c.SyncInterval == 0 {
 		c.SyncInterval = DefaultSyncInterval
 	}
-	switch {
-	case c.History == 0:
+	if c.History < 0 {
+		return fmt.Errorf("engine: negative History %d", c.History)
+	}
+	if c.History == 0 {
 		c.History = defaultHistory
-	case c.History < 0:
-		c.History = 0
 	}
 	if c.MaxBatch <= 0 {
 		c.MaxBatch = defaultMaxBatch
