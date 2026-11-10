@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
 )
 
@@ -38,6 +39,11 @@ func engineStatus(err error) (int, string) {
 	var inv *engine.InvalidError
 	switch {
 	case errors.As(err, &inv):
+		// The engine sets Kind and a new order's ID itself, and a cancel's
+		// ID is checked before it gets there: a server bug (D009).
+		if inv.Reason == book.ReasonInvalidCommand || inv.Reason == book.ReasonInvalidOrderID {
+			return http.StatusInternalServerError, "internal"
+		}
 		return http.StatusBadRequest, inv.Reason.String()
 	case errors.Is(err, engine.ErrClientIDLen):
 		return http.StatusBadRequest, "invalid_client_id"

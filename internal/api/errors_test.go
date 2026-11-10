@@ -9,7 +9,29 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/engine"
 )
+
+// The server sets a command's Kind and OrderID, so a command invalid in
+// either is the server's fault (D009); every other reason is the client's.
+func TestInvalidCommandStatus(t *testing.T) {
+	for _, tc := range []struct {
+		reason book.Reason
+		status int
+		code   string
+	}{
+		{book.ReasonInvalidCommand, http.StatusInternalServerError, "internal"},
+		{book.ReasonInvalidOrderID, http.StatusInternalServerError, "internal"},
+		{book.ReasonInvalidPrice, http.StatusBadRequest, "invalid_price"},
+	} {
+		status, code := engineStatus(&engine.InvalidError{Reason: tc.reason})
+		if status != tc.status || code != tc.code {
+			t.Errorf("%v: %d %s, want %d %s", tc.reason, status, code, tc.status, tc.code)
+		}
+	}
+}
 
 // An unexpected engine error is logged, and the client gets only its code.
 func TestUnexpectedErrorHidesDetail(t *testing.T) {
