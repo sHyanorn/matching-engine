@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,10 +91,11 @@ type stream struct {
 	out        chan []byte
 	queued     atomic.Int64  // bytes in out
 	writerDone chan struct{} // closed when the writer has stopped
+	once       sync.Once     // close
 
-	mu       sync.Mutex
+	// channels is touched only by the handler's goroutine: the reader, and
+	// the cleanup after it.
 	channels map[string]*channel
-	once     sync.Once
 }
 
 // channel is one subscription of a stream.
@@ -144,10 +143,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	go st.writeLoop()
 	st.readLoop()
 	st.close(closedByClient)
-	st.mu.Lock()
-	chans := slices.Collect(maps.Values(st.channels))
-	st.mu.Unlock()
-	for _, ch := range chans {
+	for _, ch := range st.channels {
 		ch.sub.Close()
 		<-ch.done
 	}
@@ -260,10 +256,7 @@ func (st *stream) subscribe(name string) {
 		st.sendError("unknown_channel", fmt.Sprintf("unknown channel %q", name))
 		return
 	}
-	st.mu.Lock()
-	_, dup := st.channels[name]
-	st.mu.Unlock()
-	if dup {
+	if _, dup := st.channels[name]; dup {
 		st.sendError("already_subscribed", fmt.Sprintf("already subscribed to %q", name))
 		return
 	}
@@ -282,9 +275,7 @@ func (st *stream) subscribe(name string) {
 		return
 	}
 	ch := &channel{name: name, sub: sub, done: make(chan struct{})}
-	st.mu.Lock()
 	st.channels[name] = ch
-	st.mu.Unlock()
 	st.send(serverMessage{Type: "subscribed", Channel: name})
 	go st.pump(ch, kind == "book")
 }
@@ -292,14 +283,12 @@ func (st *stream) subscribe(name string) {
 // unsubscribe stops channel name; the acknowledgement follows the
 // channel's last message.
 func (st *stream) unsubscribe(name string) {
-	st.mu.Lock()
 	ch, ok := st.channels[name]
-	delete(st.channels, name)
-	st.mu.Unlock()
 	if !ok {
 		st.sendError("not_subscribed", fmt.Sprintf("not subscribed to %q", name))
 		return
 	}
+	delete(st.channels, name)
 	ch.sub.Close()
 	<-ch.done
 	st.send(serverMessage{Type: "unsubscribed", Channel: name})
