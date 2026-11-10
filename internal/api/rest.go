@@ -49,47 +49,10 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if s.symbols[req.Symbol] {
-		s.metrics.orders.WithLabelValues(req.Symbol, orderResult(res, err)).Inc()
+		s.metrics.orders.WithLabelValues(req.Symbol, orderLabels[orderOutcome(res, err)]).Inc()
 		s.countTrades(req.Symbol, res.Events)
 	}
-	switch {
-	case err != nil && len(res.Events) > 0:
-		s.writeAppliedFailure(w, err, res)
-	case err != nil:
-		s.writeEngineError(w, err)
-	default:
-		writeJSON(w, http.StatusOK, orderResponse{Order: toOrderJSON(res.Status), Events: toEventsJSON(res.Events)})
-	}
-}
-
-// orderResult is the result label of a new order. A command with events
-// reached the book, even if its log failed afterwards.
-func orderResult(res engine.Result, err error) string {
-	status, _ := engineStatus(err)
-	switch {
-	case len(res.Events) > 0 && res.Events[0].Kind == book.EventRejected:
-		return "rejected"
-	case len(res.Events) > 0:
-		return "accepted"
-	case status == http.StatusBadRequest:
-		return "invalid"
-	case errors.Is(err, engine.ErrBusy):
-		return "busy"
-	default:
-		return "failed"
-	}
-}
-
-func (s *Server) countTrades(symbol string, evs []book.Event) {
-	n := 0
-	for _, e := range evs {
-		if e.Kind == book.EventTrade {
-			n++
-		}
-	}
-	if n > 0 {
-		s.metrics.trades.WithLabelValues(symbol).Add(float64(n))
-	}
+	s.writeResult(w, res, err)
 }
 
 func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
@@ -102,38 +65,99 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 	if !s.stopping.Load() { // see BeginShutdown
 		res, err = s.eng.CancelOrder(r.Context(), id)
 	}
-	result := cancelResult(res, err)
+	out := cancelOutcome(res, err)
 	if symbol, issued := s.eng.SymbolOf(id); issued {
-		s.metrics.cancels.WithLabelValues(symbol, result).Inc()
+		s.metrics.cancels.WithLabelValues(symbol, cancelLabels[out]).Inc()
 	}
+	switch {
+	case err == nil && out == finished:
+		writeError(w, http.StatusConflict, "order_finished", fmt.Sprintf("order %d is %v", id, res.Status.State))
+	case err == nil && out == unknown:
+		writeError(w, http.StatusNotFound, "unknown_order", fmt.Sprintf("order %d is unknown", id))
+	default:
+		s.writeResult(w, res, err)
+	}
+}
+
+// writeResult answers a command: with its order and events, with the
+// engine's error, or with both if it took effect and its log then failed.
+func (s *Server) writeResult(w http.ResponseWriter, res engine.Result, err error) {
 	switch {
 	case err != nil && len(res.Events) > 0:
 		s.writeAppliedFailure(w, err, res)
 	case err != nil:
 		s.writeEngineError(w, err)
-	case result == "finished":
-		writeError(w, http.StatusConflict, "order_finished", fmt.Sprintf("order %d is %v", id, res.Status.State))
-	case result == "unknown":
-		writeError(w, http.StatusNotFound, "unknown_order", fmt.Sprintf("order %d is unknown", id))
 	default:
 		writeJSON(w, http.StatusOK, orderResponse{Order: toOrderJSON(res.Status), Events: toEventsJSON(res.Events)})
 	}
 }
 
-// cancelResult is the result label of a cancel. A cancel of an order that
-// is not resting reaches the book as a rejection.
-func cancelResult(res engine.Result, err error) string {
+// outcome is how a command ended. Its metric label and, for a cancel, its
+// HTTP status both follow from it, so neither hangs on the other's
+// spelling.
+type outcome uint8
+
+const (
+	applied  outcome = iota + 1 // the book accepted the order, or canceled it
+	rejected                    // the book rejected the new order
+	finished                    // the order to cancel had already finished
+	unknown                     // the engine does not know the order to cancel
+	invalid                     // the new order failed validation
+	busy                        // the symbol's queue was full
+	failed                      // anything else: shutdown, a log failure, a bug
+)
+
+// The result labels of matching_engine_orders_total and
+// matching_engine_cancels_total.
+var (
+	orderLabels  = map[outcome]string{applied: "accepted", rejected: "rejected", invalid: "invalid", busy: "busy", failed: "failed"}
+	cancelLabels = map[outcome]string{applied: "canceled", unknown: "unknown", finished: "finished", busy: "busy", failed: "failed"}
+)
+
+// orderOutcome classifies a new order. A command with events reached the
+// book, even if its log failed afterwards.
+func orderOutcome(res engine.Result, err error) outcome {
+	status, _ := engineStatus(err)
+	switch {
+	case len(res.Events) > 0 && res.Events[0].Kind == book.EventRejected:
+		return rejected
+	case len(res.Events) > 0:
+		return applied
+	case status == http.StatusBadRequest:
+		return invalid
+	case errors.Is(err, engine.ErrBusy):
+		return busy
+	default:
+		return failed
+	}
+}
+
+// cancelOutcome classifies a cancel. A cancel of an order that is not
+// resting reaches the book as a rejection.
+func cancelOutcome(res engine.Result, err error) outcome {
 	switch {
 	case len(res.Events) > 0 && res.Events[0].Kind != book.EventRejected:
-		return "canceled"
+		return applied
 	case len(res.Events) > 0 && res.Status.ID != 0 && res.Status.Finished():
-		return "finished"
+		return finished
 	case len(res.Events) > 0, errors.Is(err, engine.ErrUnknownOrder):
-		return "unknown"
+		return unknown
 	case errors.Is(err, engine.ErrBusy):
-		return "busy"
+		return busy
 	default:
-		return "failed"
+		return failed
+	}
+}
+
+func (s *Server) countTrades(symbol string, evs []book.Event) {
+	n := 0
+	for _, e := range evs {
+		if e.Kind == book.EventTrade {
+			n++
+		}
+	}
+	if n > 0 {
+		s.metrics.trades.WithLabelValues(symbol).Add(float64(n))
 	}
 }
 

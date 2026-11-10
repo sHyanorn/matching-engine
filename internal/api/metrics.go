@@ -25,11 +25,6 @@ type metrics struct {
 // about 1.6s.
 var durationBuckets = prometheus.ExponentialBuckets(0.00005, 2, 16)
 
-var (
-	orderResults  = []string{"accepted", "rejected", "invalid", "busy", "failed"}
-	cancelResults = []string{"canceled", "unknown", "finished", "busy", "failed"}
-)
-
 func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 	m := &metrics{
 		reg: prometheus.NewRegistry(),
@@ -66,10 +61,10 @@ func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 	}
 	for _, s := range eng.Symbols() {
 		// Every series exists from the start, at 0.
-		for _, r := range orderResults {
+		for _, r := range orderLabels {
 			m.orders.WithLabelValues(s, r)
 		}
-		for _, r := range cancelResults {
+		for _, r := range cancelLabels {
 			m.cancels.WithLabelValues(s, r)
 		}
 		m.trades.WithLabelValues(s)
