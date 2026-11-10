@@ -474,6 +474,9 @@ func testShutdownUnderLoad(t *testing.T, keepAlive bool) {
 // A client that stalls in the middle of a request delays shutdown by at
 // most the server's read timeout, and run still returns nil.
 func TestShutdownWithStalledRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the server's read timeout")
+	}
 	in := start(t, t.TempDir(), "-shutdown-timeout", "1m")
 	conn, err := net.Dial("tcp", strings.TrimPrefix(in.base, "http://"))
 	if err != nil {

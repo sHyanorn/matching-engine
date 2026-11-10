@@ -20,7 +20,7 @@ This repository is a limit order book matching engine written in Go. Code clarit
 ```bash
 make help                           # list the Makefile shortcuts
 go test -race ./...                 # all tests
-go test -short ./...                # quick run; property tests use only 10,000 commands
+go test -short ./...                # quick run: 10,000 commands per property test, no real-time tests
 go test -bench=. -benchmem ./internal/book
 go test -fuzz=FuzzBook -fuzztime=30s ./internal/book
 golangci-lint run ./...             # static analysis, including govet and staticcheck
