@@ -61,13 +61,14 @@
 // trade's Seq is its trade number (SPEC §6.5), and a snapshot records the
 // last Seq it reflects. Seq is reproducible because the engine logs exactly
 // the commands it applies, in order, and never logs or applies a command
-// that fails [Command.Validate]; it answers such a command with 400. WebSocket
-// channels carry their own gap-free counters and quote Seq only for snapshot
-// alignment, because a channel sees only some of the book's events.
+// that fails [Command.Validate]; the API answers such a command with 400.
+// WebSocket channels carry their own gap-free counters and quote Seq only
+// for snapshot alignment, because a channel sees only some of the book's
+// events.
 //
 // # Output buffer
 //
-// Book.Apply (M1) appends a command's events to a slice the caller owns, in
+// Book.Apply appends a command's events to a slice the caller owns, in
 // the style of strconv.AppendInt:
 //
 //	buf = b.Apply(cmd, buf[:0])

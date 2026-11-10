@@ -1,8 +1,8 @@
 package book
 
-// OrderID identifies an order. Clients never send one: when the API receives
-// a new order it takes the next ID from the engine's allocator, one counter
-// shared by all symbols, and only then calls [Command.Validate]. The ID is
+// OrderID identifies an order. Clients never send one: for a new order the
+// engine takes the next ID from its allocator, one counter shared by all
+// symbols, and only then calls [Command.Validate]. The ID is
 // therefore in the Command before it is logged, so replay sees the same IDs,
 // and it is unique across symbols, so that DELETE and GET /v1/orders/{id},
 // which name no symbol, can be routed. An ID taken by a command that is then

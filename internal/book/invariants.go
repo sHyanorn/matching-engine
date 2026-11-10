@@ -27,7 +27,7 @@ import (
 // property and fuzz tests check those from the event stream.
 //
 // It costs O(N + P) for N resting orders and P levels, so it is meant for
-// tests, fuzzing and debug builds, never for the matching hot path.
+// tests and fuzzing, never for the matching hot path.
 func (b *Book) CheckInvariants() error {
 	queued := 0
 	for _, s := range [...]Side{Buy, Sell} {

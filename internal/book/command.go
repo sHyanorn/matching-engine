@@ -70,11 +70,11 @@ type Command struct {
 //
 // Validate knows nothing about book state: a valid new order can still be
 // rejected with [ReasonDuplicateOrderID] or [ReasonFOKUnfillable], and a
-// valid cancel with [ReasonUnknownOrder]. The API calls Validate after the
-// engine has assigned the OrderID (see [OrderID]) and answers 400 without
-// logging or applying the command. The book calls it again for every
-// command, so the outcome never depends on who called it and arbitrary
-// (fuzz) input is safe.
+// valid cancel with [ReasonUnknownOrder]. The engine calls Validate after
+// it has assigned the OrderID (see [OrderID]) and neither logs nor applies
+// a command that fails, which the API answers with 400. The book calls it
+// again for every command, so the outcome never depends on who called it
+// and arbitrary (fuzz) input is safe.
 func (c Command) Validate() Reason {
 	switch c.Kind {
 	case CommandNewOrder:

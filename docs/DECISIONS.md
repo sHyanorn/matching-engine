@@ -88,7 +88,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D015 Correctness checks: CheckInvariants returns error, CI fuzzes on every push
 - Date: 2026-11-05
-- Decision: `Book.CheckInvariants()` returns the first problem found, or nil if there is none; it runs in O(N + P) and is called only from tests, fuzzing, and debug mode. CI has a fuzz job that runs `FuzzBook` and `FuzzCommandValidate` for 30 seconds each on every push; on failure, the failing input is uploaded as a build artifact. Failing inputs found by fuzzing are committed to `internal/book/testdata/fuzz/`, after which a plain `go test` runs them as regression tests
+- Decision: `Book.CheckInvariants()` returns the first problem found, or nil if there is none; it runs in O(N + P) and is called only from tests and fuzzing. CI has a fuzz job that runs `FuzzBook`, `FuzzCommandValidate` and `FuzzCheckKeys` for 30 seconds each on every push; on failure, the failing input is uploaded as a build artifact. Failing inputs found by fuzzing are committed to the package's `testdata/fuzz/`, after which a plain `go test` runs them as regression tests
 - Rationale: Returning error lets the caller decide whether to fail a test, log, or halt, and the error can name the exact rule that was broken; a panic can only stop the process. Fuzzing on every push catches problems introduced by new changes before they are merged; keeping failing inputs in the repository means fixed bugs cannot quietly return
 - Alternatives: CheckInvariants panics directly (the caller has no choice); fuzzing only manually on a local machine (easy to forget, and problems are found late)
 

@@ -41,7 +41,7 @@ A high-performance limit order book matching engine written in Go. It matches or
 ## 4. Architecture
 
 ```
-           REST / WebSocket (internal/api)
+      REST / WebSocket / metrics (internal/api)
                        │
              command channel (chan)
                        │
@@ -53,8 +53,8 @@ A high-performance limit order book matching engine written in Go. It matches or
     └──────────────────┬──────────────────┘
                        │
               event bus (fan-out)
-                 │            │
-          WebSocket push   metrics
+                       │
+                WebSocket push
 ```
 
 Design notes:

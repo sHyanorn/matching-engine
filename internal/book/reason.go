@@ -15,11 +15,11 @@ const (
 	ReasonNone Reason = 0
 
 	// Stateless rejections: returned by Command.Validate, in this order of
-	// precedence, and reported by EventRejected. An API answers them with
-	// 400 without logging or applying the command. For a new order the API
-	// itself sets Kind and OrderID, so invalid_command or invalid_order_id
-	// there means an API bug (500); for a cancel, invalid_order_id is the
-	// client's error (400).
+	// precedence, and reported by EventRejected. The engine neither logs
+	// nor applies such a command, and the API answers it with 400. For a
+	// new order the engine itself sets Kind and OrderID, so invalid_command
+	// or invalid_order_id there means a server bug (500); for a cancel,
+	// invalid_order_id is the client's error (400).
 	ReasonInvalidCommand  Reason = 1 // Kind is not a known CommandKind
 	ReasonInvalidOrderID  Reason = 2 // OrderID is 0
 	ReasonInvalidSide     Reason = 3 // Side is not Buy or Sell
