@@ -55,7 +55,7 @@ Latency from order to trade push, in ms ([`bench-results/e2e-review/default`](..
 
 The p99 at 50k/s depends on the machine. The three runs in the table had 40.0, 41.1 and 43.4 ms (median 41.1 ms). Three runs of the same sweep on a second VM, also with 4 vCPUs, had 123.5, 141.1 and 148.3 ms (median 141.1 ms); their reports are not in this repository. At 10k/s that VM reproduced the table: a p99 of 1.75 ms against 1.76 ms.
 
-50k/s is close to where the 64 connections saturate. Each carries one request at a time, so together they keep up only while a request takes under 1.28 ms on average. In the runs here the median service time was 0.43 to 0.49 ms, and waiting for a free connection (a p99 send lag of 38 to 42 ms) already made up nearly all of the p99. A small rise in the median service time makes more requests queue, and loadgen and the engine share the same 4 vCPUs. So the 50k/s row means near saturation, with a p99 between 40 and 150 ms depending on the machine.
+50k/s is close to the capacity of this setup: with a target of 60k/s the machine here sent 59.1k/s, with a median send lag of 94 ms. At 50k/s the median service time was 0.43 to 0.49 ms, and the lag between a request's due time and its send (a p99 of 38 to 42 ms) made up nearly all of the p99. The 64 connections carry one request each, so a stall of more than 1.28 ms leaves requests due while every connection is busy, and with so little capacity to spare the backlog drains slowly. A machine with a slightly higher median service time has less to spare and queues longer, and loadgen and the engine share its 4 vCPUs. So the 50k/s row means near saturation: a p99 between 40 and 150 ms on the two machines measured.
 
 ### An fsync before every reply
 
