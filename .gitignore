@@ -11,3 +11,4 @@ bin/
 *.out
 *.prof
 bench-results/*.raw
+/data/
