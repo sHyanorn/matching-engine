@@ -2,7 +2,7 @@
 
 Every number here comes from one machine and can be measured again with the commands at the end, except where a section says otherwise: the optimization sweeps ran on another, slower VM of the same type, and the Windows figures come from GitHub's runners. The raw results are in [`bench-results/`](../bench-results).
 
-**Machine**: a cloud VM with an Intel Xeon at 2.10 GHz, 4 vCPUs and 16 GB, Linux 6.18 on ext4. The figures were measured with Go 1.24.7. The project now builds with Go 1.27.3, which showed no measurable change in the core benchmarks ([`bench-results/go1.27`](../bench-results/go1.27/benchstat.txt), [D037](DECISIONS.md)). In the end-to-end runs the load generator and the engine share the 4 vCPUs.
+**Machine**: a cloud VM with an Intel Xeon at 2.10 GHz, 4 vCPUs and 16 GB, Linux 6.18 on ext4. The figures were measured with Go 1.24.7. The project now builds with Go 1.27.4. Go 1.27.3 showed no measurable change in the core benchmarks ([`bench-results/go1.27`](../bench-results/go1.27/benchstat.txt), [D037](DECISIONS.md)); 1.27.4 is a security patch release and was not benchmarked. In the end-to-end runs the load generator and the engine share the 4 vCPUs.
 
 ## Matching core
 
