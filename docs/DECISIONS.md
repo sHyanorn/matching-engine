@@ -19,6 +19,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: One goroutine per symbol processes commands serially
 - Rationale: Matching is inherently sequential; a lock-free design is faster and simpler, and results can be replayed deterministically
 - Alternatives: fine-grained locking (complex and error-prone)
+- Update: "faster" was not measured; no locked version was built or benchmarked. In the CPU profile after the optimizations, `Book.Apply` is 1.4% to 2% of the engine's CPU (docs/BENCHMARKS.md).
 
 ## D004 Red-black tree for ordered price levels
 - Date: 2026-11-04
