@@ -3,6 +3,7 @@ package api_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
@@ -106,6 +109,78 @@ func TestBookSnapshotHoldsEveryLevel(t *testing.T) {
 	bids := snap.Bids[1:] // the snapshot with the delta applied
 	if got := env.book(t, btc, "?depth=1000").Bids; !slices.Equal(got, bids[:1000]) {
 		t.Errorf("REST top 1000 differs from the streamed book")
+	}
+}
+
+// A message over maxQueuedBytes reaches a client that reads, while other
+// messages wait to be written.
+func TestLargeDeltaReachesReadingClient(t *testing.T) {
+	const (
+		levels = 25_000 // snapshot about 864 KB; the sweep's delta about 1.19 MB
+		tape   = 20_000 // orders on one more level: their trades keep the trades pump busy
+		top    = 30_000 // that level's price, above all others
+	)
+	ctx := context.Background()
+	env := newEnv(t, envConfig{})
+	restBids(t, env, levels)
+	for range tape {
+		o := engine.NewOrder{Symbol: btc, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: top, Qty: 1}
+		if _, err := env.eng.PlaceOrder(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn := env.dial(t)
+	conn.SetReadLimit(64 << 20)
+	writeMsg(t, conn, `{"op":"subscribe","channels":["trades:BTC-USD","book:BTC-USD"]}`)
+	for {
+		if m := readMsg(t, conn); m.Type == "book_snapshot" {
+			if len(m.Bids) != levels+1 {
+				t.Fatalf("snapshot has %d bid levels, want %d", len(m.Bids), levels+1)
+			}
+			break
+		}
+	}
+	type result struct {
+		changes int
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		for {
+			_, data, err := conn.Read(context.Background())
+			if err != nil {
+				done <- result{err: err}
+				return
+			}
+			if m := parseStreamMsg(data); m.Type == "book_delta" && len(m.Changes) > 1 {
+				done <- result{changes: len(m.Changes)}
+				return
+			}
+		}
+	}()
+	sell := func(qty book.Qty) {
+		t.Helper()
+		o := engine.NewOrder{Symbol: btc, Side: book.Sell, Type: book.Market, TIF: book.IOC, Qty: qty}
+		if _, err := env.eng.PlaceOrder(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sell(tape)   // 20,000 trade pushes and a one-change delta
+	sell(levels) // sweeps 25,000 levels: one delta of about 1.19 MB
+	select {
+	case r := <-done:
+		var ce websocket.CloseError
+		switch {
+		case errors.As(r.err, &ce):
+			t.Fatalf("closed with %d %q before the sweep's book_delta arrived; slow_consumer_bytes = %v",
+				ce.Code, ce.Reason, env.metrics(t).value("matching_engine_ws_disconnects_total", "reason", "slow_consumer_bytes"))
+		case r.err != nil:
+			t.Fatalf("read: %v", r.err)
+		case r.changes != levels:
+			t.Fatalf("book_delta has %d changes, want %d", r.changes, levels)
+		}
+	case <-time.After(3 * waitFor):
+		t.Fatal("neither the book_delta nor a close arrived")
 	}
 }
 

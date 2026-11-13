@@ -155,9 +155,10 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 
 ## D026 WebSocket snapshots hold the whole book; the send backlog is bounded in bytes
 - Date: 2026-11-05
-- Decision: `book_snapshot` holds every level, so snapshot plus deltas always reproduces the book; deltas carry order counts since D035. Each connection's unsent messages are limited to 1 MB beyond the one being queued, and one message unsent for 10 s also marks a slow consumer (close 1008)
+- Decision: `book_snapshot` holds every level, so snapshot plus deltas always reproduces the book; deltas carry order counts since D035. Each connection's unsent messages, apart from the largest, are limited to 1 MB, and taking over 10 s to write one message also marks a slow consumer (close 1008)
 - Rationale: With a capped snapshot, deltas for levels below the cap left the client's book incomplete. A byte bound keeps the memory a non-reading client can pin small even when snapshots are large
 - Alternatives: a capped snapshot with deltas filtered to the visible depth (the server tracks each client's window); a message-count bound only (a backlog of snapshots costs megabytes)
+- Update 2026-11-13: the bound used to exempt only a message queued when nothing else was: a client that did not read held at most 1 MB, or that one message, in the queue, plus the message being written. A client that read in time was disconnected when a message near or over 1 MB waited behind others and any message followed it, for example a large `book_snapshot` or `book_delta` beside a busy trades channel. The bound now leaves out the largest queued message, so a client that does not read holds at most 1 MB plus its largest queued message, and one more message in the writer, which the write timeout bounds. Two messages over 1 MB queued at once still close the connection. The 10 s timeout runs from the start of writing a message; time spent in the 256-message queue is not timed
 
 ## D027 The engine runs on Windows without directory fsync
 - Date: 2026-11-05

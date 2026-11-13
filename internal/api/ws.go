@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -21,7 +21,7 @@ import (
 const (
 	maxClientMessage = 4 << 10
 	outQueue         = 256     // messages waiting for the connection's writer
-	maxQueuedBytes   = 1 << 20 // bytes waiting for the writer, beyond one message
+	maxQueuedBytes   = 1 << 20 // bytes waiting for the writer, apart from the largest message
 )
 
 type clientMessage struct {
@@ -71,8 +71,8 @@ var (
 	shuttingDown   = closeCause{websocket.StatusGoingAway, "shutting down", "shutdown"}
 	writeFailed    = closeCause{websocket.StatusInternalError, "write failed", "write_failed"}
 	// A slow consumer: its engine subscription filled, its unsent
-	// messages passed maxQueuedBytes, or one message took longer than the
-	// write timeout.
+	// messages, apart from the largest, passed maxQueuedBytes, or writing
+	// one message took longer than the write timeout.
 	slowSubscription = closeCause{websocket.StatusPolicyViolation, "slow consumer", "slow_consumer_updates"}
 	slowBacklog      = closeCause{websocket.StatusPolicyViolation, "slow consumer", "slow_consumer_bytes"}
 	slowWrite        = closeCause{websocket.StatusPolicyViolation, "slow consumer", "slow_consumer_write"}
@@ -89,7 +89,7 @@ type stream struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	out        chan []byte
-	queued     atomic.Int64  // bytes in out
+	queued     backlog       // the messages in out
 	writerDone chan struct{} // closed when the writer has stopped
 	once       sync.Once     // close
 
@@ -204,7 +204,7 @@ func (st *stream) writeLoop() {
 	for {
 		select {
 		case msg := <-st.out:
-			st.queued.Add(-int64(len(msg)))
+			st.queued.remove(len(msg))
 			if st.ctx.Err() != nil {
 				return
 			}
@@ -223,16 +223,14 @@ func (st *stream) writeLoop() {
 
 // send queues msg, waiting while the writer is behind. A pump blocked
 // here lets its engine subscription fill, so a client that does not read
-// is disconnected as a slow consumer; so is one whose queued messages
-// pass maxQueuedBytes, which bounds the memory a connection holds.
+// is disconnected as a slow consumer; so is one whose queued messages,
+// apart from the largest, pass maxQueuedBytes.
 func (st *stream) send(msg serverMessage) bool {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return false
 	}
-	n := int64(len(data))
-	if backlog := st.queued.Add(n) - n; backlog > 0 && backlog+n > maxQueuedBytes {
-		st.queued.Add(-n)
+	if !st.queued.add(len(data)) {
 		st.close(slowBacklog)
 		return false
 	}
@@ -240,9 +238,48 @@ func (st *stream) send(msg serverMessage) bool {
 	case st.out <- data:
 		return true
 	case <-st.ctx.Done():
-		st.queued.Add(-n)
+		st.queued.remove(len(data))
 		return false
 	}
+}
+
+// backlog holds the sizes of the messages queued for a connection's
+// writer. Leaving the largest out of the bound lets a message of any size
+// through to a client that reads, while a client that does not read holds
+// at most maxQueuedBytes plus one message in the queue.
+type backlog struct {
+	mu    sync.Mutex
+	total int
+	sizes []int
+}
+
+// add records a message of n bytes, unless the queued messages, apart from
+// the largest, would then pass maxQueuedBytes.
+func (b *backlog) add(n int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if total := b.total + n; total > maxQueuedBytes {
+		largest := n
+		for _, size := range b.sizes {
+			largest = max(largest, size)
+		}
+		if total-largest > maxQueuedBytes {
+			return false
+		}
+	}
+	b.total += n
+	b.sizes = append(b.sizes, n)
+	return true
+}
+
+// remove forgets a message of n bytes that add recorded.
+func (b *backlog) remove(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	i := slices.Index(b.sizes, n)
+	b.sizes[i] = b.sizes[len(b.sizes)-1]
+	b.sizes = b.sizes[:len(b.sizes)-1]
+	b.total -= n
 }
 
 func (st *stream) sendError(code, message string) {

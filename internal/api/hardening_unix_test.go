@@ -57,7 +57,8 @@ func dialNoRead(t *testing.T, env *testEnv) *websocket.Conn {
 
 // Snapshots queued for a client that does not read are bounded in bytes:
 // past the limit the client is disconnected as a slow consumer, long
-// before the write timeout.
+// before the write timeout. TestBacklogBound covers the bound beside a
+// message over the limit.
 func TestStreamBacklogBoundedInBytes(t *testing.T) {
 	env := slowEnv(t, envConfig{writeTimeout: time.Minute})
 	restBids(t, env, 2000) // a snapshot of about 80 KB

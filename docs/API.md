@@ -110,7 +110,7 @@ Data messages (`book_snapshot`, `book_delta`, `trade`) carry the `channel`, a `s
 - `subscribed` and `unsubscribed`: acknowledge a channel.
 - `error`: a bad message, with `code` and `message`; the connection stays open.
 
-A snapshot followed by its deltas reproduces the book's levels, order counts included. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages, or one message unsent for 10 s) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
+A snapshot followed by its deltas reproduces the book's levels, order counts included. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages apart from the largest, or over 10 s spent writing one message) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
 
 ## Operations
 
