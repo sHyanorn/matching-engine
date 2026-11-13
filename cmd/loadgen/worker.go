@@ -21,10 +21,11 @@ type worker struct {
 	client *http.Client
 	body   []byte
 
-	outcomes map[string]int
-	firstErr string
-	sent     int      // measured requests sent before the window ended
-	trades   tradeSum // in the replies, warmup included
+	outcomes     map[string]int
+	warmupFailed int // requests in the warmup that failed; not in outcomes
+	firstErr     string
+	sent         int      // measured requests sent before the window ended
+	trades       tradeSum // in the replies, warmup included
 	// Latency samples in nanoseconds, of measured requests that succeeded:
 	// planned to reply, sent to reply, and planned to sent.
 	reply, service, lag []int64
@@ -71,18 +72,21 @@ func (w *worker) handle(ctx context.Context, j job) {
 			w.l.join.reply(id, j.planned, j.measured)
 		}
 	}
+	failed := outcome == "busy" || outcome == "error"
+	if failed && w.firstErr == "" {
+		w.firstErr = fmt.Sprintf("%s %s: %d %s %v", method, path, status, bytes.TrimSpace(data), err)
+	}
 	if !j.measured {
+		if failed {
+			w.warmupFailed++
+		}
 		return
 	}
 	w.outcomes[outcome]++
 	if sent.Before(w.l.end) {
 		w.sent++
 	}
-	switch outcome {
-	case "busy", "error":
-		if w.firstErr == "" {
-			w.firstErr = fmt.Sprintf("%s %s: %d %s %v", method, path, status, bytes.TrimSpace(data), err)
-		}
+	if failed {
 		return
 	}
 	w.reply = append(w.reply, int64(done.Sub(j.planned)))
@@ -253,7 +257,7 @@ func (l *loader) report(workers []*worker, replied tradeSum, missing int, stream
 		Conns: l.cfg.conns, Seed: l.cfg.seed, SD: l.cfg.sd, Go: runtime.Version(), CPUs: runtime.NumCPU(),
 		Outcomes: map[string]int{},
 	}
-	var sent int
+	var sent, warmupFailed int
 	var firstErr string
 	var reply, service, lag []int64
 	for _, w := range workers {
@@ -261,6 +265,7 @@ func (l *loader) report(workers []*worker, replied tradeSum, missing int, stream
 			r.Outcomes[k] += n
 		}
 		sent += w.sent
+		warmupFailed += w.warmupFailed
 		if firstErr == "" {
 			firstErr = w.firstErr
 		}
@@ -272,8 +277,8 @@ func (l *loader) report(workers []*worker, replied tradeSum, missing int, stream
 	if r.Achieved < 0.99*l.cfg.rate {
 		r.Problems = append(r.Problems, fmt.Sprintf("achieved %.0f/s, below 99%% of the target", r.Achieved))
 	}
-	if n := r.Outcomes["busy"] + r.Outcomes["error"]; n > 0 {
-		r.Problems = append(r.Problems, fmt.Sprintf("%d requests failed, the first: %s", n, firstErr))
+	if n := r.Outcomes["busy"] + r.Outcomes["error"] + warmupFailed; n > 0 {
+		r.Problems = append(r.Problems, fmt.Sprintf("%d requests failed, %d of them in the warmup; the first: %s", n, warmupFailed, firstErr))
 	}
 	if missing > 0 {
 		r.Problems = append(r.Problems, fmt.Sprintf("%d orders that traded got no trade push", missing))

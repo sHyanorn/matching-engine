@@ -5,11 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,6 +129,38 @@ func TestStallIsChargedToEveryDelayedRequest(t *testing.T) {
 	}
 	if p := r.Latency["service"].P90; p >= limit {
 		t.Errorf("p90 service time %.0f µs, want under %d", p, limit)
+	}
+}
+
+func TestWarmupFailuresInvalidateRun(t *testing.T) {
+	upstream := &url.URL{Scheme: "http", Host: startEngine(t, nil)}
+	rp := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(upstream) }}
+	const fail = 5
+	var posts atomic.Int64
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The first 5 new orders, all due in the first milliseconds of the
+		// warmup, get a 500. Everything else, the stream included, is relayed.
+		if r.Method == http.MethodPost && posts.Add(1) <= fail {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"code":"internal","message":"injected"}}`)
+			return
+		}
+		rp.ServeHTTP(w, r)
+	}))
+	t.Cleanup(hs.Close)
+	cfg := testConfig(strings.TrimPrefix(hs.URL, "http://"))
+	cfg.rate, cfg.warmup, cfg.duration = 1000, 200*time.Millisecond, 4*time.Second
+	r, err := measure(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posts.Load() <= fail {
+		t.Fatalf("only %d orders sent", posts.Load())
+	}
+	if r.Valid {
+		t.Errorf("run is valid although %d requests failed; outcomes %v, problems %v", fail, r.Outcomes, r.Problems)
 	}
 }
 
