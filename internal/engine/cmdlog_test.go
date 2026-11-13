@@ -132,6 +132,13 @@ func TestLogDamage(t *testing.T) {
 		binary.LittleEndian.PutUint32(d[starts[1]-4:], crc32.Checksum(p, castagnoli))
 		return d
 	}
+	// setLen gives the record at start a payload length of n, in a copy
+	// of the log cut at to.
+	setLen := func(start, to int64, n uint32) []byte {
+		d := slices.Clone(data[:to])
+		binary.LittleEndian.PutUint32(d[start:], n)
+		return d
+	}
 	end := int64(len(data))
 	for _, tc := range []struct {
 		name string
@@ -146,9 +153,12 @@ func TestLogDamage(t *testing.T) {
 		{"zero-filled tail", append(slices.Clone(data), make([]byte, 300)...), true, int64(len(data))},
 		{"zeros then data", append(append(slices.Clone(data), make([]byte, 8)...), 1), false, int64(len(data))},
 		{"zero tail from inside a record", zero(starts[1]+10, end), true, starts[1]},
-		{"zero tail from inside a length", zero(starts[2]+1, end), true, starts[2]},
+		{"zero tail from a length's nonzero byte", zero(starts[2], end), true, starts[2]},
 		{"zeros inside, data after", zero(starts[1]+10, starts[3]), false, starts[1]},
 		{"client_id length", badIDLen(), false, starts[0]},
+		// A whole record under a length that runs to or past the end.
+		{"length of the last record, past the end", flip(starts[3]), false, starts[3]},
+		{"length up to the end, over a whole record", setLen(starts[0], starts[2], uint32(starts[2]-starts[0]-8)), false, starts[0]},
 	} {
 		_, good, torn, err := decodeLog(t, tc.data)
 		switch {
@@ -208,6 +218,43 @@ func TestEngineRecoversTornLog(t *testing.T) {
 	defer mustClose(t, e3)
 	if d, _ := e3.Depth(ctx, "A", 10); len(d.Bids) != 1 || len(d.Asks) != 1 {
 		t.Fatalf("depth after second restart = %+v", d)
+	}
+}
+
+// A damaged length that runs a record past the end of the file is not a
+// torn tail when the record under it is whole: New refuses the log rather
+// than drop that record and the ones after it.
+func TestEngineRefusesDamagedLength(t *testing.T) {
+	order := func(counter uint64, price book.Price) logRecord {
+		return logRecord{cmd: book.Command{
+			Kind: book.CommandNewOrder, OrderID: makeOrderID(counter, 0),
+			Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: price, Qty: 1, Timestamp: 1,
+		}}
+	}
+	data := appendHeader(nil, "A", 0)
+	data = appendRecord(data, order(1, 100))
+	second := len(data)
+	data = appendRecord(data, order(2, 101))
+	data = appendRecord(data, order(3, 102)) // intact and checksummed; never touched below
+	if data[second] != payloadFixed {
+		t.Fatalf("length byte is %d, want %d", data[second], payloadFixed)
+	}
+	data[second] ^= 0x40 // 37 -> 101: still a plausible payload length
+	dir := t.TempDir()
+	path := filepath.Join(dir, "A.log")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: dir})
+	if err == nil {
+		d, _ := e.Depth(context.Background(), "A", 10)
+		after, _ := os.ReadFile(path)
+		_ = e.Close()
+		t.Fatalf("New accepted a log damaged before its last record: %d bid levels, log cut from %d to %d bytes",
+			len(d.Bids), len(data), len(after))
+	}
+	if !errors.Is(err, ErrCorruptLog) {
+		t.Fatalf("New = %v, want ErrCorruptLog", err)
 	}
 }
 

@@ -123,7 +123,8 @@ func decodePayload(p []byte) (logRecord, error) {
 // the file, the last record failing its checksum, or a tail of zero bytes
 // wherever it starts (left by some file systems). Any other damage is
 // ErrCorruptLog, because records after it could not be trusted to be the
-// ones that were applied.
+// ones that were applied. That includes a length field over a whole
+// record, which a crash does not leave (see wholeRecord).
 func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good int64, torn bool, err error) {
 	br := bufio.NewReader(r)
 	off := start
@@ -148,6 +149,13 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 		}
 		end := off + 4 + n + 4
 		if end > size {
+			rest := payload[:size-off-4]
+			if _, err := io.ReadFull(br, rest); err != nil {
+				return off, false, err
+			}
+			if wholeRecord(rest) {
+				return corrupt(fmt.Sprintf("payload length %d over a whole record", n))
+			}
 			return off, true, nil
 		}
 		p := payload[:n+4]
@@ -158,6 +166,9 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 			// The last record, or one where a zero tail begins, was cut
 			// short by a crash.
 			if end == size || zeros(br) {
+				if wholeRecord(p) {
+					return corrupt(fmt.Sprintf("payload length %d over a whole record", n))
+				}
 				return off, true, nil
 			}
 			return corrupt("checksum mismatch")
@@ -175,6 +186,19 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 }
 
 // zeros reports whether everything left in r is zero bytes.
+// wholeRecord reports whether rest, the bytes after a record's length
+// field, begin with a whole record under the length its client_id length
+// gives, checksum included. A crash cuts a record short but leaves its
+// length field as written, so a whole record under a length that disagrees
+// means the length field was damaged.
+func wholeRecord(rest []byte) bool {
+	if len(rest) < payloadFixed {
+		return false
+	}
+	n := payloadFixed + int(rest[payloadFixed-1])
+	return len(rest) >= n+4 && crc32.Checksum(rest[:n], castagnoli) == binary.LittleEndian.Uint32(rest[n:])
+}
+
 func zeros(r io.Reader) bool {
 	var buf [4096]byte
 	for {
