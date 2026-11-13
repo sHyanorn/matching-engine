@@ -112,8 +112,10 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 		return err
 	}
 	// The timeouts bound each request, so a stalled client cannot hold a
-	// handler or delay shutdown. A WebSocket connection is hijacked, which
-	// clears them; ws.go bounds its own writes.
+	// handler or delay shutdown. An order or cancel restarts the write
+	// timeout once its result is ready, as a queued command is applied
+	// however long it waited (D020). A WebSocket connection is hijacked,
+	// which clears the timeouts; ws.go bounds its own writes.
 	hs := &http.Server{
 		Handler:        srv.Handler(),
 		ReadTimeout:    5 * time.Second,

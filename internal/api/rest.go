@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
@@ -47,6 +48,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 			Symbol: req.Symbol, Side: side, Type: typ, TIF: tif,
 			Price: book.Price(req.Price), Qty: book.Qty(req.Qty), ClientID: req.ClientID,
 		})
+		extendWriteDeadline(w, r)
 	}
 	if s.symbols[req.Symbol] {
 		s.metrics.orders.WithLabelValues(req.Symbol, orderLabels[orderOutcome(res, err)]).Inc()
@@ -64,6 +66,7 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 	err := engine.ErrClosed
 	if !s.stopping.Load() { // see BeginShutdown
 		res, err = s.eng.CancelOrder(r.Context(), id)
+		extendWriteDeadline(w, r)
 	}
 	out := cancelOutcome(res, err)
 	if symbol, issued := s.eng.SymbolOf(id); issued {
@@ -76,6 +79,16 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unknown_order", fmt.Sprintf("order %d is unknown", id))
 	default:
 		s.writeResult(w, res, err)
+	}
+}
+
+// extendWriteDeadline gives a command's reply the server's whole write
+// timeout from now. net/http starts that timeout once it has read the
+// request, and a command that waited longer in its queue is still applied,
+// so its result must still reach the client (D020).
+func extendWriteDeadline(w http.ResponseWriter, r *http.Request) {
+	if hs, ok := r.Context().Value(http.ServerContextKey).(*http.Server); ok && hs.WriteTimeout > 0 {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(hs.WriteTimeout))
 	}
 }
 

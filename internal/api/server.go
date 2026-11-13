@@ -144,6 +144,9 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.ResponseController reach the connection.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 type healthBody struct {
 	Status    string   `json:"status"`
 	LogFailed []string `json:"log_failed,omitempty"`

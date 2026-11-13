@@ -123,6 +123,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: `PlaceOrder` and `CancelOrder` return the command's events once it is applied. If the symbol's queue is full they return `ErrBusy` at once. The context bounds only the submission: a queued command is always applied, so its result is always returned. Queries and subscriptions wait for room, bounded by their context
 - Rationale: The REST API can report fills in its response, and backpressure reaches the client immediately instead of building latency (SPEC §4)
 - Alternatives: fire-and-forget commands (the client learns the outcome only from the stream); blocking until there is room (hides overload)
+- Update 2026-11-13: the HTTP server's write timeout (5 s in cmd/engine) used to run from the end of reading the request, so a command that waited longer in its queue was applied but its reply was cut off. The order and cancel handlers now restart it once the result is ready, so the reply gets the whole timeout and a client that reads slowly is still bounded
 
 ## D021 Order IDs are reserved durably in blocks
 - Date: 2026-11-05

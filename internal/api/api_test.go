@@ -55,6 +55,7 @@ type envConfig struct {
 }
 
 // testEnv is an engine serving BTC-USD and ETH-USD behind an api.Server on
+	httpTimeout      time.Duration // the HTTP server's ReadTimeout and WriteTimeout; 0 for none
 // an httptest.Server.
 type testEnv struct {
 	eng   *engine.Engine
@@ -89,6 +90,7 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 		hs.Listener = cfg.listener
 	}
 	hs.Start()
+	hs.Config.ReadTimeout, hs.Config.WriteTimeout = cfg.httpTimeout, cfg.httpTimeout
 	t.Cleanup(hs.Close)
 	hs.Client().Transport.(*http.Transport).DialContext = redial
 	// Cleanups run last first: end any stall, then close the WebSocket
@@ -1400,6 +1402,42 @@ func TestShuttingDownAfterEngineClosed(t *testing.T) {
 	resting := env.place(t, limitOrder("sell", 100, 1))
 	if err := env.eng.Close(); err != nil {
 		t.Fatalf("engine.Close: %v", err)
+// Commands that wait in their queue past the HTTP server's write timeout
+// are applied (D020), and their replies still reach the clients.
+func TestReplyAfterQueueWaitPastWriteTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real-time test")
+	}
+	const timeout = 500 * time.Millisecond
+	env := newEnv(t, envConfig{httpTimeout: timeout})
+	resting := env.place(t, limitOrder("sell", 200, 1))
+
+	results := make(chan sendResult, 3)
+	entered, release := env.clock.Stall()
+	env.postAsync(results, limitOrder("buy", 100, 1).body())
+	receive(t, entered, "stalled book goroutine")
+	env.postAsync(results, limitOrder("buy", 101, 1).body())
+	go func() {
+		res, err := env.send(http.MethodDelete, fmt.Sprintf("/v1/orders/%d", resting.Order.OrderID), "")
+		results <- sendResult{res, err}
+	}()
+	time.Sleep(2 * timeout) // past every request's write deadline
+	release()
+
+	var states []string
+	for range 3 {
+		r := receive(t, results, "reply")
+		if r.err != nil {
+			t.Fatalf("no reply: %v", r.err)
+		}
+		states = append(states, decodeOrderReply(t, r.res).Order.Status)
+	}
+	slices.Sort(states)
+	if want := []string{"canceled", "open", "open"}; !slices.Equal(states, want) {
+		t.Errorf("order states %v, want %v", states, want)
+	}
+}
+
 	}
 	expectError(t, env.do(t, http.MethodPost, "/v1/orders", limitOrder("buy", 100, 1).body()),
 		http.StatusServiceUnavailable, "shutting_down")
