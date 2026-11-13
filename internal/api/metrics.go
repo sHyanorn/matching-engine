@@ -50,6 +50,14 @@ func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 	}
 	m.reg.MustRegister(m.orders, m.cancels, m.trades, m.latency, m.streams, m.wsClosed,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	m.reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "matching_engine_order_ids_failed", Help: "1 while reserving order IDs fails; new orders then fail.",
+	}, func() float64 {
+		if eng.ReservationErr() != nil {
+			return 1
+		}
+		return 0
+	}))
 	for _, c := range closeCauses {
 		m.wsClosed.WithLabelValues(c.label)
 	}

@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/sHyanorn/matching-engine/internal/api"
+	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
 	"github.com/sHyanorn/matching-engine/internal/testclock"
 )
@@ -52,12 +55,13 @@ type envConfig struct {
 	subscriberBuffer int           // api.Options.SubscriberBuffer; 0 for the default
 	writeTimeout     time.Duration // api.Options.WriteTimeout; 0 for the default
 	listener         net.Listener  // for the HTTP server; nil for a default one
+	httpTimeout      time.Duration // the HTTP server's ReadTimeout and WriteTimeout; 0 for none
 }
 
 // testEnv is an engine serving BTC-USD and ETH-USD behind an api.Server on
-	httpTimeout      time.Duration // the HTTP server's ReadTimeout and WriteTimeout; 0 for none
 // an httptest.Server.
 type testEnv struct {
+	dir   string // the engine's DataDir
 	eng   *engine.Engine
 	srv   *api.Server
 	http  *httptest.Server
@@ -68,9 +72,10 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	t.Helper()
 	clock := testclock.New(func(call int64) int64 { return baseTS + call*1000 })
 	fsync := api.NewFsyncTimes()
+	dir := t.TempDir()
 	eng, err := engine.New(engine.Config{
 		Symbols:   []string{btc, eth},
-		DataDir:   t.TempDir(),
+		DataDir:   dir,
 		QueueSize: cfg.queueSize,
 		Clock:     clock.Now,
 		OnSync:    fsync.Observe,
@@ -85,12 +90,12 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	})
 	srv := api.New(eng, api.Options{SubscriberBuffer: cfg.subscriberBuffer, WriteTimeout: cfg.writeTimeout, FsyncTimes: fsync})
 	hs := httptest.NewUnstartedServer(srv.Handler())
+	hs.Config.ReadTimeout, hs.Config.WriteTimeout = cfg.httpTimeout, cfg.httpTimeout
 	if cfg.listener != nil {
 		_ = hs.Listener.Close() // replaced; nothing listens on it yet
 		hs.Listener = cfg.listener
 	}
 	hs.Start()
-	hs.Config.ReadTimeout, hs.Config.WriteTimeout = cfg.httpTimeout, cfg.httpTimeout
 	t.Cleanup(hs.Close)
 	hs.Client().Transport.(*http.Transport).DialContext = redial
 	// Cleanups run last first: end any stall, then close the WebSocket
@@ -98,7 +103,7 @@ func newEnv(t *testing.T, cfg envConfig) *testEnv {
 	// then the HTTP server, then the engine.
 	t.Cleanup(srv.CloseStreams)
 	t.Cleanup(clock.ReleaseAll)
-	return &testEnv{eng: eng, srv: srv, http: hs, clock: clock}
+	return &testEnv{dir: dir, eng: eng, srv: srv, http: hs, clock: clock}
 }
 
 // redial dials, retrying a refused connection for a while: Windows refuses
@@ -1397,11 +1402,6 @@ func TestBusyWhenQueueFull(t *testing.T) {
 	)
 }
 
-func TestShuttingDownAfterEngineClosed(t *testing.T) {
-	env := newEnv(t, envConfig{})
-	resting := env.place(t, limitOrder("sell", 100, 1))
-	if err := env.eng.Close(); err != nil {
-		t.Fatalf("engine.Close: %v", err)
 // Commands that wait in their queue past the HTTP server's write timeout
 // are applied (D020), and their replies still reach the clients.
 func TestReplyAfterQueueWaitPastWriteTimeout(t *testing.T) {
@@ -1438,6 +1438,11 @@ func TestReplyAfterQueueWaitPastWriteTimeout(t *testing.T) {
 	}
 }
 
+func TestShuttingDownAfterEngineClosed(t *testing.T) {
+	env := newEnv(t, envConfig{})
+	resting := env.place(t, limitOrder("sell", 100, 1))
+	if err := env.eng.Close(); err != nil {
+		t.Fatalf("engine.Close: %v", err)
 	}
 	expectError(t, env.do(t, http.MethodPost, "/v1/orders", limitOrder("buy", 100, 1).body()),
 		http.StatusServiceUnavailable, "shutting_down")
@@ -1494,6 +1499,38 @@ func TestHealthzAndBeginShutdown(t *testing.T) {
 	// Connections already open end with 1001 once streams are closed.
 	env.srv.CloseStreams()
 	requireClose(t, ws.closeError(t), websocket.StatusGoingAway, "")
+}
+
+// While order IDs cannot be reserved, new orders get 500, /healthz reports
+// it and the gauge is 1; the first reservation that succeeds clears both.
+func TestHealthzReportsFailedReservation(t *testing.T) {
+	env := newEnv(t, envConfig{})
+	for range 1 << 16 { // a whole block: invalid orders take IDs without being logged
+		o := engine.NewOrder{Symbol: btc, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 1}
+		if _, err := env.eng.PlaceOrder(context.Background(), o); err == nil {
+			t.Fatal("an order of qty 0 was accepted")
+		}
+	}
+	tmp := filepath.Join(env.dir, "ids.tmp")
+	if err := os.Mkdir(tmp, 0o755); err != nil { // the reservation cannot be written
+		t.Fatal(err)
+	}
+	expectError(t, env.do(t, http.MethodPost, "/v1/orders", limitOrder("buy", 100, 1).body()), http.StatusInternalServerError, "internal")
+	if res := env.do(t, http.MethodGet, "/healthz", ""); res.status != http.StatusOK || string(res.body) != `{"status":"degraded","order_ids_failed":true}`+"\n" {
+		t.Errorf("/healthz while reserving fails: %d %s", res.status, res.body)
+	}
+	if v := env.metrics(t).value("matching_engine_order_ids_failed"); v != 1 {
+		t.Errorf("matching_engine_order_ids_failed = %v while reserving fails, want 1", v)
+	}
+
+	if err := os.Remove(tmp); err != nil {
+		t.Fatal(err)
+	}
+	env.place(t, limitOrder("buy", 100, 1))
+	expectHealth(t, env.do(t, http.MethodGet, "/healthz", ""), http.StatusOK, "ok")
+	if v := env.metrics(t).value("matching_engine_order_ids_failed"); v != 0 {
+		t.Errorf("matching_engine_order_ids_failed = %v after a reservation succeeded, want 0", v)
+	}
 }
 
 func TestCloseStreams(t *testing.T) {
@@ -1554,6 +1591,7 @@ func TestMetrics(t *testing.T) {
 		"matching_engine_trades_total":                  "counter",
 		"matching_engine_queue_length":                  "gauge",
 		"matching_engine_log_failed":                    "gauge",
+		"matching_engine_order_ids_failed":              "gauge",
 		"matching_engine_log_fsync_duration_seconds":    "histogram",
 		"matching_engine_ws_disconnects_total":          "counter",
 		"go_goroutines":                                 "gauge",

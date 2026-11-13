@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -417,5 +418,50 @@ func TestNoReservationAfterClose(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(filepath.Join(dir, "ids")); !slices.Equal(after, before) {
 		t.Fatal("a closed engine rewrote the ID reservation")
+	}
+}
+
+// A failed extension of the ID reservation fails every new order and is
+// reported, logged once, until an extension succeeds (D021).
+func TestReservationErr(t *testing.T) {
+	dir := t.TempDir()
+	var logs lockedBuffer
+	e, err := New(Config{Symbols: []string{"A"}, DataDir: dir, Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mustClose(t, e)
+	ctx := context.Background()
+	for range idBlock { // invalid orders take IDs without being logged
+		if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 0)); err == nil {
+			t.Fatal("an order of qty 0 was accepted")
+		}
+	}
+	if err := e.ReservationErr(); err != nil {
+		t.Fatalf("ReservationErr = %v before any failure", err)
+	}
+	tmp := filepath.Join(dir, "ids.tmp")
+	if err := os.Mkdir(tmp, 0o755); err != nil { // the reservation cannot be written
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err == nil {
+			t.Fatal("an order was accepted beyond the reservation")
+		}
+	}
+	if err := e.ReservationErr(); err == nil {
+		t.Fatal("ReservationErr = nil while reserving fails")
+	}
+	if errs := logRecords(t, logs.String(), slog.LevelError); len(errs) != 1 {
+		t.Fatalf("error logs = %v, want one", errs)
+	}
+	if err := os.Remove(tmp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PlaceOrder(ctx, limitOrder("A", book.Buy, 100, 1)); err != nil {
+		t.Fatalf("PlaceOrder once reserving works again: %v", err)
+	}
+	if err := e.ReservationErr(); err != nil {
+		t.Fatalf("ReservationErr = %v after a reservation succeeded", err)
 	}
 }

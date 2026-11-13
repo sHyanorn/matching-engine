@@ -90,8 +90,8 @@ type Config struct {
 	History int
 
 	// Logger receives the engine's logs: at startup a command log that
-	// was not found or lost a torn tail, and a symbol's log failure, once
-	// (default: discarded).
+	// was not found or lost a torn tail, a symbol's log failure, once, and
+	// a failed order-ID reservation and its recovery (default: discarded).
 	Logger *slog.Logger
 
 	// OnSync, if set, gets the duration of every fsync of a symbol's log,
@@ -171,7 +171,11 @@ type Engine struct {
 	lastIssued atomic.Uint64 // last counter value issued for an order ID
 	reserved   atomic.Uint64 // highest counter value durably reserved (D021)
 	reserve    sync.Mutex    // serializes extending the reservation
+	// reserveErr is the error of the last attempt to extend the
+	// reservation, or nil if it succeeded.
+	reserveErr atomic.Pointer[error]
 	ids        idStore
+	logger     *slog.Logger
 	lock       *os.File // held on DataDir until Close (D028)
 	unlock     sync.Once
 	errLock    error // of releasing lock
@@ -203,6 +207,7 @@ func New(cfg Config) (*Engine, error) {
 		bySymbol: make(map[string]*market, len(cfg.Symbols)),
 		ids:      idStore{path: filepath.Join(cfg.DataDir, "ids")},
 		lock:     lock,
+		logger:   cfg.Logger,
 	}
 	// A failed start removes the logs it created, which hold only a
 	// header: one left behind would bind its symbol to this attempt's
@@ -420,6 +425,16 @@ func (e *Engine) Symbols() []string {
 	return s
 }
 
+// ReservationErr returns why the last attempt to reserve order IDs failed,
+// or nil if it succeeded. While it fails, every new order fails; each new
+// order tries again, and the first that succeeds clears it (D021).
+func (e *Engine) ReservationErr() error {
+	if err := e.reserveErr.Load(); err != nil {
+		return *err
+	}
+	return nil
+}
+
 // LogErr returns the error that stopped symbol's command log, which wraps
 // ErrLogFailed, or nil while the log works or if symbol is unknown. Once
 // set it stays until a restart: the symbol accepts no more commands.
@@ -467,7 +482,9 @@ func (e *Engine) nextID() (uint64, error) {
 		if e.closed {
 			return 0, ErrClosed
 		}
-		if err := e.extendReservation(counter); err != nil {
+		err := e.extendReservation(counter)
+		e.noteReservation(err)
+		if err != nil {
 			return 0, err
 		}
 	}
@@ -483,6 +500,21 @@ func (e *Engine) extendReservation(from uint64) error {
 	}
 	e.reserved.Store(high)
 	return nil
+}
+
+// noteReservation records how extending the reservation ended, for
+// ReservationErr, and logs when it starts or stops failing.
+func (e *Engine) noteReservation(err error) {
+	var last *error
+	if err != nil {
+		last = &err
+	}
+	switch prev := e.reserveErr.Swap(last); {
+	case prev == nil && err != nil:
+		e.logger.Error("order ID reservation failed; new orders fail until it succeeds", "err", err)
+	case prev != nil && err == nil:
+		e.logger.Info("order ID reservation succeeded again")
+	}
 }
 
 // queueFull says what send does when m's queue is full.

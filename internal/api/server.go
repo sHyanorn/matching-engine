@@ -148,12 +148,14 @@ func (r *statusRecorder) WriteHeader(code int) {
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 type healthBody struct {
-	Status    string   `json:"status"`
-	LogFailed []string `json:"log_failed,omitempty"`
+	Status         string   `json:"status"`
+	LogFailed      []string `json:"log_failed,omitempty"`
+	OrderIDsFailed bool     `json:"order_ids_failed,omitempty"`
 }
 
-// health reports shutdown with 503. A symbol whose log failed makes the
-// status "degraded" but keeps 200: the other symbols still serve (D029).
+// health reports shutdown with 503. A symbol whose log failed, or failing
+// order-ID reservations, make the status "degraded" but keep 200: cancels
+// and queries, and the other symbols, still serve (D029).
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	if s.stopping.Load() {
 		writeJSON(w, http.StatusServiceUnavailable, healthBody{Status: "shutting_down"})
@@ -165,7 +167,8 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 			b.LogFailed = append(b.LogFailed, sym)
 		}
 	}
-	if b.LogFailed != nil {
+	b.OrderIDsFailed = s.eng.ReservationErr() != nil
+	if b.LogFailed != nil || b.OrderIDsFailed {
 		b.Status = "degraded"
 	}
 	writeJSON(w, http.StatusOK, b)

@@ -179,6 +179,7 @@ Format: ID, date, decision, rationale, alternatives. Append new decisions at the
 - Decision: The first failed write or fsync of a symbol's log is logged at error level, sets `matching_engine_log_failed{symbol}` to 1, and makes `/healthz` answer `200 {"status":"degraded","log_failed":[...]}`. The symbol refuses commands until a restart (D017); the process does not exit
 - Rationale: Before, the failure showed only in client replies. Kafka likewise takes one failed log directory offline, keeps serving the others and exports the count. A 503 would make a load balancer drop the healthy symbols too, Docker does not restart an unhealthy container, and a restart would not fix a full or failing disk
 - Alternatives: exit the process, as etcd and PostgreSQL do (stops every symbol); 503 from /healthz
+- Update 2026-11-13: a failed extension of the order-ID reservation (D021) is reported alike: logged at error level when it starts failing, `matching_engine_order_ids_failed` set to 1, and `/healthz` answering `200 {"status":"degraded","order_ids_failed":true}`. Meanwhile every new order fails with 500 on every symbol, while cancels and queries are served. Each new order tries the reservation again; the first that succeeds clears the state, logged at info level, with no restart
 
 ## D030 End-to-end latency is measured open-loop from each request's due time
 - Date: 2026-11-05
