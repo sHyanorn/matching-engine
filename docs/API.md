@@ -108,7 +108,7 @@ Data messages (`book_snapshot`, `book_delta`, `trade`) carry the `channel`, a `s
 - `book_delta`: the levels one command changed, each with its new total quantity and order count (0 removes the level): `"changes": [ { "side": "sell", "price": 6500100, "qty": 0, "orders": 0 } ]`.
 - `trade`: one execution, with `price`, `qty`, `taker_side`, `taker_order_id`, `maker_order_id` and `ts`.
 - `subscribed` and `unsubscribed`: acknowledge a channel.
-- `error`: a bad message, with `code` and `message`; the connection stays open.
+- `error`: a bad message, with `code` and `message`; the connection stays open. A client message over 4 KB gets no `error`: the connection is closed with code 1009 and counted as `client` in `matching_engine_ws_disconnects_total`.
 
 A snapshot followed by its deltas reproduces the book's levels, order counts included. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages apart from the largest, or over 10 s spent writing one message) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
 
@@ -134,4 +134,4 @@ A snapshot followed by its deltas reproduces the book's levels, order counts inc
 
 The Go runtime and process metrics (`go_*`, `process_*`) are served too.
 
-`rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands not applied because of a log failure or shutdown. A command that took effect counts as `accepted`, `rejected` or its cancel result even if its log then failed. Requests that name no configured symbol, such as a cancel of an ID the engine never issued, are not counted.
+`rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands not applied because of a log failure or shutdown. A command that took effect counts as `accepted`, `rejected` or its cancel result even if its log then failed. Requests that name no configured symbol are not counted, nor is a cancel of an ID whose counter the engine has not issued yet ([D019](DECISIONS.md)). Any other cancel goes to the symbol the ID's low byte names, even if that symbol did not issue it: it is written to that symbol's command log, rejected, and counted there as `unknown`.
