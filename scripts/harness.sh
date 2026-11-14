@@ -17,8 +17,9 @@
 #
 # cases runs every case with every engine and writes each canonical report
 # stream to DIR/canonical/ENGINE/CASE.txt, then runs the state audit, which
-# compares the queried book with Liquibook's at every message, for every
-# engine but Liquibook (its own audit needs QuantCup, which is not built).
+# compares the queried book with Liquibook's at 64 messages the harness
+# picks at random (at every message of a shorter case), for every engine
+# but Liquibook (its own audit needs QuantCup, which is not built).
 # OUT/conformance.txt lists, per case, whether the references agree, whether
 # this engine matches them, and each audit's verdict. The cases have no
 # published hash, so the harness calls their runs INVALID; the canonical
