@@ -33,7 +33,8 @@
 # throughput over the rounds, its range, how many runs' report streams had
 # the published hash and how many the harness called VALID (it also gates
 # a run on, among others, how long its audit queries took); then each
-# engine's worst scenario.
+# engine's worst scenario; this engine against CppTrader round by round;
+# and, per engine, the largest over the smallest run of each scenario.
 set -euo pipefail
 
 bench_url=https://github.com/flash1-dev/matching-engine-benchmark.git
@@ -151,10 +152,11 @@ summary() {
 	python3 -I - "$out" <<-'EOF'
 		import glob, os, re, statistics, sys
 		out = sys.argv[1]
-		worst = {}
+		scenarios = ["static", "normal", "swing-25", "swing-40", "flash-crash"]
+		runs, worst = {}, {}
 		print(f"{'engine':16} {'scenario':12} {'runs':>4} {'median M/s':>10} {'min':>6} {'max':>6}  hash  VALID")
 		for e in sorted(os.listdir(os.path.join(out, "runs"))):
-		    for s in ["static", "normal", "swing-25", "swing-40", "flash-crash"]:
+		    for s in scenarios:
 		        files = glob.glob(os.path.join(out, "runs", e, s, "*.txt"))
 		        if not files:
 		            continue
@@ -164,6 +166,9 @@ summary() {
 		            mps.append(float(re.search(r"Throughput: +([0-9.]+) M msgs/s", t).group(1)))
 		            ok += "Status: PASS" in t
 		            valid += "Verdict: VALID" in t
+		            n = int(re.search(r"Messages processed: +([0-9]+)", t).group(1))
+		            secs = float(re.search(r"Wall time: +([0-9.]+) s", t).group(1))
+		            runs[e, s, os.path.basename(f)] = n / secs
 		        med = statistics.median(mps)
 		        print(f"{e:16} {s:12} {len(mps):4} {med:10.2f} {min(mps):6.2f} {max(mps):6.2f}  {ok:2}/{len(mps)} {valid:2}/{len(mps)}")
 		        if e not in worst or med < worst[e][1]:
@@ -171,6 +176,26 @@ summary() {
 		print()
 		for e, (s, med) in sorted(worst.items(), key=lambda kv: -kv[1][1]):
 		    print(f"worst case {e:16} {med:6.2f} M msgs/s ({s})")
+		# The harness prints throughput to 0.01M msgs/s, too coarse for a
+		# slow engine, so the ratios below divide messages by wall time.
+		print()
+		print("matching-engine against cpptrader, run by run (same round, same scenario):")
+		for s in scenarios:
+		    rounds = [r for (e, sc, r) in runs if e == "matching-engine" and sc == s and ("cpptrader", s, r) in runs]
+		    if not rounds:
+		        continue
+		    ratio = [runs["matching-engine", s, r] / runs["cpptrader", s, r] for r in rounds]
+		    faster = sum(x > 1 for x in ratio)
+		    print(f"  {s:12} faster in {faster}/{len(ratio)} rounds; ratio {min(ratio):.2f} to {max(ratio):.2f}, median {statistics.median(ratio):.2f}")
+		print("largest over smallest of the runs of one scenario:")
+		for e in ["matching-engine", "cpptrader", "liquibook", "geseq"]:
+		    spread = []
+		    for s in scenarios:
+		        x = [v for (en, sc, _), v in runs.items() if en == e and sc == s]
+		        if x:
+		            spread.append(max(x) / min(x))
+		    if spread:
+		        print(f"  {e:16} {min(spread):.2f} to {max(spread):.2f}")
 	EOF
 }
 

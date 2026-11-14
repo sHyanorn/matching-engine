@@ -28,11 +28,11 @@ worst case liquibook          0.02 M msgs/s (static)
 matching-engine against cpptrader, run by run (same round, same scenario):
   static       faster in 8/10 rounds; ratio 0.97 to 2.08, median 1.59
   normal       faster in 9/10 rounds; ratio 0.95 to 1.90, median 1.38
-  swing-25     faster in 10/10 rounds; ratio 1.08 to 1.63, median 1.30
+  swing-25     faster in 10/10 rounds; ratio 1.08 to 1.63, median 1.29
   swing-40     faster in 9/10 rounds; ratio 0.92 to 2.08, median 1.60
   flash-crash  faster in 10/10 rounds; ratio 1.05 to 1.83, median 1.28
-largest over smallest of the 10 runs of one scenario:
-  matching-engine  1.21 to 1.46
+largest over smallest of the runs of one scenario:
+  matching-engine  1.20 to 1.46
   cpptrader        1.79 to 2.09
-  liquibook        1.00 to 2.07
-  geseq            1.33 to 1.59
+  liquibook        1.24 to 2.07
+  geseq            1.33 to 1.60
