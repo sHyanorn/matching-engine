@@ -61,7 +61,7 @@ Check off each item when it is done. All tests must pass at the end of every mil
 
 ## M7 Faster core and a same-machine comparison
 - [x] Per-command latency benchmark for Book.Apply, with the clock's own cost
-- [x] Open-addressing order index with bounded growth, checked by CheckInvariants
+- [x] Open-addressing order index with incremental growth, checked by CheckInvariants
 - [x] Reuse the nodes of orders that leave the book
 - [x] Adapter for the flash1-dev matching engine benchmark
 - [x] Results against reference engines on the same machine
