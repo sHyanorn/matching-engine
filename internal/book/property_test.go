@@ -192,7 +192,7 @@ func TestPropertyRandomCommands(t *testing.T) {
 				sideEmptied[half]++
 			}
 		}
-		maxResting = max(maxResting, len(b.orders))
+		maxResting = max(maxResting, b.orders.len())
 	}
 	if err := lg.check(b); err != nil {
 		t.Fatal(err)

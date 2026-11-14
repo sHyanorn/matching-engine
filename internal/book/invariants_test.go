@@ -28,7 +28,7 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 		}
 		return b
 	}
-	order := func(b *Book, id OrderID) *orderNode { return b.orders[id] }
+	order := func(b *Book, id OrderID) *orderNode { return b.orders.get(id) }
 	level := func(b *Book, s Side, p Price) *levelNode { return b.side(s).find(p) }
 
 	cases := []struct {
@@ -43,7 +43,7 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 		{"empty level", func(b *Book) {
 			o := order(b, 3)
 			o.level.unlinkOrder(o)
-			delete(b.orders, 3)
+			b.orders.del(3)
 		}},
 		{"side sell in a buy level", func(b *Book) { order(b, 1).Side = Sell }},
 		{"price 100 in the level at 99", func(b *Book) { order(b, 1).Price = 100 }},
@@ -65,15 +65,25 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 		{"RestedSeq 0 outside 1..LastSeq", func(b *Book) { order(b, 1).RestedSeq = 0 }},
 		{"outside 1..LastSeq", func(b *Book) { order(b, 6).RestedSeq = b.seq + 1 }},
 		{"sell levels: size is -1, tree has 2 nodes", func(b *Book) { b.asks.size = -1 }},
-		{"the ID map does not point at the queued order", func(b *Book) { b.orders[2] = order(b, 1) }},
-		{"ID map holds 7 orders, the queues 6", func(b *Book) { b.orders[999] = order(b, 1) }},
+		{"the order index does not point at the queued order", func(b *Book) {
+			i, _ := b.orders.cur.find(2)
+			b.orders.cur.slots[i].node = order(b, 1)
+		}},
+		{"order index holds 7 orders, the queues 6", func(b *Book) { b.orders.put(999, order(b, 1)) }},
+		{"order index: counts 7 entries, holds 6", func(b *Book) { b.orders.n++ }},
+		{"holds a tombstone for 3 in the current table", func(b *Book) {
+			// A tombstone left in the current table: order 3 is gone from
+			// the index, though still queued.
+			i, _ := b.orders.cur.find(3)
+			b.orders.cur.slots[i].node = nil
+		}},
 		{"sell levels: root is red", func(b *Book) { b.asks.root.red = true }},
 		{"book is crossed: best bid 200, best ask 101", func(b *Book) {
 			// A well-formed bid level above the best ask.
 			l := b.bids.insert(200)
 			o := &orderNode{Order: Order{ID: 7, Side: Buy, Type: Limit, TIF: GTC, Price: 200, Qty: 1, Remaining: 1, RestedSeq: b.seq}}
 			l.pushBack(o)
-			b.orders[7] = o
+			b.orders.put(7, o)
 		}},
 		{"book is crossed: best bid 101, best ask 101", func(b *Book) {
 			// A well-formed bid level exactly at the best ask: SPEC §7 wants
@@ -81,7 +91,7 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 			l := b.bids.insert(101)
 			o := &orderNode{Order: Order{ID: 7, Side: Buy, Type: Limit, TIF: GTC, Price: 101, Qty: 1, Remaining: 1, RestedSeq: b.seq}}
 			l.pushBack(o)
-			b.orders[7] = o
+			b.orders.put(7, o)
 		}},
 	}
 	for _, c := range cases {
@@ -99,7 +109,7 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 // only the raw price-order check can see that the best bid is really the
 // worst, and that the book below is crossed (bid 101 against ask 100).
 func TestCheckInvariantsCatchesSwappedSides(t *testing.T) {
-	b := &Book{bids: newLevelTree(Sell), asks: newLevelTree(Buy), orders: map[OrderID]*orderNode{}}
+	b := &Book{bids: newLevelTree(Sell), asks: newLevelTree(Buy), orders: newOrderIndex()}
 	for _, c := range []Command{limit(1, Buy, 99, 5), limit(2, Buy, 101, 5), limit(3, Sell, 100, 5)} {
 		b.Apply(c, nil)
 	}

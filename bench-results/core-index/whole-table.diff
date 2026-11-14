@@ -1,0 +1,11 @@
+--- a/internal/book/index.go
++++ b/internal/book/index.go
+@@ -39,7 +39,7 @@
+ // slots; the new table has 2C, so it fills to half only after C/2 more
+ // inserts. Any step of at least 2 empties the old table before then; 8
+ // does it within C/8 inserts and bounds the extra work of one insert.
+-const growStep = 8
++const growStep = 1 << 62
+ 
+ // minIndexSlots is the size of a new book's table; a power of two.
+ const minIndexSlots = 64

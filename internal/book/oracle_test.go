@@ -63,10 +63,10 @@ func (m *restingModel) record(evs []Event) error {
 // check requires the book's resting orders to equal the model's exactly,
 // RestedSeq and Timestamp included. It allocates nothing.
 func (m *restingModel) check(b *Book) error {
-	if len(b.orders) != len(m.orders) {
-		return fmt.Errorf("book rests %d orders, the event stream %d", len(b.orders), len(m.orders))
+	if b.orders.len() != len(m.orders) {
+		return fmt.Errorf("book rests %d orders, the event stream %d", b.orders.len(), len(m.orders))
 	}
-	for id, o := range b.orders {
+	for id, o := range b.orders.all() {
 		if want, ok := m.orders[id]; !ok || o.Order != want {
 			return fmt.Errorf("resting order %d is %+v; from the event stream %+v (found %v)", id, o.Order, want, ok)
 		}
@@ -124,13 +124,13 @@ func sameBook(a, b *Book) error {
 			return fmt.Errorf("%v depth differs:\n%v\n%v", s, da, db)
 		}
 	}
-	for id, o := range a.orders {
+	for id, o := range a.orders.all() {
 		if r, ok := b.Order(id); !ok || r != o.Order {
 			return fmt.Errorf("order %d is %+v in one book and %+v, %v in the other", id, o.Order, r, ok)
 		}
 	}
-	if a.LastSeq() != b.LastSeq() || len(a.orders) != len(b.orders) {
-		return fmt.Errorf("books end at Seq %d with %d orders and at Seq %d with %d", a.LastSeq(), len(a.orders), b.LastSeq(), len(b.orders))
+	if a.LastSeq() != b.LastSeq() || a.orders.len() != b.orders.len() {
+		return fmt.Errorf("books end at Seq %d with %d orders and at Seq %d with %d", a.LastSeq(), a.orders.len(), b.LastSeq(), b.orders.len())
 	}
 	return nil
 }

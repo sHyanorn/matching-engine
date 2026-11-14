@@ -1,0 +1,90 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      68	       283.7 ns/op	        33.00 clock-p50-ns	        46.00 clock-p99-ns	   5108227 max-ns	       147.0 p50-ns	       309.0 p90-ns	       635.0 p99-ns	      4066 p99.9-ns	     33832 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      63	       276.5 ns/op	        34.00 clock-p50-ns	        36.00 clock-p99-ns	    977613 max-ns	       163.0 p50-ns	       321.0 p90-ns	       642.0 p99-ns	      4782 p99.9-ns	     28736 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      60	       307.4 ns/op	        34.00 clock-p50-ns	        36.00 clock-p99-ns	   1276158 max-ns	       162.0 p50-ns	       332.0 p90-ns	       654.0 p99-ns	      5623 p99.9-ns	     29516 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       456.5 ns/op	        34.00 clock-p50-ns	        48.00 clock-p99-ns	 102249512 max-ns	       262.0 p50-ns	       449.0 p90-ns	       848.0 p99-ns	      5276 p99.9-ns	     28529 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      64	       262.0 ns/op	        33.00 clock-p50-ns	        35.00 clock-p99-ns	    589949 max-ns	       140.0 p50-ns	       294.0 p90-ns	       601.0 p99-ns	      3380 p99.9-ns	     32916 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      63	       310.4 ns/op	        34.00 clock-p50-ns	        47.00 clock-p99-ns	    893252 max-ns	       186.0 p50-ns	       377.0 p90-ns	       717.0 p99-ns	      3499 p99.9-ns	     33484 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      52	       297.1 ns/op	        40.00 clock-p50-ns	        57.00 clock-p99-ns	    422216 max-ns	       161.0 p50-ns	       323.0 p90-ns	       680.0 p99-ns	      5183 p99.9-ns	     26632 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       2	       507.6 ns/op	        33.00 clock-p50-ns	        46.00 clock-p99-ns	 133170233 max-ns	       261.0 p50-ns	       442.0 p90-ns	       930.0 p99-ns	      6189 p99.9-ns	     32588 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      70	       324.3 ns/op	        46.00 clock-p50-ns	        60.00 clock-p99-ns	   7310892 max-ns	       178.0 p50-ns	       345.0 p90-ns	       762.0 p99-ns	      5482 p99.9-ns	     42252 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      57	       346.6 ns/op	        34.00 clock-p50-ns	        44.00 clock-p99-ns	   4336524 max-ns	       191.0 p50-ns	       392.0 p90-ns	       914.0 p99-ns	      4936 p99.9-ns	     36082 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      57	       319.1 ns/op	        34.00 clock-p50-ns	        36.00 clock-p99-ns	    899033 max-ns	       171.0 p50-ns	       348.0 p90-ns	       789.0 p99-ns	      6248 p99.9-ns	     31617 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       2	       507.5 ns/op	        47.00 clock-p50-ns	        54.00 clock-p99-ns	  76637236 max-ns	       288.0 p50-ns	       446.0 p90-ns	       948.0 p99-ns	      6287 p99.9-ns	     28334 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      51	       305.6 ns/op	        47.00 clock-p50-ns	        55.00 clock-p99-ns	   2279499 max-ns	       188.0 p50-ns	       318.0 p90-ns	       615.0 p99-ns	      4759 p99.9-ns	     33617 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      62	       284.3 ns/op	        33.00 clock-p50-ns	        46.00 clock-p99-ns	    599460 max-ns	       168.0 p50-ns	       344.0 p90-ns	       662.0 p99-ns	      3782 p99.9-ns	     27943 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      50	       360.5 ns/op	        39.00 clock-p50-ns	        50.00 clock-p99-ns	   2238729 max-ns	       218.0 p50-ns	       371.0 p90-ns	       759.0 p99-ns	      6329 p99.9-ns	     29734 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       2	       581.7 ns/op	        47.00 clock-p50-ns	        59.00 clock-p99-ns	 132313987 max-ns	       319.0 p50-ns	       543.0 p90-ns	       976.0 p99-ns	      9067 p99.9-ns	     34264 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      63	       292.4 ns/op	        33.00 clock-p50-ns	        47.00 clock-p99-ns	   1737015 max-ns	       181.0 p50-ns	       308.0 p90-ns	       602.0 p99-ns	      4088 p99.9-ns	     29331 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      55	       295.0 ns/op	        48.00 clock-p50-ns	        56.00 clock-p99-ns	   1635748 max-ns	       171.0 p50-ns	       334.0 p90-ns	       666.0 p99-ns	      4679 p99.9-ns	     32866 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      55	       308.5 ns/op	        33.00 clock-p50-ns	        38.00 clock-p99-ns	   1510268 max-ns	       166.0 p50-ns	       330.0 p90-ns	       652.0 p99-ns	      5291 p99.9-ns	     26944 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       440.1 ns/op	        33.00 clock-p50-ns	        36.00 clock-p99-ns	  73306070 max-ns	       252.0 p50-ns	       428.0 p90-ns	       837.0 p99-ns	      5073 p99.9-ns	     27353 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      68	       272.8 ns/op	        46.00 clock-p50-ns	        57.00 clock-p99-ns	   3024915 max-ns	       145.0 p50-ns	       295.0 p90-ns	       600.0 p99-ns	      4428 p99.9-ns	     29631 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      58	       306.8 ns/op	        34.00 clock-p50-ns	        50.00 clock-p99-ns	   2469114 max-ns	       175.0 p50-ns	       375.0 p90-ns	       744.0 p99-ns	      4527 p99.9-ns	     37133 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      58	       283.4 ns/op	        33.00 clock-p50-ns	        46.00 clock-p99-ns	   1449006 max-ns	       155.0 p50-ns	       298.0 p90-ns	       604.0 p99-ns	      4817 p99.9-ns	     22951 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       500.3 ns/op	        34.00 clock-p50-ns	        47.00 clock-p99-ns	  83225776 max-ns	       248.0 p50-ns	       438.0 p90-ns	       807.0 p99-ns	      7563 p99.9-ns	     86934 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      63	       271.8 ns/op	        48.00 clock-p50-ns	        57.00 clock-p99-ns	   3504228 max-ns	       144.0 p50-ns	       298.0 p90-ns	       592.0 p99-ns	      4166 p99.9-ns	     32949 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      62	       253.2 ns/op	        33.00 clock-p50-ns	        38.00 clock-p99-ns	   1075947 max-ns	       153.0 p50-ns	       288.0 p90-ns	       607.0 p99-ns	      3748 p99.9-ns	     26731 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      56	       279.0 ns/op	        33.00 clock-p50-ns	        35.00 clock-p99-ns	   3390179 max-ns	       153.0 p50-ns	       299.0 p90-ns	       604.0 p99-ns	      4765 p99.9-ns	     25318 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       419.8 ns/op	        33.00 clock-p50-ns	        47.00 clock-p99-ns	  55486192 max-ns	       245.0 p50-ns	       426.0 p90-ns	       793.0 p99-ns	      4915 p99.9-ns	     30634 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      57	       268.2 ns/op	        32.00 clock-p50-ns	        40.00 clock-p99-ns	   2496640 max-ns	       139.0 p50-ns	       287.0 p90-ns	       584.0 p99-ns	      4101 p99.9-ns	     35091 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      63	       273.7 ns/op	        33.00 clock-p50-ns	        40.00 clock-p99-ns	    889773 max-ns	       160.0 p50-ns	       311.0 p90-ns	       644.0 p99-ns	      4354 p99.9-ns	     33715 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      58	       304.3 ns/op	        47.00 clock-p50-ns	        55.00 clock-p99-ns	  20469623 max-ns	       157.0 p50-ns	       317.0 p90-ns	       622.0 p99-ns	      5006 p99.9-ns	     27636 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       440.8 ns/op	        33.00 clock-p50-ns	        45.00 clock-p99-ns	 113547270 max-ns	       234.0 p50-ns	       417.0 p90-ns	       744.0 p99-ns	      4994 p99.9-ns	     25053 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      75	       254.6 ns/op	        34.00 clock-p50-ns	        48.00 clock-p99-ns	   1540425 max-ns	       136.0 p50-ns	       279.0 p90-ns	       583.0 p99-ns	      2334 p99.9-ns	     33324 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      56	       276.1 ns/op	        33.00 clock-p50-ns	        34.00 clock-p99-ns	    844435 max-ns	       162.0 p50-ns	       330.0 p90-ns	       664.0 p99-ns	      3839 p99.9-ns	     30264 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      61	       278.5 ns/op	        33.00 clock-p50-ns	        42.00 clock-p99-ns	   1625547 max-ns	       154.0 p50-ns	       300.0 p90-ns	       605.0 p99-ns	      4841 p99.9-ns	     24508 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       447.8 ns/op	        33.00 clock-p50-ns	        43.00 clock-p99-ns	  89412284 max-ns	       242.0 p50-ns	       429.0 p90-ns	       817.0 p99-ns	      5470 p99.9-ns	     33585 p99.99-ns
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkApplyLatency/sd=5-4         	      60	       254.8 ns/op	        34.00 clock-p50-ns	        41.00 clock-p99-ns	   1393576 max-ns	       135.0 p50-ns	       274.0 p90-ns	       571.0 p99-ns	      4007 p99.9-ns	     33031 p99.99-ns
+BenchmarkApplyLatency/sd=50-4        	      58	       334.7 ns/op	        46.00 clock-p50-ns	        58.00 clock-p99-ns	   9712179 max-ns	       208.0 p50-ns	       380.0 p90-ns	       741.0 p99-ns	      4696 p99.9-ns	     31903 p99.99-ns
+BenchmarkApplyLatency/resting=1M/sd=5-4         	      58	       287.2 ns/op	        34.00 clock-p50-ns	        37.00 clock-p99-ns	   1764386 max-ns	       154.0 p50-ns	       311.0 p90-ns	       640.0 p99-ns	      5022 p99.9-ns	     26582 p99.99-ns
+BenchmarkApplyLatency/empty-to-1M-4             	       3	       447.6 ns/op	        33.00 clock-p50-ns	        36.00 clock-p99-ns	 128534321 max-ns	       237.0 p50-ns	       431.0 p90-ns	       818.0 p99-ns	      5024 p99.9-ns	     31579 p99.99-ns
+PASS

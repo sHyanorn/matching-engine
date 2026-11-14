@@ -1,0 +1,32 @@
+diff --git a/internal/book/growth_starts_test.go b/internal/book/growth_starts_test.go
+new file mode 100644
+index 0000000..e8eb175
+--- /dev/null
++++ b/internal/book/growth_starts_test.go
+@@ -0,0 +1,26 @@
++package book
++
++import (
++	"testing"
++	"time"
++)
++
++// TestGrowthStarts rests 1M orders on a new book three times over and logs
++// how long each Apply that started a growth of the order index took. The
++// first pass gets fresh memory from the operating system; later passes get
++// heap memory the runtime reuses and must clear.
++func TestGrowthStarts(t *testing.T) {
++	buf := make([]Event, 0, 8)
++	for pass := range 3 {
++		b := New()
++		for i := range 1_000_000 {
++			growing := b.orders.old.slots != nil
++			t0 := time.Now()
++			buf = b.Apply(restingOrder(i, 1_000), buf[:0])
++			d := time.Since(t0)
++			if !growing && b.orders.old.slots != nil && i+1 >= 1<<16 {
++				t.Logf("pass %d: entry %d starts growth to %d slots: %v", pass, i+1, len(b.orders.cur.slots), d)
++			}
++		}
++	}
++}

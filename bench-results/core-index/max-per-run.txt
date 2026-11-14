@@ -1,0 +1,9 @@
+# Largest single Apply in BenchmarkApplyLatency/empty-to-1M, ms, one value per run, in run order:
+#   grep empty-to-1M SET/VARIANT-latency.txt | grep -oE '[0-9]+ max-ns'
+set1 map        0.38 6.59 0.80 6.32 0.57 0.30 0.32 1.23 6.52 2.11 
+set1 whole      114.75 93.56 104.36 80.87 76.54 101.68 89.58 85.26 109.40 90.45 
+set1 grad       15.78 13.06 9.22 3.62 7.14 9.63 19.55 4.52 4.75 7.96 
+set2 map        0.59 2.89 0.60 0.78 0.26 8.56 0.40 13.68 1.25 18.51 
+set2 whole      102.25 133.17 76.64 132.31 73.31 83.23 55.49 113.55 89.41 128.53 
+set2 grad       3.89 20.03 3.46 3.92 5.14 3.40 8.62 7.94 7.45 3.55 
+set2 extendible 0.75 0.78 11.96 21.42 3.80 2.21 2.21 10.41 6.80 4.49 

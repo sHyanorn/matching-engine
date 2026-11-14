@@ -3,8 +3,8 @@ package book
 // orderNode is a resting order in its price level's queue. The queue is a
 // doubly linked list in time priority: the head is the oldest order and
 // trades first, new orders join at the tail. Holding prev and next in the
-// node lets a cancel unlink an order in O(1) once the book's ID map has
-// found it, and holding level lets it update the level's totals and remove
+// node lets a cancel unlink an order in O(1) once the book's order index
+// has found it, and holding level lets it update the level's totals and remove
 // the level when it empties, without searching the tree.
 type orderNode struct {
 	Order

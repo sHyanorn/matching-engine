@@ -1,0 +1,16 @@
+=== RUN   TestGrowthStarts
+    growth_starts_test.go:22: pass 0: entry 65537 starts growth to 262144 slots: 119.537µs
+    growth_starts_test.go:22: pass 0: entry 131073 starts growth to 524288 slots: 114.235µs
+    growth_starts_test.go:22: pass 0: entry 262145 starts growth to 1048576 slots: 99.884µs
+    growth_starts_test.go:22: pass 0: entry 524289 starts growth to 2097152 slots: 134.653µs
+    growth_starts_test.go:22: pass 1: entry 65537 starts growth to 262144 slots: 39.67µs
+    growth_starts_test.go:22: pass 1: entry 131073 starts growth to 524288 slots: 38.548µs
+    growth_starts_test.go:22: pass 1: entry 262145 starts growth to 1048576 slots: 155.033µs
+    growth_starts_test.go:22: pass 1: entry 524289 starts growth to 2097152 slots: 3.623122ms
+    growth_starts_test.go:22: pass 2: entry 65537 starts growth to 262144 slots: 464.366µs
+    growth_starts_test.go:22: pass 2: entry 131073 starts growth to 524288 slots: 807.075µs
+    growth_starts_test.go:22: pass 2: entry 262145 starts growth to 1048576 slots: 108.505µs
+    growth_starts_test.go:22: pass 2: entry 524289 starts growth to 2097152 slots: 3.994719ms
+--- PASS: TestGrowthStarts (1.42s)
+PASS
+ok  	github.com/sHyanorn/matching-engine/internal/book	1.436s

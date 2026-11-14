@@ -60,7 +60,7 @@ func checkLevelUpdates(t *testing.T, b *Book, evs []Event) {
 func TestNewBookIsEmpty(t *testing.T) {
 	b := New()
 	checkBook(t, b)
-	if b.LastSeq() != 0 || len(b.orders) != 0 || b.bids.best != nil || b.asks.best != nil {
+	if b.LastSeq() != 0 || b.orders.len() != 0 || b.bids.best != nil || b.asks.best != nil {
 		t.Fatal("new book is not empty")
 	}
 	if _, ok := b.Order(1); ok {
@@ -163,8 +163,8 @@ func TestApplyRandomGTC(t *testing.T) {
 				}
 				cmd = at(ts, limit(nextID, side, Price(1_000+r.IntN(21)-10), Qty(1+r.IntN(20))))
 			}
-			before := make(map[OrderID]Order, len(b.orders))
-			for id, o := range b.orders {
+			before := make(map[OrderID]Order, b.orders.len())
+			for id, o := range b.orders.all() {
 				before[id] = o.Order
 			}
 			evs := apply(t, b, cmd)

@@ -1,8 +1,8 @@
 package book
 
 // Book is the limit order book of one symbol: two trees of price levels, one
-// per side, each level a FIFO queue of resting orders, plus a map from order
-// ID to resting order for O(1) cancels. It is a single-threaded state
+// per side, each level a FIFO queue of resting orders, plus an index from
+// order ID to resting order for O(1) cancels. It is a single-threaded state
 // machine: the engine owns one Book per symbol and calls Apply from one
 // goroutine (D003), so nothing here takes a lock.
 //
@@ -10,7 +10,7 @@ package book
 type Book struct {
 	bids   levelTree // best (highest) bid first
 	asks   levelTree // best (lowest) ask first
-	orders map[OrderID]*orderNode
+	orders orderIndex
 	seq    uint64 // Seq of the last event emitted
 }
 
@@ -19,7 +19,7 @@ func New() *Book {
 	return &Book{
 		bids:   newLevelTree(Buy),
 		asks:   newLevelTree(Sell),
-		orders: make(map[OrderID]*orderNode),
+		orders: newOrderIndex(),
 	}
 }
 
@@ -32,7 +32,7 @@ func New() *Book {
 // fails [Command.Validate] produces one Rejected event and changes nothing
 // else, so Apply is safe on arbitrary input. Once out has grown large enough,
 // Apply allocates only when an order comes to rest: its node, a level if the
-// price is new, and now and then room for a larger ID map.
+// price is new, and now and then a larger order index.
 //
 // The returned slice aliases out: the next call overwrites it, so a caller
 // that hands events to another goroutine must copy them first.
@@ -54,8 +54,8 @@ func (b *Book) Apply(cmd Command, out []Event) []Event {
 // The engine follows orders from the events instead; Order is how tests
 // read the book's own view to check against.
 func (b *Book) Order(id OrderID) (Order, bool) {
-	o, ok := b.orders[id]
-	if !ok {
+	o := b.orders.get(id)
+	if o == nil {
 		return Order{}, false
 	}
 	return o.Order, true
@@ -89,7 +89,7 @@ func (b *Book) reject(out []Event, cmd Command, r Reason) []Event {
 // newOrder handles a valid new-order command: stateful checks, then matching
 // against the opposite side, then the remainder rests or is canceled.
 func (b *Book) newOrder(out []Event, cmd Command) []Event {
-	if _, dup := b.orders[cmd.OrderID]; dup {
+	if b.orders.get(cmd.OrderID) != nil {
 		return b.reject(out, cmd, ReasonDuplicateOrderID)
 	}
 	if cmd.TIF == FOK && b.available(cmd) < cmd.Qty {
@@ -144,7 +144,7 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
 			level.totalQty -= q
 			if maker.Remaining == 0 {
 				level.unlinkOrder(maker) // subtracts the maker's Remaining, now 0
-				delete(b.orders, maker.ID)
+				b.orders.del(maker.ID)
 			}
 			out = b.emit(out, cmd.Timestamp, Event{
 				Kind: EventTrade, OrderID: cmd.OrderID, MakerID: maker.ID, Side: cmd.Side,
@@ -188,7 +188,7 @@ func (b *Book) rest(out []Event, cmd Command, remaining Qty) []Event {
 		Qty: cmd.Qty, Filled: cmd.Qty - remaining, Remaining: remaining, Timestamp: cmd.Timestamp,
 	}}
 	level.pushBack(o)
-	b.orders[o.ID] = o
+	b.orders.put(o.ID, o)
 	out = b.emit(out, cmd.Timestamp, Event{
 		Kind: EventRested, OrderID: o.ID, Side: o.Side, Price: o.Price, Qty: remaining,
 		LevelSide: o.Side, LevelQty: level.totalQty, LevelOrders: level.count,
@@ -197,16 +197,16 @@ func (b *Book) rest(out []Event, cmd Command, remaining Qty) []Event {
 	return out
 }
 
-// cancel removes a resting order: an O(1) map lookup and queue unlink, plus
-// O(log P) to remove its level if the order was the last one there.
+// cancel removes a resting order: an O(1) index lookup and queue unlink,
+// plus O(log P) to remove its level if the order was the last one there.
 func (b *Book) cancel(out []Event, cmd Command) []Event {
-	o, ok := b.orders[cmd.OrderID]
-	if !ok {
+	o := b.orders.get(cmd.OrderID)
+	if o == nil {
 		return b.reject(out, cmd, ReasonUnknownOrder)
 	}
 	level := o.level
 	level.unlinkOrder(o)
-	delete(b.orders, o.ID)
+	b.orders.del(o.ID)
 	if level.head == nil {
 		b.side(o.Side).remove(level)
 	}

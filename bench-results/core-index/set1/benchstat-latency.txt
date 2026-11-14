@@ -1,0 +1,75 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+                               │ map-latency.txt │          whole-latency.txt           │          grad-latency.txt           │
+                               │     sec/op      │    sec/op     vs base                │   sec/op     vs base                │
+ApplyLatency/sd=5-4                 309.1n ±  6%   257.0n ±  6%  -16.83% (p=0.000 n=10)   267.8n ± 3%  -13.35% (p=0.000 n=10)
+ApplyLatency/sd=50-4                307.0n ± 10%   280.4n ±  5%   -8.65% (p=0.015 n=10)   276.1n ± 8%  -10.08% (p=0.000 n=10)
+ApplyLatency/resting=1M/sd=5-4      371.5n ±  5%   294.1n ± 11%  -20.83% (p=0.000 n=10)   298.6n ± 6%  -19.62% (p=0.000 n=10)
+ApplyLatency/empty-to-1M-4          534.8n ±  9%   440.0n ±  6%  -17.72% (p=0.000 n=10)   452.2n ± 9%  -15.44% (p=0.000 n=10)
+geomean                             370.5n         310.8n        -16.12%                  316.1n       -14.69%
+
+                               │ map-latency.txt │          whole-latency.txt           │           grad-latency.txt           │
+                               │  clock-p50-sec  │ clock-p50-sec  vs base               │ clock-p50-sec  vs base               │
+ApplyLatency/sd=5-4                 34.00n ± 35%    33.00n ±  3%  -2.94% (p=0.044 n=10)    33.00n ± 39%       ~ (p=0.242 n=10)
+ApplyLatency/sd=50-4                34.00n ± 38%    39.50n ± 22%       ~ (p=0.456 n=10)    34.00n ±  3%       ~ (p=0.725 n=10)
+ApplyLatency/resting=1M/sd=5-4      34.00n ±  3%    33.50n ±  1%       ~ (p=1.000 n=10)    33.00n ± 18%       ~ (p=0.656 n=10)
+ApplyLatency/empty-to-1M-4          33.00n ± 36%    33.50n ± 34%       ~ (p=0.600 n=10)    34.00n ±  3%       ~ (p=0.381 n=10)
+geomean                             33.75n          34.78n        +3.05%                   33.50n        -0.74%
+
+                               │ map-latency.txt │          whole-latency.txt           │           grad-latency.txt           │
+                               │  clock-p99-sec  │ clock-p99-sec  vs base               │ clock-p99-sec  vs base               │
+ApplyLatency/sd=5-4                 48.50n ± 28%    36.50n ± 32%       ~ (p=0.237 n=10)    44.00n ± 23%       ~ (p=0.751 n=10)
+ApplyLatency/sd=50-4                45.00n ± 24%    51.00n ± 31%       ~ (p=0.642 n=10)    46.50n ± 23%       ~ (p=0.896 n=10)
+ApplyLatency/resting=1M/sd=5-4      43.00n ± 19%    44.00n ± 18%       ~ (p=0.615 n=10)    47.50n ± 24%       ~ (p=0.159 n=10)
+ApplyLatency/empty-to-1M-4          47.00n ± 19%    46.00n ± 22%       ~ (p=0.956 n=10)    46.50n ± 14%       ~ (p=0.838 n=10)
+geomean                             45.83n          44.06n        -3.86%                   46.11n        +0.61%
+
+                               │ map-latency.txt │            whole-latency.txt             │            grad-latency.txt             │
+                               │     max-sec     │    max-sec      vs base                  │    max-sec      vs base                 │
+ApplyLatency/sd=5-4                906.1µ ± 573%   1210.5µ ± 163%          ~ (p=0.579 n=10)   1169.6µ ± 102%         ~ (p=0.796 n=10)
+ApplyLatency/sd=50-4               1.318m ±  68%    1.586m ±  63%          ~ (p=0.631 n=10)    1.311m ± 215%         ~ (p=0.684 n=10)
+ApplyLatency/resting=1M/sd=5-4     2.598m ± 388%    1.933m ± 363%          ~ (p=0.912 n=10)    8.171m ± 154%         ~ (p=0.315 n=10)
+ApplyLatency/empty-to-1M-4         1.018m ± 540%   92.008m ±  19%  +8939.90% (p=0.000 n=10)    8.590m ±  84%  +744.02% (p=0.001 n=10)
+geomean                            1.333m           4.299m          +222.48%                   3.221m         +141.64%
+
+                               │ map-latency.txt │          whole-latency.txt           │           grad-latency.txt           │
+                               │     p50-sec     │   p50-sec     vs base                │   p50-sec     vs base                │
+ApplyLatency/sd=5-4                 173.0n ± 13%   136.0n ±  7%  -21.39% (p=0.000 n=10)   147.5n ±  6%  -14.74% (p=0.000 n=10)
+ApplyLatency/sd=50-4                186.5n ±  8%   163.5n ±  6%  -12.33% (p=0.000 n=10)   161.5n ±  5%  -13.40% (p=0.000 n=10)
+ApplyLatency/resting=1M/sd=5-4      227.0n ±  5%   158.5n ± 10%  -30.18% (p=0.000 n=10)   163.5n ±  6%  -27.97% (p=0.000 n=10)
+ApplyLatency/empty-to-1M-4          341.5n ± 10%   242.0n ±  9%  -29.14% (p=0.000 n=10)   274.0n ± 12%  -19.77% (p=0.000 n=10)
+geomean                             223.6n         170.9n        -23.58%                  180.7n        -19.18%
+
+                               │ map-latency.txt │          whole-latency.txt           │           grad-latency.txt           │
+                               │     p90-sec     │   p90-sec     vs base                │   p90-sec     vs base                │
+ApplyLatency/sd=5-4                 338.0n ±  9%   281.0n ±  7%  -16.86% (p=0.000 n=10)   298.5n ±  5%  -11.69% (p=0.001 n=10)
+ApplyLatency/sd=50-4                364.5n ± 11%   326.0n ± 10%  -10.56% (p=0.024 n=10)   317.5n ± 10%  -12.89% (p=0.006 n=10)
+ApplyLatency/resting=1M/sd=5-4      441.0n ± 10%   322.5n ± 13%  -26.87% (p=0.000 n=10)   321.0n ± 11%  -27.21% (p=0.000 n=10)
+ApplyLatency/empty-to-1M-4          578.5n ±  7%   424.0n ±  6%  -26.71% (p=0.000 n=10)   487.0n ±  8%  -15.82% (p=0.000 n=10)
+geomean                             421.1n         334.5n        -20.55%                  348.9n        -17.14%
+
+                               │ map-latency.txt │          whole-latency.txt           │            grad-latency.txt            │
+                               │     p99-sec     │   p99-sec     vs base                │    p99-sec      vs base                │
+ApplyLatency/sd=5-4                 683.5n ±  8%   581.5n ±  6%  -14.92% (p=0.000 n=10)    602.5n ±   2%  -11.85% (p=0.000 n=10)
+ApplyLatency/sd=50-4                719.5n ±  8%   656.5n ± 10%   -8.76% (p=0.037 n=10)    655.0n ±   7%   -8.96% (p=0.010 n=10)
+ApplyLatency/resting=1M/sd=5-4      841.5n ± 11%   643.5n ± 26%  -23.53% (p=0.001 n=10)    641.5n ±   7%  -23.77% (p=0.000 n=10)
+ApplyLatency/empty-to-1M-4         1087.5n ± 12%   805.0n ±  8%  -25.98% (p=0.000 n=10)   1258.5n ± 121%        ~ (p=0.315 n=10)
+geomean                             819.1n         666.9n        -18.58%                   751.3n          -8.27%
+
+                               │ map-latency.txt │          whole-latency.txt           │           grad-latency.txt            │
+                               │    p99.9-sec    │  p99.9-sec    vs base                │   p99.9-sec    vs base                │
+ApplyLatency/sd=5-4                 6.847µ ±  8%   3.777µ ± 18%  -44.84% (p=0.000 n=10)    4.038µ ± 10%  -41.03% (p=0.000 n=10)
+ApplyLatency/sd=50-4                5.003µ ± 16%   4.026µ ± 13%  -19.52% (p=0.005 n=10)    3.924µ ±  8%  -21.57% (p=0.002 n=10)
+ApplyLatency/resting=1M/sd=5-4      5.421µ ±  5%   5.076µ ± 11%   -6.36% (p=0.023 n=10)    4.982µ ± 13%   -8.09% (p=0.043 n=10)
+ApplyLatency/empty-to-1M-4         29.493µ ± 17%   5.070µ ± 21%  -82.81% (p=0.000 n=10)   18.930µ ± 34%  -35.82% (p=0.000 n=10)
+geomean                             8.602µ         4.448µ        -48.30%                   6.217µ        -27.73%
+
+                               │ map-latency.txt │          whole-latency.txt           │           grad-latency.txt           │
+                               │   p99.99-sec    │  p99.99-sec   vs base                │  p99.99-sec   vs base                │
+ApplyLatency/sd=5-4                 36.14µ ±  9%   30.49µ ± 16%  -15.63% (p=0.002 n=10)   27.41µ ±  3%  -24.16% (p=0.000 n=10)
+ApplyLatency/sd=50-4                33.60µ ± 11%   31.13µ ± 12%        ~ (p=0.063 n=10)   24.62µ ± 25%  -26.73% (p=0.000 n=10)
+ApplyLatency/resting=1M/sd=5-4      28.95µ ±  9%   26.71µ ± 18%        ~ (p=0.165 n=10)   27.51µ ± 16%        ~ (p=0.165 n=10)
+ApplyLatency/empty-to-1M-4          63.08µ ± 20%   28.46µ ± 36%  -54.89% (p=0.000 n=10)   48.69µ ± 35%  -22.82% (p=0.011 n=10)
+geomean                             38.59µ         29.14µ        -24.48%                  30.83µ        -20.10%

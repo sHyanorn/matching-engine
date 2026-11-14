@@ -19,7 +19,8 @@ import (
 //     level's price, with Remaining > 0 and Filled + Remaining = Qty;
 //   - time priority: RestedSeq strictly increases from the head to the tail
 //     of every queue and never exceeds LastSeq;
-//   - the ID map and the queues hold exactly the same orders;
+//   - the order index is consistent (orderIndex.check) and holds exactly
+//     the orders in the queues;
 //   - the book is not crossed: the best bid is below the best ask.
 //
 // It does not check what only the event history can show, such as quantity
@@ -29,6 +30,9 @@ import (
 // It costs O(N + P) for N resting orders and P levels, so it is meant for
 // tests and fuzzing, never for the matching hot path.
 func (b *Book) CheckInvariants() error {
+	if err := b.orders.check(); err != nil {
+		return fmt.Errorf("order index: %w", err)
+	}
 	queued := 0
 	for _, s := range [...]Side{Buy, Sell} {
 		tree := b.side(s)
@@ -51,11 +55,11 @@ func (b *Book) CheckInvariants() error {
 			queued += n
 		}
 	}
-	// Every queued order is in the map under its own ID (checkLevel), and
-	// queued orders are distinct nodes; equal counts then mean the map holds
-	// nothing else.
-	if queued != len(b.orders) {
-		return fmt.Errorf("ID map holds %d orders, the queues %d", len(b.orders), queued)
+	// Every queued order is in the index under its own ID (checkLevel), and
+	// queued orders are distinct nodes; equal counts then mean the index
+	// holds nothing else.
+	if queued != b.orders.len() {
+		return fmt.Errorf("order index holds %d orders, the queues %d", b.orders.len(), queued)
 	}
 	if bid, ask := b.bids.best, b.asks.best; bid != nil && ask != nil && Buy.Crosses(bid.price, ask.price) {
 		return fmt.Errorf("book is crossed: best bid %d, best ask %d", bid.price, ask.price)
@@ -92,8 +96,8 @@ func (b *Book) checkLevel(s Side, l *levelNode) (int, error) {
 			return 0, fmt.Errorf("order %d: time priority broken, RestedSeq %d after %d", o.ID, o.RestedSeq, prev.RestedSeq)
 		case o.RestedSeq == 0 || o.RestedSeq > b.seq:
 			return 0, fmt.Errorf("order %d: RestedSeq %d outside 1..LastSeq %d", o.ID, o.RestedSeq, b.seq)
-		case b.orders[o.ID] != o:
-			return 0, fmt.Errorf("order %d: the ID map does not point at the queued order", o.ID)
+		case b.orders.get(o.ID) != o:
+			return 0, fmt.Errorf("order %d: the order index does not point at the queued order", o.ID)
 		}
 		count++
 		total += o.Remaining
