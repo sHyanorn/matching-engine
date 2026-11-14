@@ -1,5 +1,7 @@
 # matching-engine
 
+[![CI](https://github.com/sHyanorn/matching-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sHyanorn/matching-engine/actions/workflows/ci.yml?query=branch%3Amain)
+
 A limit order book matching engine in Go: price-time priority matching, REST and WebSocket APIs, a write-ahead command log with deterministic replay, and a load-test report.
 
 <p align="center"><img src="docs/img/demo.gif" width="800" alt="The order book page following BTC-USD while cmd/loadgen sends 2,000 requests per second"></p>
