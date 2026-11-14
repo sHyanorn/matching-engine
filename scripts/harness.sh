@@ -126,9 +126,9 @@ perf() {
 	{
 		echo "matching-engine: $(git -C "$repo" rev-parse --short HEAD)"
 		echo "benchmark: $bench_ref"
-		grep -h '^[A-Z_]*_REF=' scripts/build_baselines.sh additional_references/cpptrader_adapter/build.sh \
-			additional_references/geseq_adapter/build.sh
-		echo "go: $(go version)"
+		grep -h '^LIQUIBOOK_REF=' scripts/build_baselines.sh
+		grep -h '^[A-Z_]*_REF=' additional_references/cpptrader_adapter/build.sh additional_references/geseq_adapter/build.sh
+		echo "go: $(cd "$repo" && go version) for this repository's adapter, $(go version) for geseq's"
 		echo "harness: $(clang --version | head -1); adapters: $(g++ --version | head -1)"
 		dpkg-query -W -f='${Package} ${Version}\n' libboost-dev libfmt-dev
 		echo "os: $(uname -srm)"

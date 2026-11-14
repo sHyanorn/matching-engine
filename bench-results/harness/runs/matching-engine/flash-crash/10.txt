@@ -1,0 +1,16 @@
+Loading engine: ./matching-engine_adapter.so
+Running benchmark (1996097 messages, scenario=flash-crash, mode=perf)...
+  Messages processed: 1996097
+  Trades emitted:     70178
+  Wall time:          0.2546 s
+  Throughput:         7.84 M msgs/s
+  Engine threads:     after_init 8, after_run 10 (+2) — informational
+
+Correctness check:
+  Expected hash: cff8d3f94b709fc64a8b2058a6ca4fb6920364904796e46906895e362d2bb16b
+  Computed hash: cff8d3f94b709fc64a8b2058a6ca4fb6920364904796e46906895e362d2bb16b
+  Status: PASS
+
+Verdict: VALID
+
+Result file: results/matching-engine_flash-crash_perf_s23_20261114T130344_p5553.json

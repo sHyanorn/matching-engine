@@ -1,0 +1,17 @@
+Loading engine: ./geseq_adapter.so
+Running benchmark (1996097 messages, scenario=static, mode=perf)...
+  Anti-cheat: audit probes consumed 54.2% of the timed window — INVALID: matcher work hidden in engine_query_*
+  Messages processed: 1996097
+  Trades emitted:     827
+  Wall time:          1.6577 s
+  Throughput:         1.20 M msgs/s
+  Engine threads:     after_init 9, after_run 9 (+0) — informational
+
+Correctness check:
+  Expected hash: 9803843ee404fc29c9a0aa5614f8f0d5a58b5c44fcac9ef89067886fcaaa30d1
+  Computed hash: 9803843ee404fc29c9a0aa5614f8f0d5a58b5c44fcac9ef89067886fcaaa30d1
+  Status: PASS
+
+Verdict: INVALID
+
+Result file: results/geseq_static_perf_s23_20261114T125051_p3501.json

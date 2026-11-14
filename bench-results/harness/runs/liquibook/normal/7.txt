@@ -1,0 +1,17 @@
+Loading engine: ./liquibook_adapter.so
+Running benchmark (1996097 messages, scenario=normal, mode=perf)...
+  Messages processed: 1996097
+  Trades emitted:     62474
+  Wall time:          0.8779 s
+  Throughput:         2.27 M msgs/s
+  Engine threads:     after_init 2, after_run 2 (+0) — informational
+  Pre-build cost:     6.8 ns/msg (2% of the timed run) — informational
+
+Correctness check:
+  Expected hash: e9b2e3926854410b01a035aeb25dd05f1e597c233be8263de9eb49b6713d367e
+  Computed hash: e9b2e3926854410b01a035aeb25dd05f1e597c233be8263de9eb49b6713d367e
+  Status: PASS
+
+Verdict: VALID
+
+Result file: results/liquibook_normal_perf_s23_20261114T125535_p4100.json

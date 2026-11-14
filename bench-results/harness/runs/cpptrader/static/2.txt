@@ -1,0 +1,16 @@
+Loading engine: ./cpptrader_adapter.so
+Running benchmark (1996097 messages, scenario=static, mode=perf)...
+  Messages processed: 1996097
+  Trades emitted:     827
+  Wall time:          0.4961 s
+  Throughput:         4.02 M msgs/s
+  Engine threads:     after_init 2, after_run 2 (+0) — informational
+
+Correctness check:
+  Expected hash: 9803843ee404fc29c9a0aa5614f8f0d5a58b5c44fcac9ef89067886fcaaa30d1
+  Computed hash: 9803843ee404fc29c9a0aa5614f8f0d5a58b5c44fcac9ef89067886fcaaa30d1
+  Status: PASS
+
+Verdict: VALID
+
+Result file: results/cpptrader_static_perf_s23_20261114T123929_p1996.json

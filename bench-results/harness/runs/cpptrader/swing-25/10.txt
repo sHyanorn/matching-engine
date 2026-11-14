@@ -1,0 +1,16 @@
+Loading engine: ./cpptrader_adapter.so
+Running benchmark (1996097 messages, scenario=swing-25, mode=perf)...
+  Messages processed: 1996097
+  Trades emitted:     66908
+  Wall time:          0.3152 s
+  Throughput:         6.33 M msgs/s
+  Engine threads:     after_init 2, after_run 2 (+0) — informational
+
+Correctness check:
+  Expected hash: 61a84be9469661bd039e00dbc9a7c011e70b6ace37aadfe60045ea083b05f4df
+  Computed hash: 61a84be9469661bd039e00dbc9a7c011e70b6ace37aadfe60045ea083b05f4df
+  Status: PASS
+
+Verdict: VALID
+
+Result file: results/cpptrader_swing-25_perf_s23_20261114T130321_p5405.json
