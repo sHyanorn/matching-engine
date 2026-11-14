@@ -58,3 +58,11 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Rerun the end-to-end sweep, and a sweep with an fsync per batch
 - [x] Rerun the core benchmarks on the machine of the end-to-end sweep
 - [x] Build with Go 1.27.3
+
+## M7 Faster core and a same-machine comparison
+- [x] Per-command latency benchmark for Book.Apply, with the clock's own cost
+- [ ] Open-addressing order index with bounded growth, checked by CheckInvariants
+- [ ] Reuse the nodes of orders that leave the book
+- [ ] Adapter for the flash1-dev matching engine benchmark
+- [ ] Results against reference engines on the same machine
+- [ ] Update BENCHMARKS and README with the results

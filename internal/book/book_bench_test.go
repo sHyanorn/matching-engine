@@ -95,11 +95,39 @@ func BenchmarkApply(b *testing.B) {
 func prefill(bk *Book, n, levels int) {
 	buf := make([]Event, 0, 8)
 	for i := range n {
-		side, p := Buy, Price(flow.Mid-1_000-i/2%levels)
-		if i%2 == 1 {
-			side, p = Sell, Price(flow.Mid+1_000+i/2%levels)
+		buf = bk.Apply(restingOrder(i, levels), buf[:0])
+	}
+}
+
+// restingOrder is the order with ID i+1 of those prefill rests.
+func restingOrder(i, levels int) Command {
+	side, p := Buy, Price(flow.Mid-1_000-i/2%levels)
+	if i%2 == 1 {
+		side, p = Sell, Price(flow.Mid+1_000+i/2%levels)
+	}
+	return limit(OrderID(1+i), side, p, 10)
+}
+
+// deepFlow returns the flow for a book that also rests n orders outside
+// the flow's prices, and a function that cancels the flow's own resting
+// orders, so that every pass starts from the same depth.
+func deepFlow(n int, sd float64) ([]Command, func() *Book) {
+	bk := New()
+	prefill(bk, n, 1_000)
+	base := OrderID(n)
+	cmds := orderFlow(1, 1<<16, sd, base)
+	var orders OrderID
+	for _, c := range cmds {
+		if c.Kind == CommandNewOrder {
+			orders++
 		}
-		buf = bk.Apply(limit(OrderID(1+i), side, p, 10), buf[:0])
+	}
+	buf := make([]Event, 0, 8)
+	return cmds, func() *Book {
+		for id := base + 1; id <= base+orders; id++ {
+			buf = bk.Apply(cancel(id), buf[:0])
+		}
+		return bk
 	}
 }
 
@@ -114,23 +142,8 @@ func BenchmarkApplyDeep(b *testing.B) {
 	}{{"resting=10k", 10_000}, {"resting=1M", 1_000_000}} {
 		for _, tc := range flowSpreads {
 			b.Run(depth.name+"/"+tc.name, func(b *testing.B) {
-				bk := New()
-				prefill(bk, depth.orders, 1_000)
-				base := OrderID(depth.orders)
-				cmds := orderFlow(1, 1<<16, tc.sd, base)
-				var orders OrderID
-				for _, c := range cmds {
-					if c.Kind == CommandNewOrder {
-						orders++
-					}
-				}
-				buf := make([]Event, 0, 8)
-				applyFlow(b, cmds, func() *Book {
-					for id := base + 1; id <= base+orders; id++ {
-						buf = bk.Apply(cancel(id), buf[:0])
-					}
-					return bk
-				})
+				cmds, start := deepFlow(depth.orders, tc.sd)
+				applyFlow(b, cmds, start)
 			})
 		}
 	}
