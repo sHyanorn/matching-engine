@@ -335,9 +335,10 @@ func TestNodeReuse(t *testing.T) {
 
 // TestRestingReusesFreedNodes pins that resting allocates nothing once
 // orders have left the book and their price level and the order index
-// already exist: each measured order takes a node off the free list. The
-// final check that the list is empty makes the count exact, which
-// AllocsPerRun alone does not, as it rounds down.
+// already exist: each measured order rests in a node it took off the free
+// list. AllocsPerRun alone would miss a new node on some of the orders, as
+// it rounds down, so every order's node is also checked against the nodes
+// that were free.
 func TestRestingReusesFreedNodes(t *testing.T) {
 	const runs = 200 // AllocsPerRun makes runs+1 calls
 	b := New()
@@ -347,6 +348,10 @@ func TestRestingReusesFreedNodes(t *testing.T) {
 	for id := OrderID(2); id <= runs+2; id++ { // order 1 keeps the level
 		apply(t, b, cancel(id))
 	}
+	free := map[*orderNode]bool{}
+	for o := b.free; o != nil; o = o.next {
+		free[o] = true
+	}
 	buf := make([]Event, 0, 16)
 	id := OrderID(runs + 2)
 	allocs := testing.AllocsPerRun(runs, func() {
@@ -355,6 +360,11 @@ func TestRestingReusesFreedNodes(t *testing.T) {
 		if last := buf[len(buf)-1]; last.Kind != EventRested {
 			t.Fatalf("order %d did not rest: %s", id, formatEvents(buf))
 		}
+		o := b.orders.get(id)
+		if !free[o] {
+			t.Fatalf("order %d rests in %p, which was not free", id, o)
+		}
+		delete(free, o)
 	})
 	if allocs != 0 || b.free != nil {
 		t.Errorf("allocates %.1f times per order; free list empty: %v", allocs, b.free == nil)
