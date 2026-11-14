@@ -94,6 +94,7 @@ cases() {
 	: > "$out/conformance.txt"
 	while read -r scen n; do
 		for e in "${engines[@]}"; do
+			rm -f "$can/$e/$scen.txt" # a failed run leaves nothing to compare
 			./harness --engine "./${e}_adapter.so" --scenario "$scen" --seed 0 --count "$n" \
 				--mode perf --write-canonical-output "$can/$e/$scen.txt" > /dev/null || true
 		done
