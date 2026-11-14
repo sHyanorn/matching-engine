@@ -1,5 +1,10 @@
 version: "2"
 
+run:
+  # Lint the benchmark adapter too (cmd/harness-adapter, cgo).
+  build-tags:
+    - harness
+
 linters:
   # standard = errcheck, govet, ineffassign, staticcheck, unused
   default: standard

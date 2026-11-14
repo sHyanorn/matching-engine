@@ -1,0 +1,11 @@
+--- a/cmd/harness-adapter/main.go	2026-11-14 11:50:11.655678282 +0000
++++ b/cmd/harness-adapter/main.go	2026-11-14 12:14:38.390700836 +0000
+@@ -107,7 +107,7 @@
+ 
+ // flushAt is the number of reports that makes the buffer go to C before a
+ // call ends.
+-const flushAt = 1024
++const flushAt = 1
+ 
+ var (
+ 	transport *C.me_transport_t

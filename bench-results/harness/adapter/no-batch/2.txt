@@ -1,0 +1,16 @@
+Loading engine: ./me-nobatch_adapter.so
+Running benchmark (1996097 messages, scenario=normal, mode=perf)...
+  Messages processed: 1996097
+  Trades emitted:     62474
+  Wall time:          0.7507 s
+  Throughput:         2.66 M msgs/s
+  Engine threads:     after_init 8, after_run 9 (+1) — informational
+
+Correctness check:
+  Expected hash: e9b2e3926854410b01a035aeb25dd05f1e597c233be8263de9eb49b6713d367e
+  Computed hash: e9b2e3926854410b01a035aeb25dd05f1e597c233be8263de9eb49b6713d367e
+  Status: PASS
+
+Verdict: VALID
+
+Result file: results/me-nobatch_normal_perf_s23_20261114T121500_p27025.json

@@ -1,0 +1,18 @@
+Loading engine: ./cpptrader_adapter.so
+Running benchmark (1996097 messages, scenario=flash-crash, mode=audit)...
+  Messages processed: 1996097
+  Trades emitted:     70178
+  Reports:            order_ack 1000000  trade 70178  cancel_ack 928614  modify_ack 164441  cancel_reject 40464  modify_reject 8234
+  Engine threads:     after_init 2, after_run 2 (+0) — informational
+
+Correctness check:
+  Expected hash: cff8d3f94b709fc64a8b2058a6ca4fb6920364904796e46906895e362d2bb16b
+  Computed hash: cff8d3f94b709fc64a8b2058a6ca4fb6920364904796e46906895e362d2bb16b
+  Status: PASS
+
+Anti-cheat state audit:
+  State audit: PASS — 192 state checks matched baseline 'liquibook'
+
+Verdict: VALID
+
+Result file: results/cpptrader_flash-crash_audit_s23_20261114T122439_p31520.json

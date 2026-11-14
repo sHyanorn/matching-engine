@@ -1,0 +1,19 @@
+Loading engine: ./geseq_adapter.so
+Running benchmark (1996097 messages, scenario=static, mode=audit)...
+  Anti-cheat: audit probes consumed 53.9% of the timed window — INVALID: matcher work hidden in engine_query_*
+  Messages processed: 1996097
+  Trades emitted:     827
+  Reports:            order_ack 1000000  trade 827  cancel_ack 957377  modify_ack 169577  cancel_reject 16279  modify_reject 3098
+  Engine threads:     after_init 9, after_run 9 (+0) — informational
+
+Correctness check:
+  Expected hash: 9803843ee404fc29c9a0aa5614f8f0d5a58b5c44fcac9ef89067886fcaaa30d1
+  Computed hash: 9803843ee404fc29c9a0aa5614f8f0d5a58b5c44fcac9ef89067886fcaaa30d1
+  Status: PASS
+
+Anti-cheat state audit:
+  State audit: PASS — 192 state checks matched baseline 'liquibook'
+
+Verdict: INVALID
+
+Result file: results/geseq_static_audit_s23_20261114T122407_p31329.json

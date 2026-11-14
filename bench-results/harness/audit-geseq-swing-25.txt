@@ -1,0 +1,19 @@
+Loading engine: ./geseq_adapter.so
+Running benchmark (1996097 messages, scenario=swing-25, mode=audit)...
+  Anti-cheat: audit probes consumed 50.3% of the timed window — INVALID: matcher work hidden in engine_query_*
+  Messages processed: 1996097
+  Trades emitted:     66908
+  Reports:            order_ack 1000000  trade 66908  cancel_ack 929823  modify_ack 164640  cancel_reject 39462  modify_reject 8035
+  Engine threads:     after_init 8, after_run 8 (+0) — informational
+
+Correctness check:
+  Expected hash: 61a84be9469661bd039e00dbc9a7c011e70b6ace37aadfe60045ea083b05f4df
+  Computed hash: 61a84be9469661bd039e00dbc9a7c011e70b6ace37aadfe60045ea083b05f4df
+  Status: PASS
+
+Anti-cheat state audit:
+  State audit: PASS — 192 state checks matched baseline 'liquibook'
+
+Verdict: INVALID
+
+Result file: results/geseq_swing-25_audit_s23_20261114T122425_p31447.json

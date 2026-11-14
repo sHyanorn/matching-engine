@@ -1,0 +1,18 @@
+Loading engine: ./matching-engine_adapter.so
+Running benchmark (1996097 messages, scenario=swing-40, mode=audit)...
+  Messages processed: 1996097
+  Trades emitted:     68803
+  Reports:            order_ack 1000000  trade 68803  cancel_ack 929071  modify_ack 164521  cancel_reject 40113  modify_reject 8154
+  Engine threads:     after_init 8, after_run 10 (+2) — informational
+
+Correctness check:
+  Expected hash: 3cb0175e7982ff09ea220d1feaee3844cf9116a5ce455757879dea1d880b9b9f
+  Computed hash: 3cb0175e7982ff09ea220d1feaee3844cf9116a5ce455757879dea1d880b9b9f
+  Status: PASS
+
+Anti-cheat state audit:
+  State audit: PASS — 192 state checks matched baseline 'liquibook'
+
+Verdict: VALID
+
+Result file: results/matching-engine_swing-40_audit_s23_20261114T122427_p31461.json

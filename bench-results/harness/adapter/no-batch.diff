@@ -1,0 +1,11 @@
+--- a/cmd/harness-adapter/main.go	2026-11-14 11:50:11.655678282 +0000
++++ b/cmd/harness-adapter/main.go	2026-11-14 12:14:37.664500876 +0000
+@@ -151,7 +151,7 @@
+ // engine_on_batch applies n messages in order, each exactly as if it came
+ // alone.
+ //
+-//export engine_on_batch
++// (not exported)
+ func engine_on_batch(msgs *C.me_msg_t, n C.uint32_t) {
+ 	batch := unsafe.Slice(msgs, n)
+ 	for i := range batch {

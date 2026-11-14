@@ -1,0 +1,4 @@
+normal scenario, seed 23, 10 runs per variant, alternating (2026-11-14 12:14:48 to 12:15:48 UTC)
+batch      median 6.72 M msgs/s, min 5.59, max 7.64, 10/10 PASS and VALID
+no-batch   median 2.21 M msgs/s, min 2.04, max 2.66, 10/10 PASS and VALID
+push-each  median 2.45 M msgs/s, min 1.87, max 2.93, 10/10 PASS and VALID
