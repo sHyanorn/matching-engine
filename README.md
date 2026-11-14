@@ -8,13 +8,14 @@ A limit order book matching engine in Go: price-time priority matching, REST and
 
 ## Highlights
 
-Measured on one 4 vCPU cloud VM; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Measured on two 4 vCPU cloud VMs; [docs/BENCHMARKS.md](docs/BENCHMARKS.md) says which figure comes from which.
 
 | Metric | Value |
 |---|---|
-| Core throughput, one symbol | 5.05M to 6.95M commands/s |
+| Core throughput, one symbol | 6.25M to 8.88M commands/s on a noisy VM (± up to 36%); 1.3 to 2.3 times the book before its own order index and node reuse, on that VM |
+| Matching core against Liquibook, CppTrader and geseq on one VM ([flash1-dev benchmark](docs/BENCHMARKS.md#against-other-engines), every run hash-checked; no geseq run passes its probe-time rule) | Faster than CppTrader, the fastest of the three there, in 46 of 50 paired runs; median ratio 1.28 to 1.60 per scenario, while one engine's runs vary by up to 2.09 times |
 | End-to-end p99, order to trade push | 1.8 ms at 10k requests/s (70% orders, 30% cancels). 50k is near saturation: 41 ms ([why](docs/BENCHMARKS.md#50k-requests-per-second-on-another-machine)) |
-| Matching core heap, 1M resting orders (`BenchmarkRestingOrders`) | 128 MiB |
+| Matching core heap, 1M resting orders (`BenchmarkRestingOrders`) | 124 MiB |
 | Test coverage | 93% of statements |
 
 ## Architecture

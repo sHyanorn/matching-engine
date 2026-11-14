@@ -65,4 +65,4 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Reuse the nodes of orders that leave the book
 - [x] Adapter for the flash1-dev matching engine benchmark
 - [x] Results against reference engines on the same machine
-- [ ] Update BENCHMARKS and README with the results
+- [x] Update BENCHMARKS and README with the results

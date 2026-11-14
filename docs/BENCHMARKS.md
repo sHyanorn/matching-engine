@@ -1,25 +1,55 @@
 # Benchmarks
 
-Every number here comes from one machine and can be measured again with the commands at the end, except where a section says otherwise: the optimization sweeps ran on another, slower VM of the same type, and the Windows figures come from GitHub's runners. The raw results are in [`bench-results/`](../bench-results).
+The numbers here come from several machines and can be measured again with the commands at the end. Unless a section says otherwise they come from the machine below; the matching core and the comparison with other engines come from a second VM, the optimization sweeps from another, slower VM of the first one's type, and the Windows figures from GitHub's runners. The raw results are in [`bench-results/`](../bench-results).
 
-**Machine**: a cloud VM with an Intel Xeon at 2.10 GHz, 4 vCPUs and 16 GB, Linux 6.18 on ext4. The figures were measured with Go 1.24.7. The project now builds with Go 1.27.4. Go 1.27.3 showed no measurable change in the core benchmarks ([`bench-results/go1.27`](../bench-results/go1.27/benchstat.txt), [D037](DECISIONS.md)); 1.27.4 is a security patch release and was not benchmarked. In the end-to-end runs the load generator and the engine share the 4 vCPUs.
+**Machine**: a cloud VM with an Intel Xeon at 2.10 GHz, 4 vCPUs and 16 GB, Linux 6.18 on ext4. Its figures were measured with Go 1.24.7. The project now builds with Go 1.27.4. Go 1.27.3 showed no slowdown in the core benchmarks ([`bench-results/go1.27`](../bench-results/go1.27/benchstat.txt), [D037](DECISIONS.md)); 1.27.4 is a security patch release and was not compared with 1.27.3. In the end-to-end runs the load generator and the engine share the 4 vCPUs.
+
+**Second machine**: a cloud VM with an Intel Xeon at 2.30 GHz and 4 vCPUs, Linux 6.18, measured with Go 1.27.4 ([`core-reuse/env.txt`](../bench-results/core-reuse/env.txt), [`harness/env.txt`](../bench-results/harness/env.txt)).
 
 ## Matching core
 
-`BenchmarkApply` replays 65,536 commands of the SPEC §9 order flow ([`internal/flow`](../internal/flow)): GTC limit orders priced around the mid with a normal spread of 5 or 50 ticks, and about 30% cancels of earlier orders, some of them already filled. Each pass starts from an empty book. `BenchmarkApplyDeep` runs the same flow on a book that also holds 10k or 1M resting orders outside the flow's prices, as a book does after hours of trading. The figures are medians of 10 runs ([`bench-results/core-current`](../bench-results/core-current/benchstat.txt)).
+`BenchmarkApply` replays 65,536 commands of the SPEC §9 order flow ([`internal/flow`](../internal/flow)): GTC limit orders priced around the mid with a normal spread of 5 or 50 ticks, and about 30% cancels of earlier orders, some of them already filled. Each pass starts from an empty book. `BenchmarkApplyDeep` runs the same flow on a book that also holds 10k or 1M resting orders outside the flow's prices, as a book does after hours of trading; each pass starts by canceling the orders the last one left resting. The table compares the book before (commit ea8d5fe: Go's map as the order index, a new node for every resting order) and now (cb54d8d: its own order index, [D038](DECISIONS.md), and nodes reused, [D039](DECISIONS.md)) on the second machine. Each of 10 rounds ran these two builds and two with only one of the changes once each, one after another, starting one build later each round; the figures are medians of the 10 runs ([`bench-results/core-reuse`](../bench-results/core-reuse/benchstat.txt)).
 
-| Book | Spread | ns per command | Commands per second | Allocations per command |
+| Book | Spread | ns per command, before | ns per command, now | Commands per second, now | Allocations per command, before → now |
+|---|---|---|---|---|---|
+| empty | 5 ticks | 156 ± 14% | 119 ± 18% | 8.41M | 0.59 → 0.30 |
+| empty | 50 ticks | 163 ± 7% | 123 ± 6% | 8.13M | 0.68 → 0.35 |
+| 10k resting | 5 ticks | 178 ± 10% | 113 ± 24% | 8.88M | 0.59 → 0.07 |
+| 10k resting | 50 ticks | 172 ± 12% | 128 ± 14% | 7.79M | 0.68 → 0.24 |
+| 1M resting | 5 ticks | 279 ± 29% | 162 ± 36% | 6.25M | 0.59 → 0.07 |
+| 1M resting | 50 ticks | 339 ± 25% | 149 ± 17% | 6.70M | 0.68 → 0.24 |
+
+Every change in time per command is significant (p < 0.001): 24% to 56% less. In the table the ± reaches 36%. The SPEC target of 1M operations per second on one symbol holds with 6 to 9 times to spare. On the first machine, before these changes, the book took 144 to 198 ns per command with a ± of at most 5% ([`core-current`](../bench-results/core-current/benchstat.txt), commit b9d0d3f), and on another VM of that type 224 to 333 ns ([`m5-core`](../bench-results/m5-core/baseline.txt)); compare figures within one machine only. Go's `allocs/op` prints 0 for these runs because it rounds down; `allocs/cmd` keeps the fraction. An order that rests takes the node of an order that has left the book, or allocates one if none is free; a new price level allocates its tree node, and the order index now and then a table twice the size. `BenchmarkApply` starts each pass with a new book and no free nodes, so about half of its allocations remain; the passes of `BenchmarkApplyDeep` start with the last pass's nodes free.
+
+**Memory**: in the matching core alone, 1,000,000 resting orders on 1,000 price levels per side hold 123.7 MiB of heap, 129.7 bytes per order, against 127.7 MiB and 133.9 bytes with Go's map (`BenchmarkRestingOrders`, [`core-reuse`](../bench-results/core-reuse/benchstat.txt)). A book keeps the memory its orders took at its deepest point: the nodes of orders that have left it wait on its free list, and its order index does not shrink (D038, D039). The engine process holds more, among it the status of every resting order and of the last 100,000 finished ones per symbol (D022).
+
+## Against other engines
+
+The [flash1-dev matching engine benchmark](https://github.com/flash1-dev/matching-engine-benchmark) drives one engine through a C interface with five scenarios, each of 1M orders and about 2M messages from seed 23: limit orders, GTC or IOC, cancels and modifies. It checks every run's reports against a published hash, so a run whose reports are wrong does not pass, and an audit run compares the book's best prices and depth with Liquibook's at 64 messages it picks at random. [`cmd/harness-adapter`](../cmd/harness-adapter) puts the book behind that interface ([D040](DECISIONS.md)); [`scripts/harness.sh`](../scripts/harness.sh) builds it, the benchmark at commit 424e4e5, and three open engines with the benchmark's own build scripts at the commits they pin: Liquibook, CppTrader and geseq/orderbook ([`versions.txt`](../bench-results/harness/versions.txt)).
+
+- **Method.** On the second machine, 10 rounds each ran every engine once on each scenario, one engine after another, starting one engine later each round. The harness pins its matching thread to CPU 2 and the thread that drains reports to CPU 3, its defaults. Liquibook and CppTrader are built with g++ 13.3 at `-O3 -march=native`, geseq with Go 1.24.7, and the harness with clang 18.1 ([`versions.txt`](../bench-results/harness/versions.txt)).
+- **Delivery.** This book, Liquibook and geseq take messages in runs through the benchmark's optional `engine_on_batch`, the latter two through the adapters the benchmark provides; CppTrader's adapter takes one message per call. This book's adapter also hands its reports to the benchmark in runs. The benchmark's geseq adapter does that only with `ME_BULK_EMIT` set, which these runs did not set, so geseq's figures below were measured with one push per report. Without runs, crossing between C and Go dominates: on normal, this book's adapter ran at 2.22M messages/s with one call into Go and one push to C per message, at 2.45M with messages in runs but one push per message, and at 6.72M with both in runs ([`adapter/summary.txt`](../bench-results/harness/adapter/summary.txt)).
+
+Median of 10 runs, M messages per second ([`summary.txt`](../bench-results/harness/summary.txt)):
+
+| Scenario | This book | CppTrader | Liquibook | geseq |
 |---|---|---|---|---|
-| empty | 5 ticks | 144 ± 3% | 6.95M | 0.59 |
-| empty | 50 ticks | 151 ± 4% | 6.61M | 0.68 |
-| 10k resting | 5 ticks | 155 ± 5% | 6.46M | 0.59 |
-| 10k resting | 50 ticks | 144 ± 3% | 6.93M | 0.68 |
-| 1M resting | 5 ticks | 186 ± 2% | 5.39M | 0.59 |
-| 1M resting | 50 ticks | 198 ± 2% | 5.05M | 0.68 |
+| static | 7.27 | 4.83 | 0.02 | 1.32 |
+| normal | 6.94 | 4.97 | 2.87 | 1.24 |
+| swing-25 | 6.72 | 4.95 | 3.29 | 1.21 |
+| swing-40 | 7.12 | 4.41 | 3.17 | 1.14 |
+| flash-crash | 7.10 | 5.37 | 3.12 | 1.19 |
+| Lowest, the benchmark's result | 6.72 | 4.41 | 0.02 | 1.14 |
+| Largest over smallest run of a scenario | 1.20 to 1.46 | 1.79 to 2.09 | 1.24 to 2.07 | 1.33 to 1.60 |
+| Runs with the published hash | 50 of 50 | 50 of 50 | 50 of 50 | 50 of 50 |
+| Runs the harness calls VALID | 50 of 50 | 50 of 50 | 50 of 50 | 0 of 50 |
 
-The SPEC target of 1M operations per second on one symbol holds with 5 to 7 times to spare. An earlier run on another VM of this type ([`m5-core`](../bench-results/m5-core/baseline.txt)) took 224 to 334 ns, 1.5 to 1.7 times as long. Go's `allocs/op` prints 0 for these runs because it rounds down; `allocs/cmd` keeps the fraction. An order that rests allocates its node, a new price level its tree node, and the ID map grows now and then.
-
-**Memory**: in the matching core alone, 1,000,000 resting orders on 1,000 price levels per side hold 127.7 MiB of heap, 134 bytes per order (`BenchmarkRestingOrders`), as in the earlier run. The engine process holds more, among it the status of every resting order and of the last 100,000 finished ones per symbol (D022).
+- **Run by run.** In the same round and scenario, this book was faster than CppTrader in 46 of 50 runs; the median ratio per scenario was 1.28 to 1.60, and single ratios ran from 0.92 to 2.08.
+- **Spread.** One engine's runs of one scenario differ by up to 1.46 times for this book and up to 2.09 times for the others, so the table ranks the engines on this VM and makes no claim about absolute throughput.
+- **geseq.** Every geseq run had the published hash, and its state audits match Liquibook's on all five scenarios. The harness leaves the time of its probes out of the throughput and calls a run INVALID when they take more than 25% of the timed window ([`src/harness.cpp`](https://github.com/flash1-dev/matching-engine-benchmark/blob/424e4e5649652febb5b0c4c80859d74c4654131e/src/harness.cpp#L777)); in geseq's 50 runs they took 46.6% to 56.5%, so none is VALID.
+- **Liquibook** took 105 to 129 s for each static run, 0.02M messages per second; its medians on the other scenarios were 2.87M to 3.29M.
+- **Correctness.** On the benchmark's 34 conformance cases the three reference engines produce the same report stream, and this book's equals it ([`conformance.txt`](../bench-results/harness/conformance.txt)); CI runs the 34 cases against `internal/harness`. In the state audit on the five scenarios, this book and CppTrader are VALID ([`bench-results/harness`](../bench-results/harness)).
+- **Another machine.** The benchmark's own table was measured on Graviton4 (Neoverse-V2) ([its README](https://github.com/flash1-dev/matching-engine-benchmark/blob/424e4e5649652febb5b0c4c80859d74c4654131e/README.md)); the figures here do not compare with it.
 
 ## End to end
 
@@ -53,7 +83,7 @@ Latency from order to trade push, in ms ([`bench-results/e2e-review/default`](..
 
 ### 50k requests per second on another machine
 
-The p99 at 50k/s depends on the machine. The three runs in the table had 40.0, 41.1 and 43.4 ms (median 41.1 ms). Three runs of the same sweep on a second VM, also with 4 vCPUs, had 123.5, 141.1 and 148.3 ms (median 141.1 ms); their reports are not in this repository. At 10k/s that VM reproduced the table: a p99 of 1.75 ms against 1.76 ms.
+The p99 at 50k/s depends on the machine. The three runs in the table had 40.0, 41.1 and 43.4 ms (median 41.1 ms). Three runs of the same sweep on another VM, also with 4 vCPUs, had 123.5, 141.1 and 148.3 ms (median 141.1 ms); their reports are not in this repository. At 10k/s that VM reproduced the table: a p99 of 1.75 ms against 1.76 ms.
 
 50k/s is close to the capacity of this setup: with a target of 60k/s the machine here sent 59.1k/s, with a median send lag of 94 ms. At 50k/s the median service time was 0.43 to 0.49 ms, and the lag between a request's due time and its send (a p99 of 38 to 42 ms) made up nearly all of the p99. The 64 connections carry one request each, so a stall of more than 1.28 ms leaves requests due while every connection is busy, and with so little capacity to spare the backlog drains slowly. A machine with a slightly higher median service time has less to spare and queues longer, and loadgen and the engine share its 4 vCPUs. So the 50k/s row means near saturation: a p99 of 41 ms here, and of about 141 ms on a VM whose reports are not in this repository (above).
 
@@ -116,13 +146,13 @@ The profile after both changes ([`cpu-after.pprof`](../bench-results/m5-opt/cpu-
 
 ![Flame graph after the optimizations](img/flamegraph-after.png)
 
-The book allocates 0.6 times per command, but `Book.Apply` is 1.4% to 2% of the engine's CPU, so pooling its nodes would not show end to end; it is not done.
+`Book.Apply` is 1.4% to 2% of the engine's CPU in these profiles. The book has since been made faster ([Matching core](#matching-core), D038, D039); the end-to-end figures on this page were measured before that and have not been measured again.
 
 ## Startup and replay
 
 The engine starts by replaying each symbol's whole command log; there are no snapshots and no log compaction (SPEC §3 lists snapshot recovery as optional). `BenchmarkReplay` starts an engine on a log of 1M commands of the flow and closes it ([`bench-results/replay`](../bench-results/replay/replay.txt), median of 10 runs):
 
-- **Speed.** 1.87M commands/s, 534 ns each, about 3.5 times the cost of `Book.Apply` alone: each record is also read, checksummed and decoded, and the order history is rebuilt. A log takes 45 bytes per command without a `client_id`.
+- **Speed.** 1.87M commands/s, 534 ns each, about 3.7 times the cost of `Book.Apply` alone on the same flow, both measured before D038 and D039: each record is also read, checksummed and decoded, and the order history is rebuilt. A log takes 45 bytes per command without a `client_id`.
 - **Startup time.** At 10k requests/s, an hour of load is about 36M commands, a 1.6 GB log and 19 s of replay; a day is 864M commands, 39 GB and about 8 minutes. The benchmark reads a log the page cache holds; a cold start also waits for the disk to read the log.
 - **Known limit.** The log grows without bound, and so does the startup time with it. Snapshots with log truncation would bound both; they are not built.
 
@@ -135,6 +165,19 @@ All the figures above are from Linux. On GitHub's Windows runners the cost of an
 ```bash
 go test -run='^$' -bench='^(BenchmarkApply|BenchmarkApplyDeep|BenchmarkRestingOrders)$' -benchmem -count=10 ./internal/book
 ```
+
+The comparison of builds under Matching core builds a test binary of each commit with `go test -c -o book.NAME.test ./internal/book` (the build with only node reuse is ea8d5fe with [`reuse-on-map.diff`](../bench-results/core-reuse/reuse-on-map.diff) applied), alternates them with [`bench-results/core-reuse/run.sh`](../bench-results/core-reuse/run.sh) `OUT 1 10 NAME...` and compares them with benchstat (`golang.org/x/perf/cmd/benchstat`).
+
+The comparison with other engines needs git, clang, cmake, g++, Go, python3, and the Boost headers and {fmt} library (libboost-dev and libfmt-dev on Ubuntu); DIR is a working directory outside the repository:
+
+```bash
+scripts/harness.sh setup DIR
+scripts/harness.sh cases DIR bench-results/harness
+scripts/harness.sh perf DIR bench-results/harness 1 10
+scripts/harness.sh summary bench-results/harness > bench-results/harness/summary.txt
+```
+
+The adapter variants apply [`no-batch.diff`](../bench-results/harness/adapter/no-batch.diff) or [`push-each.diff`](../bench-results/harness/adapter/push-each.diff) to `cmd/harness-adapter/main.go`, build the library as `setup` does, and run the harness on normal ten times each.
 
 ```bash
 go test -run='^$' -bench='^BenchmarkReplay$' -benchmem -count=10 ./internal/engine
