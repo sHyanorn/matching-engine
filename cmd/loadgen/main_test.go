@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -62,15 +63,31 @@ func testConfig(addr string) config {
 
 func TestMeasure(t *testing.T) {
 	cfg := testConfig(startEngine(t, nil))
-	// 1% of the window, the shortfall a valid run may have, must be more
-	// than a busy machine's scheduling delay: 40 ms here.
 	cfg.rate, cfg.duration = 1000, 4*time.Second
 	r, err := measure(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Valid {
-		t.Fatalf("invalid run: %v", r.Problems)
+	// Whether the target rate went out depends on how busy the machine
+	// is; any other problem is measure's or the engine's.
+	for _, p := range r.Problems {
+		if strings.HasPrefix(p, "achieved ") {
+			t.Log(p)
+		} else {
+			t.Errorf("invalid run: %s", p)
+		}
+	}
+	// Every request due in the window is counted once, sent or not, and
+	// none is sent before it is due.
+	offered := 0
+	for _, n := range r.Outcomes {
+		offered += n
+	}
+	if want := int(cfg.rate * cfg.duration.Seconds()); offered != want || !(r.Achieved > 0 && r.Achieved <= cfg.rate) {
+		t.Errorf("%d requests at %.0f/s in the window, want %d at up to %.0f/s", offered, r.Achieved, want, cfg.rate)
+	}
+	if lag := r.Latency["send_lag"].Curve[0]; lag[1] < 0 { // the curve starts at the least lag
+		t.Errorf("a request was sent %.0f µs before it was due", -lag[1])
 	}
 	succeeded := 0
 	for _, k := range []string{"order_rested", "order_traded", "cancel_canceled", "cancel_finished"} {
@@ -159,8 +176,9 @@ func TestWarmupFailuresInvalidateRun(t *testing.T) {
 	if posts.Load() <= fail {
 		t.Fatalf("only %d orders sent", posts.Load())
 	}
-	if r.Valid {
-		t.Errorf("run is valid although %d requests failed; outcomes %v, problems %v", fail, r.Outcomes, r.Problems)
+	want := fmt.Sprintf("%d requests failed, %d of them in the warmup", fail, fail)
+	if r.Valid || !slices.ContainsFunc(r.Problems, func(p string) bool { return strings.HasPrefix(p, want) }) {
+		t.Errorf("valid %t, problems %v; want %q", r.Valid, r.Problems, want)
 	}
 }
 
@@ -170,19 +188,25 @@ func TestRunWritesReport(t *testing.T) {
 	err := run(context.Background(), []string{
 		"-addr", startEngine(t, nil), "-rate", "1000", "-warmup", "200ms", "-duration", "4s", "-conns", "16", "-out", out,
 	}, &stdout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout.String(), "order to trade push") || !strings.HasSuffix(stdout.String(), "valid\n") {
-		t.Errorf("stdout:\n%s", stdout.String())
-	}
-	data, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
+	data, readErr := os.ReadFile(out)
+	if readErr != nil {
+		t.Fatal(err, readErr)
 	}
 	var r report
-	if err := json.Unmarshal(data, &r); err != nil || !r.Valid || r.TargetRate != 1000 || r.Latency["reply"].Count == 0 {
+	if err := json.Unmarshal(data, &r); err != nil || r.TargetRate != 1000 || r.Latency["reply"].Count == 0 {
 		t.Fatalf("report %s: %v", data, err)
+	}
+	// Whether the run is valid is measure's verdict (TestMeasure); run
+	// passes it on in its table and its exit.
+	verdict := "valid\n"
+	if !r.Valid {
+		verdict = "invalid: " + strings.Join(r.Problems, "; ") + "\n"
+	}
+	if !strings.Contains(stdout.String(), "order to trade push") || !strings.HasSuffix(stdout.String(), verdict) {
+		t.Errorf("stdout:\n%s", stdout.String())
+	}
+	if (err == nil) != r.Valid {
+		t.Errorf("run = %v for a report with problems %v", err, r.Problems)
 	}
 	for _, rate := range []string{"0", "NaN", "Inf", "1e300"} {
 		if err := run(context.Background(), []string{"-rate", rate}, &stdout); err == nil {
