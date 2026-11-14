@@ -1,26 +1,26 @@
 engine           scenario     runs median M/s    min    max  hash  VALID
-cpptrader        static         10       4.83   3.43   7.16  10/10 10/10
+cpptrader        static         10       4.83   3.43   7.15  10/10 10/10
 cpptrader        normal         10       4.97   3.46   6.60  10/10 10/10
 cpptrader        swing-25       10       4.95   3.82   6.84  10/10 10/10
 cpptrader        swing-40       10       4.41   3.71   6.96  10/10 10/10
-cpptrader        flash-crash    10       5.38   3.72   7.20  10/10 10/10
-geseq            static         10       1.31   1.14   1.52  10/10  0/10
+cpptrader        flash-crash    10       5.37   3.72   7.20  10/10 10/10
+geseq            static         10       1.32   1.14   1.52  10/10  0/10
 geseq            normal         10       1.24   1.06   1.57  10/10  0/10
 geseq            swing-25       10       1.21   0.95   1.49  10/10  0/10
 geseq            swing-40       10       1.14   1.01   1.60  10/10  0/10
 geseq            flash-crash    10       1.19   1.01   1.61  10/10  0/10
 liquibook        static         10       0.02   0.02   0.02  10/10 10/10
-liquibook        normal         10       2.88   2.21   3.81  10/10 10/10
+liquibook        normal         10       2.87   2.21   3.81  10/10 10/10
 liquibook        swing-25       10       3.29   1.94   4.01  10/10 10/10
 liquibook        swing-40       10       3.17   2.56   4.25  10/10 10/10
 liquibook        flash-crash    10       3.12   2.58   4.34  10/10 10/10
 matching-engine  static         10       7.27   6.78   8.17  10/10 10/10
 matching-engine  normal         10       6.94   5.36   7.85  10/10 10/10
-matching-engine  swing-25       10       6.71   5.68   7.77  10/10 10/10
+matching-engine  swing-25       10       6.72   5.68   7.77  10/10 10/10
 matching-engine  swing-40       10       7.12   6.08   7.70  10/10 10/10
 matching-engine  flash-crash    10       7.10   6.42   8.30  10/10 10/10
 
-worst case matching-engine    6.71 M msgs/s (swing-25)
+worst case matching-engine    6.72 M msgs/s (swing-25)
 worst case cpptrader          4.41 M msgs/s (swing-40)
 worst case geseq              1.14 M msgs/s (swing-40)
 worst case liquibook          0.02 M msgs/s (static)

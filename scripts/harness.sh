@@ -155,6 +155,9 @@ summary() {
 		import glob, os, re, statistics, sys
 		out = sys.argv[1]
 		scenarios = ["static", "normal", "swing-25", "swing-40", "flash-crash"]
+		# Throughput is messages over wall time: the harness prints it only to
+		# 0.01M msgs/s, too coarse for a slow engine and for medians, which the
+		# benchmark's own scripts/run_challenge.py takes at full precision.
 		runs, worst = {}, {}
 		print(f"{'engine':16} {'scenario':12} {'runs':>4} {'median M/s':>10} {'min':>6} {'max':>6}  hash  VALID")
 		for e in sorted(os.listdir(os.path.join(out, "runs"))):
@@ -165,12 +168,12 @@ summary() {
 		        mps, ok, valid = [], 0, 0
 		        for f in files:
 		            t = open(f).read()
-		            mps.append(float(re.search(r"Throughput: +([0-9.]+) M msgs/s", t).group(1)))
 		            ok += "Status: PASS" in t
 		            valid += "Verdict: VALID" in t
 		            n = int(re.search(r"Messages processed: +([0-9]+)", t).group(1))
 		            secs = float(re.search(r"Wall time: +([0-9.]+) s", t).group(1))
-		            runs[e, s, os.path.basename(f)] = n / secs
+		            mps.append(n / secs / 1e6)
+		            runs[e, s, os.path.basename(f)] = mps[-1]
 		        med = statistics.median(mps)
 		        print(f"{e:16} {s:12} {len(mps):4} {med:10.2f} {min(mps):6.2f} {max(mps):6.2f}  {ok:2}/{len(mps)} {valid:2}/{len(mps)}")
 		        if e not in worst or med < worst[e][1]:
@@ -178,8 +181,6 @@ summary() {
 		print()
 		for e, (s, med) in sorted(worst.items(), key=lambda kv: -kv[1][1]):
 		    print(f"worst case {e:16} {med:6.2f} M msgs/s ({s})")
-		# The harness prints throughput to 0.01M msgs/s, too coarse for a
-		# slow engine, so the ratios below divide messages by wall time.
 		print()
 		print("matching-engine against cpptrader, run by run (same round, same scenario):")
 		for s in scenarios:
