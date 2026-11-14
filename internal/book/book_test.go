@@ -185,7 +185,8 @@ func TestApplyRandomGTC(t *testing.T) {
 // output buffer has grown: a taker that fully fills against a resting maker
 // and a cancel, each both when the level survives and when it empties and
 // is removed from the tree, plus an IOC remainder, a rejected FOK and a
-// market fill. Resting a new order allocates its node by design. Every
+// market fill. Resting allocates a node only when no freed node is waiting
+// (TestRestingReusesFreedNodes). Every
 // measured call is checked to take the intended path (the number and kind
 // of its events), because AllocsPerRun rounds down: a path taken by only
 // some calls could hide one allocation per call.
@@ -284,6 +285,81 @@ func TestApplyAllocations(t *testing.T) {
 			checkBook(t, b)
 		})
 	}
+}
+
+// TestNodeReuse follows one node through three orders. Order 2 fills
+// order 1 and rests its own remainder in order 1's node within one Apply; a
+// cancel of order 2 frees the node for order 3. A node is reset when it is
+// freed, so an event read from it after that would carry ID 0 and zeroed
+// fields: each command's events are compared in full.
+func TestNodeReuse(t *testing.T) {
+	b := New()
+	apply(t, b, limit(1, Sell, 100, 5))
+	node := b.orders.get(1)
+
+	evs := apply(t, b, at(cmdTS, limit(2, Buy, 100, 8)))
+	want := []Event{
+		evAccepted(3, 2, Buy, 100, 8),
+		evTrade(4, 2, 1, Buy, 100, 5, 0, 0),
+		evRested(5, 2, Buy, 100, 3, 3, 1),
+	}
+	if !slices.Equal(evs, want) {
+		t.Fatalf("order 2: events%s\nwant%s", formatEvents(evs), formatEvents(want))
+	}
+	// Every field of the reused node is order 2's: nothing of order 1, a
+	// sell of 5, is left.
+	o2 := Order{ID: 2, Side: Buy, Type: Limit, TIF: GTC, Price: 100, Qty: 8, Filled: 5, Remaining: 3, Timestamp: cmdTS, RestedSeq: 5}
+	if got := b.orders.get(2); got != node || *got != (orderNode{Order: o2, level: b.bids.best}) {
+		t.Fatalf("order 2 rests in %p = %+v, want order 1's node %p holding %+v", got, got, node, o2)
+	}
+	copy2, _ := b.Order(2)
+
+	evs = apply(t, b, at(cmdTS, cancel(2)))
+	if want := []Event{evCanceled(6, 2, Buy, 100, 3, 0, 0)}; !slices.Equal(evs, want) {
+		t.Fatalf("cancel: events%s\nwant%s", formatEvents(evs), formatEvents(want))
+	}
+	if b.free != node || *node != (orderNode{}) {
+		t.Fatalf("after the cancel the free list is %p = %+v, want order 2's node %p reset", b.free, b.free, node)
+	}
+
+	apply(t, b, limit(3, Buy, 99, 1))
+	if b.orders.get(3) != node || b.free != nil {
+		t.Fatalf("order 3 rests in %p and %p is free, want it in %p", b.orders.get(3), b.free, node)
+	}
+	// Order hands out copies, so callers never hold a node: the copy taken
+	// before the cancel still holds order 2 after its node was reused.
+	if copy2 != o2 {
+		t.Fatalf("copy of order 2 is %+v after its node was reused, want %+v", copy2, o2)
+	}
+}
+
+// TestRestingReusesFreedNodes pins that resting allocates nothing once
+// orders have left the book and their price level and the order index
+// already exist: each measured order takes a node off the free list. The
+// final check that the list is empty makes the count exact, which
+// AllocsPerRun alone does not, as it rounds down.
+func TestRestingReusesFreedNodes(t *testing.T) {
+	const runs = 200 // AllocsPerRun makes runs+1 calls
+	b := New()
+	for id := OrderID(1); id <= runs+2; id++ {
+		apply(t, b, limit(id, Buy, 50, 1))
+	}
+	for id := OrderID(2); id <= runs+2; id++ { // order 1 keeps the level
+		apply(t, b, cancel(id))
+	}
+	buf := make([]Event, 0, 16)
+	id := OrderID(runs + 2)
+	allocs := testing.AllocsPerRun(runs, func() {
+		id++
+		buf = b.Apply(limit(id, Buy, 50, 1), buf[:0])
+		if last := buf[len(buf)-1]; last.Kind != EventRested {
+			t.Fatalf("order %d did not rest: %s", id, formatEvents(buf))
+		}
+	})
+	if allocs != 0 || b.free != nil {
+		t.Errorf("allocates %.1f times per order; free list empty: %v", allocs, b.free == nil)
+	}
+	checkBook(t, b)
 }
 
 // TestAvailable pins the FOK pre-check: it adds whole opposite levels from

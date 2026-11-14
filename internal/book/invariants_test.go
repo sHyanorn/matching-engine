@@ -77,6 +77,35 @@ func TestCheckInvariantsCatchesCorruption(t *testing.T) {
 			i, _ := b.orders.cur.find(3)
 			b.orders.cur.slots[i].node = nil
 		}},
+		{"free list: node 0 holds order 6", func(b *Book) {
+			// A resting order on the free list. Order 6 is alone at 103,
+			// so its next link is nil and its queue stays intact.
+			b.free = order(b, 6)
+		}},
+		{"free list: node 0 links back into the list", func(b *Book) {
+			// A node released twice links to itself.
+			o := order(b, 6)
+			b.Apply(cancel(6), nil)
+			b.release(o)
+		}},
+		{"free list: node 2 links back into the list", func(b *Book) {
+			// Released twice with another node released in between.
+			o := order(b, 6)
+			b.Apply(cancel(6), nil)
+			b.Apply(cancel(3), nil)
+			b.release(o)
+		}},
+		{"buy level 99: order 0: prev link", func(b *Book) {
+			// Released while still queued and indexed: order 1 still
+			// links to the reset node.
+			b.release(order(b, 2))
+		}},
+		{"order index holds 6 orders, the queues 5", func(b *Book) {
+			// Released after leaving its queue, but still indexed.
+			o := order(b, 2)
+			o.level.unlinkOrder(o)
+			b.release(o)
+		}},
 		{"sell levels: root is red", func(b *Book) { b.asks.root.red = true }},
 		{"book is crossed: best bid 200, best ask 101", func(b *Book) {
 			// A well-formed bid level above the best ask.

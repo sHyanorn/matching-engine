@@ -1,0 +1,83 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+                              │   map.txt    │              index.txt               │              reuse.txt               │               both.txt               │
+                              │    sec/op    │    sec/op     vs base                │    sec/op     vs base                │    sec/op     vs base                │
+Apply/sd=5-4                    155.8n ± 14%   151.4n ± 10%        ~ (p=0.063 n=10)   139.5n ±  7%  -10.46% (p=0.000 n=10)   119.0n ± 18%  -23.64% (p=0.000 n=10)
+Apply/sd=50-4                   162.7n ±  7%   148.2n ±  9%   -8.91% (p=0.019 n=10)   142.4n ±  5%  -12.45% (p=0.000 n=10)   123.0n ±  6%  -24.38% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    177.7n ± 10%   149.3n ± 11%  -15.95% (p=0.005 n=10)   133.6n ±  6%  -24.82% (p=0.000 n=10)   112.6n ± 24%  -36.63% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   171.8n ± 12%   161.5n ± 10%        ~ (p=0.436 n=10)   131.2n ±  5%  -23.63% (p=0.000 n=10)   128.4n ± 14%  -25.26% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=5-4     279.4n ± 29%   223.8n ± 18%  -19.88% (p=0.011 n=10)   233.3n ± 44%        ~ (p=0.393 n=10)   161.7n ± 36%  -42.14% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=50-4    339.3n ± 25%   246.6n ± 12%  -27.32% (p=0.003 n=10)   238.7n ± 37%  -29.65% (p=0.023 n=10)   149.3n ± 17%  -56.00% (p=0.000 n=10)
+RestingOrders-4                 501.2m ±  9%   370.4m ±  6%  -26.10% (p=0.000 n=10)   470.6m ± 15%        ~ (p=0.739 n=10)   345.6m ± 14%  -31.06% (p=0.000 n=10)
+geomean                         1.674µ         1.410µ        -15.77%                  1.372µ        -18.05%                  1.085µ        -35.20%
+
+                              │   map.txt    │               index.txt               │              reuse.txt              │              both.txt               │
+                              │  allocs/cmd  │  allocs/cmd   vs base                 │ allocs/cmd   vs base                │ allocs/cmd   vs base                │
+Apply/sd=5-4                     594.5m ± 0%    592.4m ± 0%  -0.35% (p=0.000 n=10)     302.5m ± 0%  -49.12% (p=0.000 n=10)   300.5m ± 0%  -49.45% (p=0.000 n=10)
+Apply/sd=50-4                    683.7m ± 0%    682.6m ± 0%  -0.16% (p=0.000 n=10)     355.1m ± 0%  -48.06% (p=0.000 n=10)   354.0m ± 0%  -48.22% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    592.30m ± 0%   592.20m ± 0%  -0.02% (p=0.003 n=10)     73.37m ± 0%  -87.61% (p=0.000 n=10)   72.96m ± 0%  -87.68% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=50-4    682.5m ± 0%    682.5m ± 0%       ~ (p=1.000 n=10) ¹   239.9m ± 0%  -64.85% (p=0.000 n=10)   239.8m ± 0%  -64.87% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=5-4     592.30m ± 0%   592.25m ± 0%       ~ (p=0.350 n=10)     74.50m ± 3%  -87.42% (p=0.000 n=10)   73.46m ± 1%  -87.60% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=50-4     682.5m ± 0%    682.5m ± 0%  -0.01% (p=0.033 n=10)     240.7m ± 0%  -64.74% (p=0.000 n=10)   240.0m ± 0%  -64.84% (p=0.000 n=10)
+geomean                          636.4m         635.8m       -0.09%                    179.9m       -71.73%                  178.9m       -71.88%
+¹ all samples are equal
+
+                              │   map.txt    │              index.txt               │              reuse.txt               │               both.txt                │
+                              │    cmds/s    │    cmds/s     vs base                │    cmds/s     vs base                │    cmds/s     vs base                 │
+Apply/sd=5-4                    6.417M ± 12%   6.605M ±  9%        ~ (p=0.063 n=10)   7.175M ±  7%  +11.81% (p=0.000 n=10)   8.405M ± 16%   +30.98% (p=0.000 n=10)
+Apply/sd=50-4                   6.148M ±  7%   6.750M ±  9%   +9.79% (p=0.019 n=10)   7.025M ±  6%  +14.26% (p=0.000 n=10)   8.128M ±  6%   +32.21% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    5.627M ± 11%   6.696M ± 10%  +19.01% (p=0.005 n=10)   7.487M ±  7%  +33.06% (p=0.000 n=10)   8.883M ± 22%   +57.87% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=50-4   5.821M ± 13%   6.198M ± 11%        ~ (p=0.436 n=10)   7.622M ±  5%  +30.95% (p=0.000 n=10)   7.790M ± 16%   +33.84% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=5-4     3.583M ± 41%   4.467M ± 22%  +24.69% (p=0.011 n=10)   4.292M ± 43%        ~ (p=0.393 n=10)   6.250M ± 36%   +74.44% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=50-4    2.947M ± 33%   4.055M ± 13%  +37.59% (p=0.003 n=10)   4.190M ± 27%  +42.15% (p=0.023 n=10)   6.702M ± 19%  +127.39% (p=0.000 n=10)
+geomean                         4.888M         5.678M        +16.16%                  6.104M        +24.87%                  7.635M         +56.18%
+
+                              │   map.txt   │              index.txt               │              reuse.txt               │               both.txt               │
+                              │ trades/cmd  │ trades/cmd   vs base                 │ trades/cmd   vs base                 │ trades/cmd   vs base                 │
+Apply/sd=5-4                    368.1m ± 0%   368.1m ± 0%       ~ (p=1.000 n=10) ¹   368.1m ± 0%       ~ (p=1.000 n=10) ¹   368.1m ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                   528.2m ± 0%   528.2m ± 0%       ~ (p=1.000 n=10)     528.2m ± 0%       ~ (p=1.000 n=10)     528.2m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=10k/sd=5-4    368.1m ± 0%   368.1m ± 0%       ~ (p=0.628 n=10)     368.1m ± 0%       ~ (p=0.087 n=10)     368.1m ± 0%       ~ (p=0.087 n=10)
+ApplyDeep/resting=10k/sd=50-4   528.2m ± 0%   528.2m ± 0%       ~ (p=1.000 n=10)     528.2m ± 0%       ~ (p=1.000 n=10)     528.2m ± 0%       ~ (p=1.000 n=10)
+ApplyDeep/resting=1M/sd=5-4     368.0m ± 0%   368.1m ± 0%       ~ (p=0.350 n=10)     368.1m ± 0%       ~ (p=0.141 n=10)     368.1m ± 0%  +0.01% (p=0.033 n=10)
+ApplyDeep/resting=1M/sd=50-4    528.1m ± 0%   528.2m ± 0%       ~ (p=0.370 n=10)     528.2m ± 0%       ~ (p=0.370 n=10)     528.2m ± 0%  +0.02% (p=0.020 n=10)
+geomean                         440.9m        440.9m       +0.01%                    440.9m       +0.01%                    440.9m       +0.01%
+¹ all samples are equal
+
+                              │   map.txt    │               index.txt               │               reuse.txt               │               both.txt               │
+                              │     B/op     │     B/op      vs base                 │     B/op       vs base                │     B/op      vs base                │
+Apply/sd=5-4                      73.00 ± 0%     71.00 ± 0%  -2.74% (p=0.000 n=10)       45.00 ±  0%  -38.36% (p=0.000 n=10)     43.00 ± 0%  -41.10% (p=0.000 n=10)
+Apply/sd=50-4                     70.00 ± 0%     69.00 ± 0%  -1.43% (p=0.000 n=10)       39.00 ±  0%  -44.29% (p=0.000 n=10)     38.00 ± 0%  -45.71% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=5-4     55.000 ± 0%    55.000 ± 0%       ~ (p=1.000 n=10) ¹     5.000 ±  0%  -90.91% (p=0.000 n=10)     5.000 ± 0%  -90.91% (p=0.000 n=10)
+ApplyDeep/resting=10k/sd=50-4     61.00 ± 0%     61.00 ± 0%       ~ (p=1.000 n=10) ¹     19.00 ±  0%  -68.85% (p=0.000 n=10)     19.00 ± 0%  -68.85% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=5-4      55.000 ± 0%    55.000 ± 0%       ~ (p=1.000 n=10) ¹     6.000 ± 17%  -89.09% (p=0.000 n=10)     5.000 ± 0%  -90.91% (p=0.000 n=10)
+ApplyDeep/resting=1M/sd=50-4      61.00 ± 0%     61.00 ± 0%       ~ (p=1.000 n=10) ¹     19.00 ±  0%  -68.85% (p=0.000 n=10)     19.00 ± 0%  -68.85% (p=0.000 n=10)
+RestingOrders-4                 163.7Mi ± 0%   155.7Mi ± 0%  -4.87% (p=0.000 n=10)     163.7Mi ±  0%        ~ (p=0.493 n=10)   155.7Mi ± 0%   -4.87% (p=0.000 n=10)
+geomean                           517.0          510.2       -1.31%                      164.5        -68.18%                    157.5       -69.53%
+¹ all samples are equal
+
+                              │    map.txt    │              index.txt               │              reuse.txt               │               both.txt               │
+                              │   allocs/op   │  allocs/op   vs base                 │  allocs/op   vs base                 │  allocs/op   vs base                 │
+Apply/sd=5-4                     0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹
+Apply/sd=50-4                    0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=5-4     0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=10k/sd=50-4    0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=5-4      0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹
+ApplyDeep/resting=1M/sd=50-4     0.000 ± 0%      0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹    0.000 ± 0%       ~ (p=1.000 n=10) ¹
+RestingOrders-4                 1.010M ± 0%     1.002M ± 0%  -0.81% (p=0.000 n=10)     1.010M ± 0%       ~ (p=0.641 n=10)     1.002M ± 0%  -0.81% (p=0.000 n=10)
+geomean                                     ²                -0.12%                ²                +0.00%                ²                -0.12%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+
+                │  map.txt   │             index.txt             │          reuse.txt           │             both.txt              │
+                │  B/order   │  B/order    vs base               │  B/order    vs base          │  B/order    vs base               │
+RestingOrders-4   133.9 ± 0%   129.7 ± 0%  -3.14% (p=0.000 n=10)   133.9 ± 0%  ~ (p=0.677 n=10)   129.7 ± 0%  -3.14% (p=0.000 n=10)
+
+                │  map.txt   │             index.txt             │          reuse.txt           │             both.txt              │
+                │    MiB     │    MiB      vs base               │    MiB      vs base          │    MiB      vs base               │
+RestingOrders-4   127.7 ± 0%   123.7 ± 0%  -3.13% (p=0.000 n=10)   127.7 ± 0%  ~ (p=0.677 n=10)   123.7 ± 0%  -3.13% (p=0.000 n=10)
+
+                │   map.txt   │              index.txt              │           reuse.txt            │               both.txt               │
+                │  sec/order  │  sec/order   vs base                │  sec/order    vs base          │  sec/order    vs base                │
+RestingOrders-4   501.3n ± 9%   370.4n ± 6%  -26.10% (p=0.000 n=10)   470.6n ± 15%  ~ (p=0.739 n=10)   345.6n ± 14%  -31.05% (p=0.000 n=10)

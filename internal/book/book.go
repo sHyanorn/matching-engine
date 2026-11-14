@@ -12,6 +12,13 @@ type Book struct {
 	asks   levelTree // best (lowest) ask first
 	orders orderIndex
 	seq    uint64 // Seq of the last event emitted
+
+	// free holds the nodes of orders that have left the book, linked
+	// through next, for rest to reuse (D039). A node joins it only after
+	// the last event read from it has been emitted, and is reset then.
+	// It never holds more nodes than the book has held resting orders
+	// at once.
+	free *orderNode
 }
 
 // New returns an empty book.
@@ -31,8 +38,9 @@ func New() *Book {
 // The events follow the grammar in the package documentation. A command that
 // fails [Command.Validate] produces one Rejected event and changes nothing
 // else, so Apply is safe on arbitrary input. Once out has grown large enough,
-// Apply allocates only when an order comes to rest: its node, a level if the
-// price is new, and now and then a larger order index.
+// Apply allocates only when an order comes to rest: its node, unless one is
+// free for reuse, a level if the price is new, and now and then a larger
+// order index.
 //
 // The returned slice aliases out: the next call overwrites it, so a caller
 // that hands events to another goroutine must copy them first.
@@ -142,7 +150,8 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
 			maker.Filled += q
 			maker.Remaining -= q
 			level.totalQty -= q
-			if maker.Remaining == 0 {
+			filled := maker.Remaining == 0
+			if filled {
 				level.unlinkOrder(maker) // subtracts the maker's Remaining, now 0
 				b.orders.del(maker.ID)
 			}
@@ -151,6 +160,9 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
 				Price: level.price, Qty: q, LevelSide: cmd.Side.Opposite(), LevelQty: level.totalQty,
 				LevelOrders: level.count,
 			})
+			if filled {
+				b.release(maker) // after its last event, which read maker.ID
+			}
 		}
 		if level.head == nil {
 			opposite.remove(level)
@@ -183,10 +195,10 @@ func (b *Book) rest(out []Event, cmd Command, remaining Qty) []Event {
 	if level == nil {
 		level = own.insert(cmd.Price)
 	}
-	o := &orderNode{Order: Order{
+	o := b.node(Order{
 		ID: cmd.OrderID, Side: cmd.Side, Type: cmd.Type, TIF: cmd.TIF, Price: cmd.Price,
 		Qty: cmd.Qty, Filled: cmd.Qty - remaining, Remaining: remaining, Timestamp: cmd.Timestamp,
-	}}
+	})
 	level.pushBack(o)
 	b.orders.put(o.ID, o)
 	out = b.emit(out, cmd.Timestamp, Event{
@@ -210,8 +222,30 @@ func (b *Book) cancel(out []Event, cmd Command) []Event {
 	if level.head == nil {
 		b.side(o.Side).remove(level)
 	}
-	return b.emit(out, cmd.Timestamp, Event{
+	out = b.emit(out, cmd.Timestamp, Event{
 		Kind: EventCanceled, OrderID: o.ID, Side: o.Side, Price: o.Price, Qty: o.Remaining,
 		Reason: ReasonUserCancel, LevelSide: o.Side, LevelQty: level.totalQty, LevelOrders: level.count,
 	})
+	b.release(o) // after its last event, which read o
+	return out
+}
+
+// node returns a node holding ord and no links: a free one reset in full,
+// or a new one if none is free.
+func (b *Book) node(ord Order) *orderNode {
+	o := b.free
+	if o == nil {
+		return &orderNode{Order: ord}
+	}
+	b.free = o.next
+	*o = orderNode{Order: ord}
+	return o
+}
+
+// release resets o and puts it on the free list. o must have left its
+// queue and the order index, and every event read from it must have been
+// emitted: the reset zeroes the order, so a read after release finds ID 0.
+func (b *Book) release(o *orderNode) {
+	*o = orderNode{next: b.free}
+	b.free = o
 }

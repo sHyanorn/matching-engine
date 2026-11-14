@@ -1,0 +1,75 @@
+diff --git a/internal/book/book.go b/internal/book/book.go
+index 9eb03b4..7b0789b 100644
+--- a/internal/book/book.go
++++ b/internal/book/book.go
+@@ -12,6 +12,10 @@ type Book struct {
+ 	asks   levelTree // best (lowest) ask first
+ 	orders map[OrderID]*orderNode
+ 	seq    uint64 // Seq of the last event emitted
++
++	// free holds the nodes of orders that have left the book, linked
++	// through next, for rest to reuse.
++	free *orderNode
+ }
+ 
+ // New returns an empty book.
+@@ -142,7 +146,8 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
+ 			maker.Filled += q
+ 			maker.Remaining -= q
+ 			level.totalQty -= q
+-			if maker.Remaining == 0 {
++			filled := maker.Remaining == 0
++			if filled {
+ 				level.unlinkOrder(maker) // subtracts the maker's Remaining, now 0
+ 				delete(b.orders, maker.ID)
+ 			}
+@@ -151,6 +156,9 @@ func (b *Book) match(out []Event, cmd Command) ([]Event, Qty) {
+ 				Price: level.price, Qty: q, LevelSide: cmd.Side.Opposite(), LevelQty: level.totalQty,
+ 				LevelOrders: level.count,
+ 			})
++			if filled {
++				b.release(maker)
++			}
+ 		}
+ 		if level.head == nil {
+ 			opposite.remove(level)
+@@ -183,10 +191,10 @@ func (b *Book) rest(out []Event, cmd Command, remaining Qty) []Event {
+ 	if level == nil {
+ 		level = own.insert(cmd.Price)
+ 	}
+-	o := &orderNode{Order: Order{
++	o := b.node(Order{
+ 		ID: cmd.OrderID, Side: cmd.Side, Type: cmd.Type, TIF: cmd.TIF, Price: cmd.Price,
+ 		Qty: cmd.Qty, Filled: cmd.Qty - remaining, Remaining: remaining, Timestamp: cmd.Timestamp,
+-	}}
++	})
+ 	level.pushBack(o)
+ 	b.orders[o.ID] = o
+ 	out = b.emit(out, cmd.Timestamp, Event{
+@@ -210,8 +218,25 @@ func (b *Book) cancel(out []Event, cmd Command) []Event {
+ 	if level.head == nil {
+ 		b.side(o.Side).remove(level)
+ 	}
+-	return b.emit(out, cmd.Timestamp, Event{
++	out = b.emit(out, cmd.Timestamp, Event{
+ 		Kind: EventCanceled, OrderID: o.ID, Side: o.Side, Price: o.Price, Qty: o.Remaining,
+ 		Reason: ReasonUserCancel, LevelSide: o.Side, LevelQty: level.totalQty, LevelOrders: level.count,
+ 	})
++	b.release(o)
++	return out
++}
++
++func (b *Book) node(ord Order) *orderNode {
++	o := b.free
++	if o == nil {
++		return &orderNode{Order: ord}
++	}
++	b.free = o.next
++	*o = orderNode{Order: ord}
++	return o
++}
++
++func (b *Book) release(o *orderNode) {
++	*o = orderNode{next: b.free}
++	b.free = o
+ }

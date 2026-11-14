@@ -1,0 +1,75 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+                               │ index-latency.txt │           both-latency.txt           │
+                               │      sec/op       │    sec/op     vs base                │
+ApplyLatency/sd=5-4                   214.5n ±  7%   191.3n ± 10%  -10.80% (p=0.009 n=10)
+ApplyLatency/sd=50-4                  213.5n ± 16%   191.8n ±  4%  -10.14% (p=0.001 n=10)
+ApplyLatency/resting=1M/sd=5-4        319.8n ± 12%   262.9n ± 26%  -17.79% (p=0.015 n=10)
+ApplyLatency/empty-to-1M-4            437.2n ± 13%   430.9n ±  7%        ~ (p=0.853 n=10)
+geomean                               282.9n         253.9n        -10.23%
+
+                               │ index-latency.txt │           both-latency.txt           │
+                               │   clock-p50-sec   │ clock-p50-sec  vs base               │
+ApplyLatency/sd=5-4                   26.00n ±  0%     26.00n ± 0%       ~ (p=1.000 n=10)
+ApplyLatency/sd=50-4                  26.00n ±  4%     26.00n ± 8%       ~ (p=0.721 n=10)
+ApplyLatency/resting=1M/sd=5-4        26.00n ± 27%     26.00n ± 0%       ~ (p=0.628 n=10)
+ApplyLatency/empty-to-1M-4            26.00n ±  0%     26.00n ± 0%       ~ (p=1.000 n=10)
+geomean                               26.00n           26.00n       +0.00%
+
+                               │ index-latency.txt │           both-latency.txt           │
+                               │   clock-p99-sec   │ clock-p99-sec  vs base               │
+ApplyLatency/sd=5-4                   30.00n ± 13%    27.00n ± 37%       ~ (p=0.470 n=10)
+ApplyLatency/sd=50-4                  30.50n ± 25%    33.00n ± 30%       ~ (p=0.482 n=10)
+ApplyLatency/resting=1M/sd=5-4        30.50n ± 38%    28.00n ± 32%       ~ (p=0.496 n=10)
+ApplyLatency/empty-to-1M-4            33.00n ± 18%    33.00n ± 18%       ~ (p=0.852 n=10)
+geomean                               30.98n          30.12n        -2.76%
+
+                               │ index-latency.txt │           both-latency.txt            │
+                               │      max-sec      │    max-sec      vs base               │
+ApplyLatency/sd=5-4                  566.2µ ± 783%   1297.6µ ± 109%       ~ (p=0.739 n=10)
+ApplyLatency/sd=50-4                1425.2µ ±  84%    973.5µ ± 283%       ~ (p=0.971 n=10)
+ApplyLatency/resting=1M/sd=5-4       2.795m ± 596%    1.900m ± 819%       ~ (p=0.971 n=10)
+ApplyLatency/empty-to-1M-4           8.950m ±  86%    7.287m ±  39%       ~ (p=0.218 n=10)
+geomean                              2.120m           2.045m         -3.52%
+
+                               │ index-latency.txt │           both-latency.txt           │
+                               │      p50-sec      │   p50-sec     vs base                │
+ApplyLatency/sd=5-4                   108.5n ± 12%   101.0n ± 11%   -6.91% (p=0.018 n=10)
+ApplyLatency/sd=50-4                  120.5n ± 11%   111.5n ±  1%   -7.47% (p=0.001 n=10)
+ApplyLatency/resting=1M/sd=5-4        221.5n ± 12%   166.5n ± 49%        ~ (p=0.123 n=10)
+ApplyLatency/empty-to-1M-4            271.0n ± 16%   263.5n ±  9%        ~ (p=0.515 n=10)
+geomean                               167.4n         149.1n        -10.92%
+
+                               │ index-latency.txt │           both-latency.txt           │
+                               │      p90-sec      │   p90-sec     vs base                │
+ApplyLatency/sd=5-4                   275.5n ± 11%   228.0n ± 13%  -17.24% (p=0.001 n=10)
+ApplyLatency/sd=50-4                  271.5n ± 16%   220.5n ±  4%  -18.78% (p=0.000 n=10)
+ApplyLatency/resting=1M/sd=5-4        401.0n ± 12%   338.0n ± 27%  -15.71% (p=0.027 n=10)
+ApplyLatency/empty-to-1M-4            508.0n ± 14%   497.0n ±  7%        ~ (p=0.617 n=10)
+geomean                               351.3n         303.1n        -13.72%
+
+                               │ index-latency.txt │           both-latency.txt           │
+                               │      p99-sec      │   p99-sec     vs base                │
+ApplyLatency/sd=5-4                   595.0n ±  7%   499.5n ±  8%  -16.05% (p=0.000 n=10)
+ApplyLatency/sd=50-4                  653.5n ± 13%   487.0n ±  8%  -25.48% (p=0.000 n=10)
+ApplyLatency/resting=1M/sd=5-4        756.0n ± 13%   568.0n ± 21%  -24.87% (p=0.000 n=10)
+ApplyLatency/empty-to-1M-4            1.220µ ± 53%   1.227µ ± 74%        ~ (p=0.912 n=10)
+geomean                               773.9n         641.6n        -17.09%
+
+                               │ index-latency.txt │           both-latency.txt            │
+                               │     p99.9-sec     │   p99.9-sec    vs base                │
+ApplyLatency/sd=5-4                   3.257µ ± 10%   2.983µ ±  37%   -8.41% (p=0.011 n=10)
+ApplyLatency/sd=50-4                  3.265µ ± 63%   2.823µ ±  57%        ~ (p=0.218 n=10)
+ApplyLatency/resting=1M/sd=5-4        4.777µ ± 12%   1.524µ ± 144%  -68.08% (p=0.000 n=10)
+ApplyLatency/empty-to-1M-4            17.18µ ± 11%   17.50µ ±   9%        ~ (p=0.190 n=10)
+geomean                               5.435µ         3.871µ         -28.77%
+
+                               │ index-latency.txt │           both-latency.txt           │
+                               │    p99.99-sec     │  p99.99-sec   vs base                │
+ApplyLatency/sd=5-4                   27.18µ ± 14%   24.34µ ± 17%        ~ (p=0.143 n=10)
+ApplyLatency/sd=50-4                  26.42µ ± 29%   21.32µ ± 13%  -19.31% (p=0.029 n=10)
+ApplyLatency/resting=1M/sd=5-4        30.20µ ± 21%   21.80µ ± 23%  -27.82% (p=0.001 n=10)
+ApplyLatency/empty-to-1M-4            48.66µ ± 20%   47.57µ ± 11%        ~ (p=1.000 n=10)
+geomean                               32.05µ         27.08µ        -15.49%

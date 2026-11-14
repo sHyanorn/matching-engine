@@ -21,17 +21,22 @@ import (
 //     of every queue and never exceeds LastSeq;
 //   - the order index is consistent (orderIndex.check) and holds exactly
 //     the orders in the queues;
+//   - every node on the free list has been reset, so none of them is also
+//     a resting order, and the list ends;
 //   - the book is not crossed: the best bid is below the best ask.
 //
 // It does not check what only the event history can show, such as quantity
 // conservation across trades and cancels or deterministic replay; the
 // property and fuzz tests check those from the event stream.
 //
-// It costs O(N + P) for N resting orders and P levels, so it is meant for
-// tests and fuzzing, never for the matching hot path.
+// It costs O(N + P + F) for N resting orders, P levels and F free nodes,
+// so it is meant for tests and fuzzing, never for the matching hot path.
 func (b *Book) CheckInvariants() error {
 	if err := b.orders.check(); err != nil {
 		return fmt.Errorf("order index: %w", err)
+	}
+	if err := b.checkFree(); err != nil {
+		return fmt.Errorf("free list: %w", err)
 	}
 	queued := 0
 	for _, s := range [...]Side{Buy, Sell} {
@@ -112,6 +117,27 @@ func (b *Book) checkLevel(s Side, l *levelNode) (int, error) {
 		return 0, fmt.Errorf("total quantity is %d, the queue holds %d", l.totalQty, total)
 	}
 	return count, nil
+}
+
+// checkFree verifies that every node on the free list holds nothing but
+// its link. A resting order on the list would hold its fields, and a node
+// released twice would link back into the list, so the walk also moves a
+// second pointer at half speed and fails if the next node is that one
+// (Floyd's cycle detection). In a list that ends the two never meet.
+func (b *Book) checkFree() error {
+	slow := b.free
+	for i, o := 0, b.free; o != nil; i, o = i+1, o.next {
+		if *o != (orderNode{next: o.next}) {
+			return fmt.Errorf("node %d holds order %d", i, o.ID)
+		}
+		if i%2 == 1 {
+			slow = slow.next
+		}
+		if o.next == slow {
+			return fmt.Errorf("node %d links back into the list", i)
+		}
+	}
+	return nil
 }
 
 // check verifies every invariant documented on levelTree and returns the

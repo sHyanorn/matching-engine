@@ -1,0 +1,120 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	10668430	       127.7 ns/op	         0.3005 allocs/cmd	   7828554 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	10313581	       135.7 ns/op	         0.3540 allocs/cmd	   7370538 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 8525132	       132.5 ns/op	         0.07336 allocs/cmd	   7548001 cmds/s	         0.3681 trades/cmd	       6 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 7419472	       138.1 ns/op	         0.2400 allocs/cmd	   7243455 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 7475440	       204.4 ns/op	         0.07361 allocs/cmd	   4892507 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 7757854	       163.1 ns/op	         0.2400 allocs/cmd	   6131584 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       3	 393699770 ns/op	       129.7 B/order	       123.7 MiB	       393.7 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	 8415577	       140.9 ns/op	         0.3005 allocs/cmd	   7095888 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 9013968	       118.0 ns/op	         0.3540 allocs/cmd	   8471836 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	10991025	       112.6 ns/op	         0.07296 allocs/cmd	   8881707 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 8095863	       131.5 ns/op	         0.2399 allocs/cmd	   7602640 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 7448737	       145.2 ns/op	         0.07361 allocs/cmd	   6885144 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 8471324	       125.8 ns/op	         0.2399 allocs/cmd	   7950285 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       4	 336870924 ns/op	       129.7 B/order	       123.7 MiB	       336.9 ns/order	163272376 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	 8637589	       145.3 ns/op	         0.3005 allocs/cmd	   6880559 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 9026308	       130.8 ns/op	         0.3540 allocs/cmd	   7645229 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	 9611498	       140.5 ns/op	         0.07315 allocs/cmd	   7116175 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 7187034	       143.6 ns/op	         0.2400 allocs/cmd	   6964829 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 9577158	       127.1 ns/op	         0.07316 allocs/cmd	   7869016 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 7552628	       164.4 ns/op	         0.2400 allocs/cmd	   6081010 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       3	 364256958 ns/op	       129.7 B/order	       123.7 MiB	       364.3 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	 8874176	       115.5 ns/op	         0.3005 allocs/cmd	   8656902 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	10617151	       119.1 ns/op	         0.3540 allocs/cmd	   8393152 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	12460971	        92.02 ns/op	         0.07280 allocs/cmd	  10867152 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	10353966	       110.3 ns/op	         0.2397 allocs/cmd	   9070062 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 6404094	       228.1 ns/op	         0.07394 allocs/cmd	   4383246 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 7772296	       153.0 ns/op	         0.2400 allocs/cmd	   6534714 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       3	 392536729 ns/op	       129.7 B/order	       123.7 MiB	       392.5 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	11382571	       101.4 ns/op	         0.3005 allocs/cmd	   9866711 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	11036566	       107.9 ns/op	         0.3540 allocs/cmd	   9266538 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	14150570	        88.81 ns/op	         0.07265 allocs/cmd	  11259855 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	10971825	       115.0 ns/op	         0.2397 allocs/cmd	   8698390 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 8742944	       117.1 ns/op	         0.07331 allocs/cmd	   8543203 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 9075897	       124.9 ns/op	         0.2398 allocs/cmd	   8003799 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       4	 347157692 ns/op	       129.7 B/order	       123.7 MiB	       347.2 ns/order	163272376 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	 9251230	       136.6 ns/op	         0.3005 allocs/cmd	   7322280 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	10250382	       130.2 ns/op	         0.3541 allocs/cmd	   7678486 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	10928670	       112.6 ns/op	         0.07297 allocs/cmd	   8883887 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	10270544	       110.1 ns/op	         0.2397 allocs/cmd	   9086045 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	10254223	       130.0 ns/op	         0.07306 allocs/cmd	   7691129 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 9309003	       141.5 ns/op	         0.2398 allocs/cmd	   7065872 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       4	 341509099 ns/op	       129.7 B/order	       123.7 MiB	       341.5 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	10496982	       113.6 ns/op	         0.3005 allocs/cmd	   8801065 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 8217717	       122.5 ns/op	         0.3541 allocs/cmd	   8161552 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	10993928	        95.62 ns/op	         0.07296 allocs/cmd	  10458220 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	10316595	       138.4 ns/op	         0.2397 allocs/cmd	   7225552 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 9405428	       117.8 ns/op	         0.07318 allocs/cmd	   8492542 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	10114572	       115.4 ns/op	         0.2397 allocs/cmd	   8668998 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       4	 313032748 ns/op	       129.7 B/order	       123.7 MiB	       313.0 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	10987946	       109.6 ns/op	         0.3005 allocs/cmd	   9124242 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	10171174	       121.3 ns/op	         0.3541 allocs/cmd	   8243259 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	11004087	       100.3 ns/op	         0.07296 allocs/cmd	   9968825 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	10954971	       125.3 ns/op	         0.2397 allocs/cmd	   7977886 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 5683566	       220.3 ns/op	         0.07423 allocs/cmd	   4539828 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 6253690	       195.3 ns/op	         0.2402 allocs/cmd	   5119403 cmds/s	         0.5281 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       4	 327557534 ns/op	       129.7 B/order	       123.7 MiB	       327.6 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	11081418	       121.0 ns/op	         0.3005 allocs/cmd	   8267145 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 9135049	       126.8 ns/op	         0.3541 allocs/cmd	   7888431 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	10407882	       140.0 ns/op	         0.07304 allocs/cmd	   7140355 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 8325800	       134.3 ns/op	         0.2399 allocs/cmd	   7445183 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 6304249	       184.9 ns/op	         0.07398 allocs/cmd	   5408653 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 7476474	       174.8 ns/op	         0.2400 allocs/cmd	   5719586 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       3	 366065580 ns/op	       129.7 B/order	       123.7 MiB	       366.1 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkApply/sd=5-4      	 8839939	       117.0 ns/op	         0.3005 allocs/cmd	   8543432 cmds/s	         0.3681 trades/cmd	      43 B/op	       0 allocs/op
+BenchmarkApply/sd=50-4     	 9398462	       123.5 ns/op	         0.3541 allocs/cmd	   8094642 cmds/s	         0.5282 trades/cmd	      38 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=5-4         	11529721	       123.5 ns/op	         0.07289 allocs/cmd	   8096544 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=10k/sd=50-4        	 9615636	       110.3 ns/op	         0.2398 allocs/cmd	   9064728 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=5-4          	 8783799	       178.1 ns/op	         0.07331 allocs/cmd	   5614581 cmds/s	         0.3681 trades/cmd	       5 B/op	       0 allocs/op
+BenchmarkApplyDeep/resting=1M/sd=50-4         	 7597986	       145.6 ns/op	         0.2400 allocs/cmd	   6869860 cmds/s	         0.5282 trades/cmd	      19 B/op	       0 allocs/op
+BenchmarkRestingOrders-4                      	       3	 343999501 ns/op	       129.7 B/order	       123.7 MiB	       344.0 ns/order	163272320 B/op	 1002016 allocs/op
+PASS
