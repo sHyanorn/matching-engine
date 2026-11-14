@@ -51,15 +51,21 @@ func TestOrderIndexMatchesMap(t *testing.T) {
 					if model[id] != nil {
 						continue
 					}
-					next, growing := x.next, x.old.slots != nil
+					// One insert moves at most growStep old slots, the one
+					// that starts a growth and the one that empties the old
+					// table included, and the current table never fills
+					// past half.
+					unmoved := func() int { return len(x.old.slots) - x.next }
+					before, size := unmoved(), len(x.cur.slots)
 					o := &orderNode{}
 					x.put(id, o)
 					model[id] = o
 					live = append(live, id)
-					// One insert moves at most growStep old slots, and the
-					// current table never fills past half.
-					if growing && x.old.slots != nil && x.next-next > growStep {
-						t.Fatalf("op %d: one insert moved %d slots", op, x.next-next)
+					if len(x.cur.slots) != size { // the old current table is to move
+						before += size
+					}
+					if moved := before - unmoved(); moved > growStep {
+						t.Fatalf("op %d: one insert moved %d slots", op, moved)
 					}
 					if 2*x.len() > len(x.cur.slots) {
 						t.Fatalf("op %d: %d entries in a table of %d", op, x.len(), len(x.cur.slots))
