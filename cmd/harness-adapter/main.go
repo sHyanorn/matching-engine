@@ -8,15 +8,14 @@
 //
 //	go build -tags harness -buildmode=c-shared -o me_adapter.so ./cmd/harness-adapter
 //
-// The benchmark calls the library from a thread of its own, and every call
-// into Go from such a thread costs far more than matching one message, so
-// the library exports engine_on_batch and the benchmark hands it runs of
-// messages. Calls from Go to C cost less, but one still costs more than
-// all the other work on a message (bench-results/harness/adapter), so
-// reports are pushed into the benchmark's transport in runs too: they
-// collect in a buffer that goes to C in one call when it holds flushAt
-// reports and at the end of every call into the library (D040). Matching is synchronous, so engine_flush has nothing
-// left to do.
+// The benchmark calls the library from a thread of its own. Crossing
+// between C and Go for every message costs more than all the other work on
+// it (bench-results/harness/adapter), so the library exports
+// engine_on_batch, for the benchmark to hand it runs of messages, and
+// pushes reports into the benchmark's transport in runs too: they collect
+// in a buffer that goes to C in one call when it holds flushAt reports and
+// at the end of every call into the library (D040). Matching is
+// synchronous, so engine_flush has nothing left to do.
 //
 // A message the book cannot hold (internal/harness) panics, which ends the
 // benchmark run.
