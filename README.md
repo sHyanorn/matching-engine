@@ -64,7 +64,7 @@ curl -s localhost:8080/v1/orders -d '{"symbol":"BTC-USD","side":"buy","type":"li
 
 ## Limits
 
-- The throughput VM is noisy: runs vary by up to 36%, and the book's speedup over its earlier version is measured on that VM only.
+- The throughput VM is noisy: the 10 runs of the old or the new book on one benchmark differ by up to 1.96 times in time per command, and the book's speedup over its earlier version is measured on that VM only.
 - In the comparison with other engines, one engine's runs vary by up to 2.09 times, and no geseq run passes its probe-time rule.
 - 50k requests/s is near saturation, and its p99 depends on the machine.
 - A crash of the machine or a power loss can lose acknowledged commands: those of the last fsync interval, plus those taken while an fsync was still running (D017, D031).
