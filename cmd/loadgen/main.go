@@ -6,6 +6,8 @@
 // wait for a free connection. A run is valid only if the target rate was
 // met, every request succeeded and every trade was pushed once and in
 // order (check.go); loadgen exits with an error otherwise.
+//
+// With -oe it measures the round trip of OE1 Pings instead (oe.go).
 package main
 
 import (
@@ -46,6 +48,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	fs.IntVar(&cfg.conns, "conns", 64, "keep-alive connections")
 	fs.Uint64Var(&cfg.seed, "seed", 1, "seed of the order flow")
 	fs.Float64Var(&cfg.sd, "sd", 5, "standard deviation of prices around the mid, in ticks")
+	fs.StringVar(&cfg.oeAddr, "oe", "", "send Pings over one OE1 session to this address instead of orders over REST")
+	fs.BoolVar(&cfg.spin, "spin", true, "with -oe: spin the pacing thread, and on Linux the reading one, pinned to CPUs, instead of sleeping")
+	fs.DurationVar(&cfg.maxSendLag, "max-send-lag", 10*time.Microsecond, "with -oe: the largest p99.9 send lag of a valid run")
 	out := fs.String("out", "", "file to write the JSON report to")
 	cpuProfile := fs.String("cpuprofile", "", "file to write loadgen's own CPU profile to")
 	if err := fs.Parse(args); err != nil {
@@ -69,7 +74,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 			_ = f.Close() // a short profile shows when it is read
 		}()
 	}
-	r, err := measure(ctx, cfg)
+	measureFn := measure
+	if cfg.oeAddr != "" {
+		measureFn = measureOE
+	}
+	r, err := measureFn(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -93,6 +102,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 var latencyRows = []struct{ key, name string }{
 	{"trade_push", "order to trade push"},
+	{"pong", "request to pong"},
 	{"reply", "request to reply"},
 	{"service", "service time"},
 	{"send_lag", "send lag"},
@@ -107,14 +117,28 @@ func printReport(w io.Writer, r report) error {
 	}
 	slices.Sort(counts)
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, %d connections\n",
-		r.Symbol, r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Conns)
+	if r.Mode == "oe" {
+		fmt.Fprintf(&b, "OE1 Pings: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, one session, spin %v, reader spins %v, pinned to CPUs %v\n",
+			r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Spin, r.SpinRead, r.Pinned)
+	} else {
+		fmt.Fprintf(&b, "%s: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, %d connections\n",
+			r.Symbol, r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Conns)
+	}
 	fmt.Fprintf(&b, "%s\n", strings.Join(counts, ", "))
-	fmt.Fprintf(&b, "trades: %d in replies, %d pushed, counter rose %d\n", r.Trades.Replies, r.Trades.Pushes, r.Trades.Metric)
+	if r.Mode != "oe" {
+		fmt.Fprintf(&b, "trades: %d in replies, %d pushed, counter rose %d\n", r.Trades.Replies, r.Trades.Pushes, r.Trades.Metric)
+	}
 	fmt.Fprintf(&b, "%-20s %9s %8s %8s %8s %8s %8s %8s\n", "latency (µs)", "count", "p50", "p90", "p99", "p99.9", "p99.99", "max")
+	format := "%-20s %9d %8.0f %8.0f %8.0f %8.0f %8.0f %8.0f\n"
+	if r.Mode == "oe" { // round trips of tens of microseconds
+		format = "%-20s %9d %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f\n"
+	}
 	for _, row := range latencyRows {
-		s := r.Latency[row.key]
-		fmt.Fprintf(&b, "%-20s %9d %8.0f %8.0f %8.0f %8.0f %8.0f %8.0f\n", row.name, s.Count, s.P50, s.P90, s.P99, s.P999, s.P9999, s.Max)
+		s, ok := r.Latency[row.key]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, format, row.name, s.Count, s.P50, s.P90, s.P99, s.P999, s.P9999, s.Max)
 	}
 	if r.Valid {
 		b.WriteString("valid\n")

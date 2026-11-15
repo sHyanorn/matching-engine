@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,11 +27,22 @@ type config struct {
 	seed     uint64
 	sd       float64
 	pushWait time.Duration // for pushes still missing at the end; 0 means 5 s
+
+	// The OE1 mode, measureOE.
+	oeAddr     string
+	spin       bool
+	maxSendLag time.Duration            // of a valid run, at p99.9
+	oeDial     func() (net.Conn, error) // tests: instead of dialing oeAddr
+	beforeSend func(i int)              // tests: called before each write, with its first request
 }
 
 // report is the result of a measurement, written as JSON.
 type report struct {
-	Symbol     string             `json:"symbol"`
+	Mode       string             `json:"mode,omitempty"` // "oe" for OE1; REST otherwise
+	Spin       bool               `json:"spin,omitempty"`
+	SpinRead   bool               `json:"spin_read,omitempty"`   // the reader spun on the socket
+	Pinned     []int              `json:"pinned_cpus,omitempty"` // of the pacer and the reader; -1: not pinned
+	Symbol     string             `json:"symbol,omitempty"`
 	TargetRate float64            `json:"target_rate"`
 	Achieved   float64            `json:"achieved_rate"`
 	Warmup     float64            `json:"warmup_s"`

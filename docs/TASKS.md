@@ -69,7 +69,7 @@ Check off each item when it is done. All tests must pass at the end of every mil
 
 ## M8 Binary order entry
 - [x] Protocol text and codec: docs/API.md, D041, `internal/oe`
-- [ ] Session server with Ping only, and loadgen's binary mode against it
+- [x] Session server with Ping only, and loadgen's binary mode against it
 - [ ] One pair of rented machines: deployment, results retrieval and the network floor
 - [ ] Orders and cancels over a session
 - [ ] Session resume after a broken connection
