@@ -66,3 +66,13 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Adapter for the flash1-dev matching engine benchmark
 - [x] Results against reference engines on the same machine
 - [x] Update BENCHMARKS and README with the results
+
+## M8 Binary order entry
+- [x] Protocol text and codec: docs/API.md, D041, `internal/oe`
+- [ ] Session server with Ping only, and loadgen's binary mode against it
+- [ ] One pair of rented machines: deployment, results retrieval and the network floor
+- [ ] Orders and cancels over a session
+- [ ] Session resume after a broken connection
+- [ ] Pilot pair: every flow five times, and the tuning comparisons
+- [ ] Four more pairs with the configuration fixed
+- [ ] Publish every run, each latency with its pair's floor and as a range over pairs

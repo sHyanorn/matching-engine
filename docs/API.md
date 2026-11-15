@@ -112,6 +112,85 @@ Data messages (`book_snapshot`, `book_delta`, `trade`) carry the `channel`, a `s
 
 A snapshot followed by its deltas reproduces the book's levels, order counts included. A client that falls behind (1024 updates behind on a channel, over 1 MB of unsent messages apart from the largest, or over 10 s spent writing one message) is disconnected with close code 1008 and reason `slow consumer`; it reconnects and subscribes again for a fresh snapshot. On shutdown connections are closed with code 1001.
 
+## Binary order entry (OE1)
+
+OE1 is a binary protocol for sending orders and cancels over a persistent TCP session in fixed-length frames ([D041](DECISIONS.md)). Depth, order status and market data stay on REST and WebSocket.
+
+**What this version serves:** nothing yet. `internal/oe` encodes and decodes the frames; the engine has no OE1 listener.
+
+### Frames
+
+Every frame is `length u16 | type u8 | body`, all integers little-endian. `length` counts the type byte and the body, and each type has one body size. The server closes the connection on a frame whose length is not the one its type has, or whose type it does not take. Padding is sent as zeros and ignored on receipt.
+
+Client to server:
+
+| Type | Frame | Body | Bytes |
+|---|---|---|---|
+| `L` | Login | version u16, session u64, next_server_seq u64 | 21 |
+| `N` | NewOrder | client_seq u64, symbol u8, side u8, type u8, tif u8, price i64, qty i64 | 31 |
+| `C` | Cancel | client_seq u64, order_id u64 | 19 |
+| `P` | Ping | client_seq u64, 20 bytes of padding | 31 |
+| `H` | Heartbeat | none | 3 |
+| `O` | Logout | none | 3 |
+
+Server to client:
+
+| Type | Frame | Body | Bytes |
+|---|---|---|---|
+| `A` | LoginAccepted | session u64, next_server_seq u64, last_client_seq u64 | 27 |
+| `J` | LoginRejected | reason u8 | 4 |
+| `Y` | Symbol | index u8, name in 32 bytes padded with zeros | 36 |
+| `E` | Event | server_seq u64, client_seq u64, event (64 bytes) | 83 |
+| `D` | Done | server_seq u64, client_seq u64, status u8, reason u8, order_id u64, order_state u8 | 30 |
+| `Q` | Pong | client_seq u64, 19 bytes of padding | 30 |
+| `H` | Heartbeat | none | 3 |
+| `Z` | EndOfSession | none | 3 |
+
+An event is `seq u64, ts i64, type u8, side u8, reason u8, level_side u8, level_orders u32, order_id u64, maker_id u64, price i64, qty i64, level_qty i64`: the fields of an event in a REST reply, 0 where the REST reply omits one. Enumerations have the numbers of `internal/book`, which never change (D008):
+
+- `side` and `level_side`: buy 1, sell 2. `type` of an order: limit 1, market 2. `tif`: gtc 1, ioc 2, fok 3.
+- `type` of an event: accepted 1, rejected 2, trade 3, rested 4, canceled 5.
+- `reason`: none 0, invalid_command 1, invalid_order_id 2, invalid_side 3, invalid_type 4, invalid_tif 5, market_gtc 6, invalid_price 7, invalid_qty 8, unexpected_field 9, duplicate_order_id 10, unknown_order 11, fok_unfillable 12, user_cancel 13, ioc_remainder 14.
+
+### Sessions
+
+The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4.
+
+`client_seq` starts at 1 in a session and rises by one with each `NewOrder`, `Cancel` and `Ping`. A frame whose number is not above the last one taken is a resend and is dropped; a number that skips one closes the connection. `server_seq` starts at 1 and numbers every `Event` and `Done` of the session. A `Ping` is answered with a `Pong` of the same client_seq without reaching the engine; a `Pong` has no server_seq.
+
+Either side sends `Heartbeat` after 1 s without sending anything, and the server closes a connection on which nothing has arrived for 15 s. `Logout` ends the session: the server sends what it holds for the client, then closes the connection. The server sends `EndOfSession` before it closes a session on shutdown, and only then.
+
+### Commands and replies
+
+A `NewOrder` is `POST /v1/orders` without `client_id`, naming its symbol by index and with every field required: a tif of 0 is invalid, where REST would take a default. A `Cancel` is `DELETE /v1/orders/{id}`. Commands of one session for one symbol are applied in the order sent. The reply to a command is one `Event` frame per event in the REST reply, in book order, then one `Done`; the frames of one command come together. `Done.status` matches the REST answer one to one:
+
+| `status` | REST answer |
+|---|---|
+| ok 1 | 200 |
+| invalid 2 | 400 with a validation reason, which `Done.reason` carries; nothing was applied |
+| unknown_symbol 3 | 404 `unknown_symbol` |
+| unknown_order 4 | 404 `unknown_order` |
+| order_finished 5 | 409 `order_finished` |
+| internal 6 | 500 `internal` |
+| log_failed 7 | 500 `log_failed` without events: not applied |
+| log_failed_applied 8 | 500 `log_failed` with events: applied, but its log record may not be durable |
+| busy 9 | 503 `busy`: the symbol's queue was full, and nothing was queued |
+| shutting_down 10 | 503 `shutting_down` |
+
+`order_id` is the new order's ID, also when it failed validation (its ID was taken), or the ID the cancel named; 0 if the command got no ID. `order_state` is the order's status after the command, open 1, filled 2, canceled 3 or rejected 4, and 0 if the REST answer holds no order, as a 409 does. For any status but invalid, `reason` is the reason in that order status (`user_cancel`, `ioc_remainder`, `fok_unfillable`), or 0.
+
+### Disconnects
+
+Orders stay on the book when a connection closes: there is no cancel on disconnect. An engine restart ends every session: as for a REST client whose connection broke before the reply, the outcome of a command whose `Done` never arrived is then unknown.
+
+**Not served yet:** a client that reconnects within 60 s can resume its session. It logs in with the session and the next server_seq it expects, gets `LoginAccepted` with the last client_seq the server took, then every `Event` and `Done` it missed, then live traffic, and sends again its own frames above that number. Each command is then applied once and answered once. The server holds the last 1 MB of a session's output for this; a client that comes back later, or has missed more, gets `LoginRejected` and can look up the order IDs it knows with `GET /v1/orders/{id}`.
+
+### Flow control
+
+A session whose unsent output passes 1 MB, or whose output takes over 10 s to write, is disconnected as a slow consumer. A client may put any number of frames in one write, and the server writes everything ready for a session in one write, without waiting for more.
+
+**Not served yet,** as they concern commands: a full symbol queue is answered with `Done` busy at once, and the server stops reading from a session that has 1,024 commands taken and not yet answered, so TCP holds the client back.
+
 ## Operations
 
 - `GET /`: a page that follows one symbol's book and trades over the stream; `/?symbol=ETH-USD` picks another.

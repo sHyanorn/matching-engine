@@ -57,12 +57,13 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false # a failure in one target must not cancel the other
+      fail-fast: false # a failure in one target must not cancel the others
       matrix:
         include:
           - { target: FuzzBook, pkg: internal/book }
           - { target: FuzzCommandValidate, pkg: internal/book }
           - { target: FuzzCheckKeys, pkg: internal/api }
+          - { target: FuzzDecode, pkg: internal/oe }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
