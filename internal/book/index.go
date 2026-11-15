@@ -24,9 +24,8 @@ import (
 // lookups try the new table first, and an entry deleted or moved out of the
 // old table leaves a tombstone there, its ID with a nil node, so the old
 // table's probe runs stay unbroken. Each live ID is in exactly one table.
-// The new table is still allocated in one piece: when the runtime reuses
-// heap memory for it, clearing that memory costs the insert that starts
-// the growth time in proportion to the table's size.
+// The new table is still allocated in one piece, at the cost of the insert
+// that starts the growth (D038).
 type orderIndex struct {
 	cur  idTable
 	old  idTable // the table being emptied; no slots when not growing
