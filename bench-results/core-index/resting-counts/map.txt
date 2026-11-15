@@ -1,0 +1,24 @@
+resting: 850000
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkRestingOrders-4   	       4	 340405512 ns/op	       118.6 B/order	        96.16 MiB	       400.5 ns/order	120147572 B/op	  856178 allocs/op
+BenchmarkRestingOrders-4   	       3	 379412611 ns/op	       118.7 B/order	        96.21 MiB	       446.4 ns/order	120079917 B/op	  856171 allocs/op
+PASS
+resting: 1000000
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkRestingOrders-4   	       2	 510375772 ns/op	       133.9 B/order	       127.7 MiB	       510.4 ns/order	171678728 B/op	 1010202 allocs/op
+BenchmarkRestingOrders-4   	       3	 482772374 ns/op	       133.9 B/order	       127.7 MiB	       482.8 ns/order	171678648 B/op	 1010200 allocs/op
+PASS
+resting: 1200000
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/book
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkRestingOrders-4   	       2	 617876490 ns/op	       127.7 B/order	       146.1 MiB	       514.9 ns/order	191026560 B/op	 1210219 allocs/op
+BenchmarkRestingOrders-4   	       2	 575480235 ns/op	       127.7 B/order	       146.1 MiB	       479.6 ns/order	191026360 B/op	 1210216 allocs/op
+PASS

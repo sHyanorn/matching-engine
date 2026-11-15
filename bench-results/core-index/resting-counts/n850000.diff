@@ -1,0 +1,13 @@
+diff --git a/internal/book/book_bench_test.go b/internal/book/book_bench_test.go
+index 7facabf..0548bdc 100644
+--- a/internal/book/book_bench_test.go
++++ b/internal/book/book_bench_test.go
+@@ -153,7 +153,7 @@ func BenchmarkApplyDeep(b *testing.B) {
+ // per side (SPEC §9's memory measurement) and reports the heap it holds
+ // once built, per order and in total.
+ func BenchmarkRestingOrders(b *testing.B) {
+-	const n = 1_000_000
++	const n = 850_000
+ 	var held uint64
+ 	for i := 0; i < b.N; i++ {
+ 		b.StopTimer()
