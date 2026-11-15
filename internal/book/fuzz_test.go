@@ -20,7 +20,9 @@ const (
 // narrow band, by default with buys 6 ticks low and sells 6 ticks high, so
 // both sides build several levels that overlap, cross and empty. Extreme
 // values and invalid commands are rare (a byte value of 0xF0 or more) and
-// chosen independently, so most of an input builds real books.
+// chosen independently, so most of an input builds real books. With at most
+// 16 orders resting, the order index never grows here; the property test
+// requires that its run does.
 //
 //	byte 0: bits 0-1 operation (cancel when 2, new order otherwise),
 //	        bits 2-4 order type and TIF, bit 5 side, bits 6-7 unused

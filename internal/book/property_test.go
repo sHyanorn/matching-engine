@@ -138,10 +138,15 @@ func TestPropertyRandomCommands(t *testing.T) {
 	// a long run cannot cover them only near its start.
 	var marketRemainder, marketFOKRejected, fokExact int
 	var sideEmptied, intoEmptySide [2]int // [first half, second half]
+	// The order index grows when half full (D038); a cancel of an order
+	// still in its old table looks in both tables and leaves a tombstone.
+	var indexGrowths, oldTableCancels int
 	maxResting := 0
 	for i, c := range cmds {
 		half := i * 2 / n
 		bestBefore := [2]*levelNode{b.bids.best, b.asks.best}
+		slots := len(b.orders.cur.slots)
+		inOld := b.orders.old.slots != nil && b.orders.old.get(c.OrderID) != nil
 		_, dup := model.orders[c.OrderID]
 		freshNew := c.Validate() == ReasonNone && c.Kind == CommandNewOrder && !dup
 		if freshNew && b.side(c.Side.Opposite()).best == nil {
@@ -192,6 +197,12 @@ func TestPropertyRandomCommands(t *testing.T) {
 				sideEmptied[half]++
 			}
 		}
+		if len(b.orders.cur.slots) > slots {
+			indexGrowths++
+		}
+		if inOld && c.Kind == CommandCancel && evs[0].Kind == EventCanceled {
+			oldTableCancels++
+		}
 		maxResting = max(maxResting, b.orders.len())
 	}
 	if err := lg.check(b); err != nil {
@@ -233,13 +244,15 @@ func TestPropertyRandomCommands(t *testing.T) {
 		"side emptied (second half)":         sideEmptied[1],
 		"new order into an empty side (1st)": intoEmptySide[0],
 		"new order into an empty side (2nd)": intoEmptySide[1],
+		"order index growth":                 indexGrowths,
+		"cancel from the index's old table":  oldTableCancels,
 	} {
 		if got == 0 {
 			t.Errorf("path not reached in %d commands: %s", n, name)
 		}
 	}
-	t.Logf("%d commands, %d events, %d trades, up to %d resting orders; sides emptied %d+%d times, FOK exact %d",
-		n, len(stream), kinds[EventTrade], maxResting, sideEmptied[0], sideEmptied[1], fokExact)
+	t.Logf("%d commands, %d events, %d trades, up to %d resting orders; sides emptied %d+%d times, FOK exact %d, index grown %d times",
+		n, len(stream), kinds[EventTrade], maxResting, sideEmptied[0], sideEmptied[1], fokExact, indexGrowths)
 
 	// Deterministic replay (SPEC §7): the same commands give the same events
 	// and the same book.
