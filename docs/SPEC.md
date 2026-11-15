@@ -69,7 +69,7 @@ Design notes:
 OrderBook
 ├── bids: ordered price-level structure (high to low)
 ├── asks: ordered price-level structure (low to high)
-└── orders: map[OrderID]*OrderNode     // O(1) lookup, used for cancels
+└── orders: OrderID → *OrderNode       // O(1) lookup, used for cancels; open-addressing table (D038)
 
 PriceLevel
 ├── price    int64
@@ -77,7 +77,7 @@ PriceLevel
 └── queue    doubly linked list (FIFO) of *OrderNode
 ```
 
-Ordered price-level structure: a hand-written red-black tree or skip list; choose one and explain the choice in DECISIONS.md. Also cache pointers to the best bid and best ask.
+Ordered price-level structure: a hand-written red-black tree (D004). Also cache pointers to the best bid and best ask.
 
 Complexity targets:
 
@@ -130,14 +130,14 @@ Example order request:
 
 Subscribe message: `{"op":"subscribe","channels":["trades:BTC-USD","book:BTC-USD"]}`
 
-Pushed message types: `trade`, `book_delta`, `book_snapshot`. Every message carries an increasing sequence number; a client that detects a gap in the sequence can request a snapshot.
+Pushed message types: `trade`, `book_delta`, `book_snapshot`. Every data message carries a sequence number that counts the subscription's data messages from 1 without gaps; a client that falls behind is disconnected, then reconnects and subscribes again for a fresh snapshot (D018, D026).
 
 ## 9. Performance targets and load testing
 
-On an ordinary laptop (with the CPU model stated in the report):
+On an ordinary laptop (with the CPU model stated in the report; measured on 4 vCPU cloud VMs instead):
 
 - Matching core benchmark: more than 1 million operations per second on a single symbol
-- End to end (from a REST order to receiving the trade push): p99 latency under 5 ms at a test load of 50,000 orders per second
+- End to end (from a REST order to receiving the trade push): p99 latency under 5 ms at a test load of 50,000 orders per second (not met: out of reach on the test VM, where the p99 stays under 5 ms only up to 15k requests/s; BENCHMARKS.md)
 - Memory: memory usage with 1 million resting orders
 
 `cmd/loadgen` generates a reproducible random order flow (fixed random seed) that simulates a realistic distribution: prices normally distributed around the mid price, and about 30% cancels.
