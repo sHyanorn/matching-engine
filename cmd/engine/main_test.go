@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sHyanorn/matching-engine/internal/oe"
 )
 
 const (
@@ -66,6 +68,7 @@ type bookReply struct {
 // instance is one call of run, serving on a loopback port.
 type instance struct {
 	base   string // http://host:port
+	oe     string // host:port of the OE1 listener, with -oe-addr
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    error // run's result; set before done is closed
@@ -92,11 +95,16 @@ func start(t *testing.T, dir string, flags ...string) *instance {
 		}
 	})
 
-	lines := make(chan string, 1)
+	wantOE := slices.Contains(flags, "-oe-addr")
+	lines := make(chan string, 2)
 	go func() {
 		br := bufio.NewReader(pr)
 		line, _ := br.ReadString('\n') // a short line is reported below
 		lines <- line
+		if wantOE {
+			line, _ = br.ReadString('\n')
+			lines <- line
+		}
 		_, _ = io.Copy(io.Discard, br) // never block run on stdout
 	}()
 	var line string
@@ -125,6 +133,18 @@ func start(t *testing.T, dir string, flags ...string) *instance {
 		t.Fatalf("listening on %q, want 127.0.0.1 and the port actually bound", addr)
 	}
 	in.base = "http://" + addr
+	if wantOE {
+		select {
+		case line = <-lines:
+		case <-time.After(waitFor):
+			t.Fatalf("run wrote no second line to stdout within %v", waitFor)
+		}
+		addr, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), "oe listening on ")
+		if host, port, err := net.SplitHostPort(addr); !ok || err != nil || host != "127.0.0.1" || port == "0" {
+			t.Fatalf("second line %q, want \"oe listening on HOST:PORT\"", line)
+		}
+		in.oe = addr
+	}
 	return in
 }
 
@@ -489,6 +509,59 @@ func TestShutdownWithStalledRequest(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // the handler is now waiting for the body
 	if err := in.stop(t); err != nil {
 		t.Fatalf("run returned %v, want nil", err)
+	}
+}
+
+// TestOEServed logs in to the OE1 listener, pings it, and checks that
+// shutdown ends the session with EndOfSession.
+func TestOEServed(t *testing.T) {
+	in := start(t, t.TempDir(), "-oe-addr", "127.0.0.1:0")
+	conn, err := net.Dial("tcp", in.oe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(waitFor))
+	var out []byte
+	out = oe.Login{Version: oe.Version}.Append(out)
+	out = oe.Ping{ClientSeq: 1}.Append(out)
+	if _, err := conn.Write(out); err != nil {
+		t.Fatal(err)
+	}
+	var buf []byte
+	next := func() (oe.Type, []byte) {
+		t.Helper()
+		for {
+			typ, body, n, err := oe.Next(buf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n > 0 {
+				buf = buf[n:]
+				return typ, body
+			}
+			var tmp [256]byte
+			k, err := conn.Read(tmp[:])
+			if k == 0 && err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			buf = append(buf, tmp[:k]...)
+		}
+	}
+	if typ, body := next(); typ != oe.TypeLoginAccepted || oe.DecodeLoginAccepted(body).Session == 0 {
+		t.Fatalf("got %q %x, want LoginAccepted", byte(typ), body)
+	}
+	if typ, body := next(); typ != oe.TypeSymbol || oe.DecodeSymbol(body) != (oe.Symbol{Index: 0, Name: symbol}) {
+		t.Fatalf("got %q %x, want Symbol 0 %s", byte(typ), body, symbol)
+	}
+	if typ, body := next(); typ != oe.TypePong || oe.DecodePong(body).ClientSeq != 1 {
+		t.Fatalf("got %q %x, want Pong 1", byte(typ), body)
+	}
+	if err := in.stop(t); err != nil {
+		t.Fatalf("run returned %v, want nil", err)
+	}
+	if typ, _ := next(); typ != oe.TypeEndOfSession {
+		t.Fatalf("got %q at shutdown, want EndOfSession", byte(typ))
 	}
 }
 

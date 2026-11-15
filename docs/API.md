@@ -114,9 +114,9 @@ A snapshot followed by its deltas reproduces the book's levels, order counts inc
 
 ## Binary order entry (OE1)
 
-OE1 is a binary protocol for sending orders and cancels over a persistent TCP session in fixed-length frames ([D041](DECISIONS.md)). Depth, order status and market data stay on REST and WebSocket.
+OE1 is a binary protocol for sending orders and cancels over a persistent TCP session in fixed-length frames ([D041](DECISIONS.md)). The engine serves it on a listener of its own when started with `-oe-addr`, for example `-oe-addr 127.0.0.1:9000`; without the flag there is none. Like the HTTP API it has no TLS and no authentication. Depth, order status and market data stay on REST and WebSocket.
 
-**What this version serves:** nothing yet. `internal/oe` encodes and decodes the frames; the engine has no OE1 listener.
+**What this version serves:** logging in to a new session, `Ping`, `Heartbeat` and `Logout`. `NewOrder` and `Cancel` are defined below but not served yet: the server closes the connection when one arrives. Resuming a session is not served yet either: a session ends with its connection, so a `Login` that names an earlier session gets `LoginRejected` with `unknown_session`.
 
 ### Frames
 
@@ -154,7 +154,7 @@ An event is `seq u64, ts i64, type u8, side u8, reason u8, level_side u8, level_
 
 ### Sessions
 
-The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4.
+The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4. This version sends only bad_version and unknown_session, and has no limit on sessions.
 
 `client_seq` starts at 1 in a session and rises by one with each `NewOrder`, `Cancel` and `Ping`. A frame whose number is not above the last one taken is a resend and is dropped; a number that skips one closes the connection. `server_seq` starts at 1 and numbers every `Event` and `Done` of the session. A `Ping` is answered with a `Pong` of the same client_seq without reaching the engine; a `Pong` has no server_seq.
 

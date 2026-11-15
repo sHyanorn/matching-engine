@@ -20,6 +20,7 @@ import (
 
 	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/engine"
+	"github.com/sHyanorn/matching-engine/internal/oe"
 )
 
 const defaultAddr = ":8080"
@@ -71,9 +72,10 @@ func healthcheck(args []string) error {
 // run starts the engine and the HTTP server and serves until ctx ends,
 // then shuts down gracefully: /healthz answers 503, the server stops
 // accepting and finishes in-flight requests (up to -shutdown-timeout),
-// WebSocket connections are closed, and the engine drains its queues,
-// syncs and closes its logs. Before serving it writes one line,
-// "listening on HOST:PORT", to stdout.
+// WebSocket connections and OE1 sessions are closed, and the engine drains
+// its queues, syncs and closes its logs. Before serving it writes one line,
+// "listening on HOST:PORT", to stdout, and with -oe-addr a second one,
+// "oe listening on HOST:PORT".
 func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
 	addr := fs.String("addr", defaultAddr, "listen address")
@@ -83,6 +85,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	queueSize := fs.Int("queue-size", engine.DefaultQueueSize, "capacity of each symbol's command queue")
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests on shutdown")
 	pprofAddr := fs.String("pprof", "", "address to serve net/http/pprof on, apart from the API; off if empty")
+	oeAddr := fs.String("oe-addr", "", "address to serve OE1 binary order entry on (docs/API.md); off if empty")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -135,8 +138,27 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 		defer func() { _ = ps.Close() }()
 		logger.Info("serving pprof", "addr", pl.Addr().String())
 	}
+	var oeLn net.Listener
+	if *oeAddr != "" {
+		if oeLn, err = net.Listen("tcp", *oeAddr); err != nil {
+			return errors.Join(err, ln.Close())
+		}
+		oeSrv := oe.NewServer(oe.ServerOptions{Symbols: eng.Symbols(), Logger: logger})
+		go func() {
+			if err := oeSrv.Serve(oeLn); err != nil {
+				logger.Error("oe listener failed", "err", err)
+			}
+		}()
+		defer func() { _ = oeSrv.Close() }() // before the engine closes
+	}
 	if _, err := fmt.Fprintf(stdout, "listening on %s\n", ln.Addr()); err != nil {
 		return errors.Join(err, ln.Close())
+	}
+	if oeLn != nil {
+		if _, err := fmt.Fprintf(stdout, "oe listening on %s\n", oeLn.Addr()); err != nil {
+			return errors.Join(err, ln.Close())
+		}
+		logger.Info("serving oe", "addr", oeLn.Addr().String())
 	}
 	logger.Info("listening", "addr", ln.Addr().String(), "symbols", *symbols, "data", *data)
 
