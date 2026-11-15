@@ -29,7 +29,9 @@
 # perf runs each engine on each of the five scenarios once per round, at
 # the canonical seed 23, starting each round one engine later, and keeps
 # the harness output in OUT/runs/ENGINE/SCENARIO/ROUND.txt, and what the
-# builds were made from in OUT/versions.txt. Rounds can be run in several
+# builds were made from in OUT/versions.txt: for this repository's
+# adapter, the commit and Go version that go build stamped into it, and
+# whether the tree had uncommitted changes. Rounds can be run in several
 # calls. summary prints, per engine and scenario, the median
 # throughput over the rounds, its range, how many runs' report streams had
 # the published hash and how many the harness called VALID (it also gates
@@ -63,7 +65,7 @@ setup() {
 	bash scripts/build_baselines.sh liquibook
 	bash additional_references/cpptrader_adapter/build.sh
 	bash additional_references/geseq_adapter/build.sh
-	(cd "$repo" && go build -tags harness -buildmode=c-shared -o "$dir/bench/matching-engine_adapter.so" ./cmd/harness-adapter)
+	(cd "$repo" && go build -tags harness -buildvcs=true -buildmode=c-shared -o "$dir/bench/matching-engine_adapter.so" ./cmd/harness-adapter)
 	rm -f matching-engine_adapter.h
 	# The cases as the benchmark defines them, one workload file each, and
 	# their names and lengths in cases.txt.
@@ -122,16 +124,18 @@ cases() {
 }
 
 perf() {
-	local dir=$1 out=$2 from=$3 to=$4 r k s e
+	local dir=$1 out=$2 from=$3 to=$4 r k s e rev mod
 	mkdir -p "$out"
 	out=$(cd "$out" && pwd)
 	cd "$dir/bench"
+	rev=$(go version -m matching-engine_adapter.so | sed -n 's/.*vcs\.revision=//p')
+	mod=$(go version -m matching-engine_adapter.so | sed -n 's/.*vcs\.modified=//p')
 	{
-		echo "matching-engine: $(git -C "$repo" rev-parse --short HEAD)"
+		echo "matching-engine: ${rev:0:7}, uncommitted changes when built: $mod"
 		echo "benchmark: $bench_ref"
 		grep -h '^LIQUIBOOK_REF=' scripts/build_baselines.sh
 		grep -h '^[A-Z_]*_REF=' additional_references/cpptrader_adapter/build.sh additional_references/geseq_adapter/build.sh
-		echo "go: $(cd "$repo" && go version) for this repository's adapter, $(go version) for geseq's"
+		go version matching-engine_adapter.so geseq_adapter.so
 		echo "harness: $(clang --version | head -1); adapters: $(g++ --version | head -1)"
 		dpkg-query -W -f='${Package} ${Version}\n' libboost-dev libfmt-dev
 		echo "os: $(uname -srm)"
