@@ -66,6 +66,7 @@ curl -s localhost:8080/v1/orders -d '{"symbol":"BTC-USD","side":"buy","type":"li
 
 - The throughput VM is noisy: the 10 runs of the old or the new book on one benchmark differ by up to 1.96 times in time per command, and the book's speedup over its earlier version is measured on that VM only.
 - In the comparison with other engines, one engine's runs vary by up to 2.09 times, and no geseq run passes its probe-time rule.
+- The benchmark's hash and its 34 conformance cases both check one canonical text, which leaves out a cancel ack's quantity and the order of a message's reports of different types; [`internal/harness/harness_test.go`](internal/harness/harness_test.go) pins both for this book.
 - 50k requests/s is near saturation, and its p99 depends on the machine.
 - A crash of the machine or a power loss can lose acknowledged commands: those of the last fsync interval, plus those taken while an fsync was still running (D017, D031).
 
