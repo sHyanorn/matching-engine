@@ -12,11 +12,12 @@
 # the Dockerfile pins, with MODE, COMMIT, TREE and DEADLINE in its
 # environment. It first starts a timer that deletes the Pod at DEADLINE,
 # in Unix seconds, through Runpod's API with the Pod's own key, and
-# retries every 30 s; a restarted container keeps the same DEADLINE. It
-# then fetches the tarball of COMMIT, refuses it unless git
-# get-tar-commit-id names COMMIT and its files hash to the tree TREE, and
-# runs this script from it in mode MODE. The start command does not end
-# on its own, so a Pod keeps its log until it is deleted.
+# retries every 30 s until the API answers 204. A DEADLINE that is not a
+# whole number deletes the Pod at once; a restarted container keeps the
+# same DEADLINE. It then fetches the tarball of COMMIT, refuses it unless
+# git get-tar-commit-id names COMMIT and its files hash to the tree TREE,
+# and runs this script from it in mode MODE. The start command does not
+# end on its own, so a Pod keeps its log until it is deleted.
 #
 # engine and client build engine and loadgen with the image's Go, as the
 # Dockerfile does. client waits until ENGINE_ADDR (host:port) accepts a
@@ -35,9 +36,9 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 boot() {
 	cat <<-'EOF'
-		(sleep "$((DEADLINE - $(date +%s)))"
-		until printf 'Authorization: Bearer %s\n' "$RUNPOD_API_KEY" |
-		    curl -fsS -o /dev/null -X DELETE -H @- "https://api.runpod.io/v2/pods/$RUNPOD_POD_ID"; do
+		( (sleep "$((DEADLINE - $(date +%s)))")
+		until [ "$(printf 'Authorization: Bearer %s\n' "$RUNPOD_API_KEY" |
+		    curl -fsS -m 30 -o /dev/null -w '%{http_code}' -X DELETE -H @- "https://api.runpod.io/v2/pods/$RUNPOD_POD_ID")" = 204 ]; do
 		    sleep 30
 		done) &
 		echo "pair: $MODE; the Pod deletes itself at $(date -u -d "@$DEADLINE" +%FT%TZ)"
