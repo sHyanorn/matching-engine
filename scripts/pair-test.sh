@@ -4,9 +4,10 @@
 #
 #   - that each Pod deletes itself once, with its key, at its DEADLINE and
 #     not before, and that no Pod prints the key;
-#   - engine and client: that the client's archive, fetched from its
-#     port 8000, holds every run's report and has the SHA-256 that the log
-#     prints, as has the base64 copy in the log;
+#   - engine and client: that the engine serves OE1 on port 9000, and
+#     that the client's archive, fetched from its port 8000, holds every
+#     run's report and has the SHA-256 that the log prints, as has the
+#     base64 copy in the log;
 #   - selftest: that it prints its heartbeat;
 #   - a tarball of another commit, and one with an added file: that the
 #     start command refuses them and never runs pair.sh.
@@ -156,12 +157,13 @@ for d in "${deadline[@]}"; do
 	check "$name deleted itself once, with its key, at its deadline" deleted "$name" "$at"
 done
 sum=$(sed -n 's/^pair: results.tgz [0-9]* bytes, sha256 //p' "$t/client.log")
-curl -fsS --noproxy '*' -o "$t/fetched.tgz" "http://127.0.0.1:8000/$path/results.tgz" || true
+curl -fsS --noproxy '*' --retry 5 --retry-connrefused -o "$t/fetched.tgz" "http://127.0.0.1:8000/$path/results.tgz" || true
 sed -n '/^-- begin results.tgz base64$/,/^-- end results.tgz base64$/p' "$t/client.log" | sed '1d;$d' |
 	base64 -d > "$t/logged.tgz" || true
+check "the engine serves OE1 on port 9000" grep -q '^oe listening on .*:9000$' "$t/engine.log"
 check "the archive served on port 8000 has the SHA-256 in the log" summed "$t/fetched.tgz"
 check "the base64 copy in the log has the same SHA-256" summed "$t/logged.tgz"
-check "nothing else is served" not curl -fs --noproxy '*' -o /dev/null http://127.0.0.1:8000/results.tgz
+check "nothing else is served" [ "$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/results.tgz)" = 404 ]
 mkdir "$t/results" && tar -xzf "$t/fetched.tgz" -C "$t/results" || true
 check "the archive holds env.txt and every run's report" reports
 check "the selftest Pod prints its heartbeat" grep -q '^pair: alive at ' "$t/selftest.log"
