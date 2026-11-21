@@ -49,6 +49,7 @@ func (s *Subscription) Err() error { return s.err }
 // Close ends the subscription; C is closed soon after. It is safe to call
 // more than once and after the engine has closed.
 func (s *Subscription) Close() {
+	// Only ErrClosed is possible, and closing the engine has ended s.
 	_, _ = s.engine.send(context.Background(), s.market, &request{kind: reqUnsubscribe, sub: s}, orWait)
 }
 
@@ -121,7 +122,6 @@ func (m *market) unsubscribe(s *Subscription) {
 	}
 }
 
-// end records why s ended and closes its channel.
 func (m *market) end(s *Subscription, err error) {
 	s.err = err
 	close(s.ch)

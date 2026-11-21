@@ -26,7 +26,7 @@ type config struct {
 	conns    int
 	seed     uint64
 	sd       float64
-	pushWait time.Duration // for pushes still missing at the end; 0 means 5 s
+	pushWait time.Duration // tests: how long to wait for pushes still missing at the end; 0 means 5 s
 
 	// The OE1 mode, measureOE.
 	oeAddr     string

@@ -228,7 +228,6 @@ func (ss *session) read() error {
 	}
 }
 
-// handle acts on one frame from the client.
 func (ss *session) handle(t Type, body []byte) error {
 	if ss.id == 0 {
 		if t != TypeLogin {

@@ -70,10 +70,8 @@ type oeRun struct {
 // since is the time from t0, on the monotonic clock.
 func (r *oeRun) since() int64 { return int64(time.Since(r.t0)) }
 
-// due is when request i is due, from t0.
 func (r *oeRun) due(i int) int64 { return int64(float64(i) * r.period) }
 
-// measureOE runs cfg's OE1 measurement.
 func measureOE(ctx context.Context, cfg config) (report, error) {
 	r, err := runOE(ctx, cfg)
 	if err != nil {

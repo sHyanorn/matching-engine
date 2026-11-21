@@ -170,7 +170,6 @@ func (st *stream) close(cause closeCause) {
 	})
 }
 
-// readLoop handles client messages until the connection ends.
 func (st *stream) readLoop() {
 	for {
 		_, data, err := st.conn.Read(context.Background())
@@ -372,7 +371,6 @@ func (st *stream) pump(ch *channel, isBook bool) {
 	}
 }
 
-// tradeMessage is the message of one execution.
 func tradeMessage(name string, e book.Event) serverMessage {
 	bookSeq := e.Seq
 	return serverMessage{

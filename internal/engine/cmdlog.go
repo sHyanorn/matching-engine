@@ -49,7 +49,6 @@ type logRecord struct {
 	clientID string
 }
 
-// appendHeader appends the file header for symbol at index to dst.
 func appendHeader(dst []byte, symbol string, index int) []byte {
 	dst = append(dst, logMagic...)
 	dst = binary.LittleEndian.AppendUint16(dst, logVersion)
@@ -81,7 +80,6 @@ func readHeader(r io.Reader, symbol string, index int) (int64, error) {
 	return int64(len(fixed) + len(name)), nil
 }
 
-// appendRecord appends the encoding of rec to dst.
 func appendRecord(dst []byte, rec logRecord) []byte {
 	start := len(dst)
 	dst = append(dst, 0, 0, 0, 0) // payload length, filled in below
@@ -198,7 +196,6 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 	return off, false, nil
 }
 
-// zeros reports whether everything left in r is zero bytes.
 // wholeRecord reports whether rest, the bytes after a record's length
 // field, begin with a whole record under the length its client_id length
 // gives, checksum included. A crash cuts a record short but leaves its
@@ -212,6 +209,7 @@ func wholeRecord(rest []byte) bool {
 	return len(rest) >= n+4 && crc32.Checksum(rest[:n], castagnoli) == binary.LittleEndian.Uint32(rest[n:])
 }
 
+// zeros reports whether everything left in r is zero bytes.
 func zeros(r io.Reader) (bool, error) {
 	var buf [4096]byte
 	for {

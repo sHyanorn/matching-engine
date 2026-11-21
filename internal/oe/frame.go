@@ -94,7 +94,6 @@ func Next(b []byte) (t Type, body []byte, n int, err error) {
 	return t, b[HeaderSize:n], n, nil
 }
 
-// header appends the length and type of a frame of type t to dst.
 func header(dst []byte, t Type) []byte {
 	size, _ := bodySize(t)
 	dst = le.AppendUint16(dst, uint16(1+size))

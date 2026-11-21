@@ -137,8 +137,6 @@ func (t *levelTree) find(p Price) *levelNode {
 // panic here means a bug in the book itself, stopped at once rather than
 // discovered later (D014).
 func (t *levelTree) insert(p Price) *levelNode {
-	// Walk down as in any binary search tree to the nil link where p
-	// belongs.
 	var parent *levelNode
 	for cur := t.root; cur != nil; {
 		parent = cur

@@ -43,7 +43,6 @@ func newOrderIndex() orderIndex {
 	return orderIndex{cur: newIDTable(minIndexSlots)}
 }
 
-// len returns the number of IDs in the index.
 func (x *orderIndex) len() int { return x.n }
 
 // get returns the node indexed under id, or nil.

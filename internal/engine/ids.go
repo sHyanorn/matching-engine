@@ -24,8 +24,6 @@ func makeOrderID(counter uint64, sym int) book.OrderID {
 	return book.OrderID(counter<<symbolBits | uint64(sym))
 }
 
-// symbolIndexOf returns the index of the symbol an ID was issued for.
 func symbolIndexOf(id book.OrderID) int { return int(id & (MaxSymbols - 1)) }
 
-// counterOf returns the counter value an ID was issued from.
 func counterOf(id book.OrderID) uint64 { return uint64(id) >> symbolBits }

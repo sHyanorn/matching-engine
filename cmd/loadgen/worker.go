@@ -31,7 +31,6 @@ type worker struct {
 	reply, service, lag []int64
 }
 
-// newWorker opens the worker's connection.
 func (l *loader) newWorker(ctx context.Context) (*worker, error) {
 	w := &worker{
 		l: l,

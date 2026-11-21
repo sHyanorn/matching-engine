@@ -40,7 +40,6 @@ func mix64(z uint64) uint64 {
 	return z ^ (z >> 31)
 }
 
-// tradeSum counts trades and sums their hashes.
 type tradeSum struct {
 	n   int
 	sum uint64
@@ -51,7 +50,6 @@ func (s *tradeSum) add(t trade) {
 	s.sum += t.hash()
 }
 
-// plus returns the count and sum of the trades in s and o.
 func (s tradeSum) plus(o tradeSum) tradeSum { return tradeSum{s.n + o.n, s.sum + o.sum} }
 
 // tape checks the trade pushes as they arrive. Only the stream reader

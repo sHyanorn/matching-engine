@@ -113,7 +113,6 @@ var latencyRows = []struct{ key, name string }{
 	{"hiccup", "loadgen hiccup"},
 }
 
-// printReport writes r as a short table.
 func printReport(w io.Writer, r report) error {
 	counts := make([]string, 0, len(r.Outcomes))
 	for k, n := range r.Outcomes {

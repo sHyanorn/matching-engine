@@ -188,7 +188,6 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	return err
 }
 
-// pprofHandler serves the net/http/pprof endpoints.
 func pprofHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
