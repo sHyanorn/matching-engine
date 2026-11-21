@@ -1,9 +1,6 @@
 package book
 
-import (
-	"errors"
-	"fmt"
-)
+import "fmt"
 
 // orderIndex maps the ID of every resting order to its node, for O(1)
 // cancels and duplicate checks (D038).
@@ -136,7 +133,7 @@ func (x *orderIndex) check() error {
 		return fmt.Errorf("counts %d entries, holds %d", x.n, live)
 	}
 	if x.old.slots == nil && x.next != 0 {
-		return errors.New("not growing, but next is not 0")
+		return fmt.Errorf("not growing, but next is %d, want 0", x.next)
 	}
 	return nil
 }

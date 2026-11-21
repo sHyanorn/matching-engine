@@ -99,6 +99,7 @@ static void push(const me_transport_t* t, void* sink, const me_report_t* r, uint
 import "C"
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/sHyanorn/matching-engine/internal/harness"
@@ -164,7 +165,7 @@ func engine_on_batch(msgs *C.me_msg_t, n C.uint32_t) {
 		case 2:
 			apply(modify((*C.modify_t)(p)))
 		default:
-			panic("engine_on_batch: unknown message type")
+			panic(fmt.Sprintf("engine_on_batch: message %d has type %d, want 0 (new order), 1 (cancel) or 2 (modify)", i, m._type))
 		}
 	}
 	push()

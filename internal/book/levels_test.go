@@ -381,8 +381,8 @@ func TestLevelTreeInsertDuplicatePanics(t *testing.T) {
 				t.Fatal("insert(7) of a present price did not panic")
 			}
 			// D014: panics on impossible internal states start with "book: ".
-			if s, ok := r.(string); !ok || !strings.HasPrefix(s, "book: ") {
-				t.Fatalf("panic value %#v does not start with %q (D014)", r, "book: ")
+			if s, ok := r.(string); !ok || !strings.HasPrefix(s, "book: ") || !strings.Contains(s, "price 7,") {
+				t.Fatalf("panic value %#v does not start with %q (D014) and name price 7", r, "book: ")
 			}
 		}()
 		tree.insert(7)

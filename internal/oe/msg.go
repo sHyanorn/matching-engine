@@ -3,6 +3,7 @@ package oe
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"strconv"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
@@ -205,7 +206,7 @@ type Symbol struct {
 // Append encodes m; a name longer than SymbolNameSize panics.
 func (m Symbol) Append(dst []byte) []byte {
 	if len(m.Name) > SymbolNameSize {
-		panic("oe: symbol name longer than " + strconv.Itoa(SymbolNameSize) + " bytes")
+		panic(fmt.Sprintf("oe: symbol name %q is %d bytes, want at most %d", m.Name, len(m.Name), SymbolNameSize))
 	}
 	dst = append(header(dst, TypeSymbol), m.Index)
 	dst = append(dst, m.Name...)

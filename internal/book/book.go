@@ -1,5 +1,7 @@
 package book
 
+import "fmt"
+
 // Book is the limit order book of one symbol: two trees of price levels, one
 // per side, each level a FIFO queue of resting orders, plus an index from
 // order ID to resting order for O(1) cancels. It is a single-threaded state
@@ -54,7 +56,7 @@ func (b *Book) Apply(cmd Command, out []Event) []Event {
 	case CommandCancel:
 		return b.cancel(out, cmd)
 	}
-	panic("book: Validate accepted an unknown command kind") // see D014
+	panic(fmt.Sprintf("book: Validate accepted command kind %d, which Apply does not handle", cmd.Kind)) // see D014
 }
 
 // Order returns a copy of the resting order with this ID, and false if no

@@ -65,7 +65,7 @@ func readHeader(r io.Reader, symbol string, index int) (int64, error) {
 		return 0, fmt.Errorf("%w: header: %w", ErrCorruptLog, err)
 	}
 	if string(fixed[:len(logMagic)]) != logMagic {
-		return 0, fmt.Errorf("%w: not a command log", ErrCorruptLog)
+		return 0, fmt.Errorf("%w: not a command log: magic %q, want %q", ErrCorruptLog, fixed[:len(logMagic)], logMagic)
 	}
 	rest := fixed[len(logMagic):]
 	if v := binary.LittleEndian.Uint16(rest); v != logVersion {
@@ -101,7 +101,7 @@ func appendRecord(dst []byte, rec logRecord) []byte {
 // decodePayload decodes one record's payload, whose checksum has passed.
 func decodePayload(p []byte) (logRecord, error) {
 	if len(p) < payloadFixed || int(p[payloadFixed-1]) != len(p)-payloadFixed {
-		return logRecord{}, errors.New("payload length does not match its client_id length")
+		return logRecord{}, fmt.Errorf("payload is %d bytes, want %d plus the length its client_id length byte states", len(p), payloadFixed)
 	}
 	le := binary.LittleEndian
 	return logRecord{
@@ -151,7 +151,7 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 					return off, true, nil
 				}
 			}
-			return corrupt(fmt.Sprintf("payload length %d", n))
+			return corrupt(fmt.Sprintf("payload length %d, want %d to %d", n, payloadFixed, payloadMax))
 		}
 		end := off + 4 + n + 4
 		if end > size {
@@ -168,7 +168,7 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 		if _, err := io.ReadFull(br, p); err != nil {
 			return off, false, err
 		}
-		if crc32.Checksum(p[:n], castagnoli) != binary.LittleEndian.Uint32(p[n:]) {
+		if sum, stored := crc32.Checksum(p[:n], castagnoli), binary.LittleEndian.Uint32(p[n:]); sum != stored {
 			// The last record, or one where a zero tail begins, was cut
 			// short by a crash.
 			cut := end == size
@@ -184,7 +184,7 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 				}
 				return off, true, nil
 			}
-			return corrupt("checksum mismatch")
+			return corrupt(fmt.Sprintf("checksum mismatch: stored %08x, computed %08x", stored, sum))
 		}
 		rec, err := decodePayload(p[:n])
 		if err != nil {

@@ -1,5 +1,7 @@
 package book
 
+import "fmt"
+
 // This file holds the ordered set of price levels for one side of the book: a
 // classic red-black tree with parent pointers, following Cormen, Leiserson,
 // Rivest and Stein, "Introduction to Algorithms", 3rd edition, chapter 13
@@ -142,7 +144,7 @@ func (t *levelTree) insert(p Price) *levelNode {
 		parent = cur
 		switch {
 		case p == cur.price:
-			panic("book: insert at a price that already has a level")
+			panic(fmt.Sprintf("book: insert at price %d, which already has a level", p))
 		case t.before(p, cur.price):
 			cur = cur.left
 		default:

@@ -82,7 +82,7 @@ func openMarket(path, symbol string, index int, cfg Config) (*market, uint64, er
 		if c.Kind == book.CommandNewOrder {
 			// Only new orders consume IDs; a cancel may name any ID.
 			if symbolIndexOf(c.OrderID) != index {
-				return fmt.Errorf("order %d was issued for another symbol", c.OrderID)
+				return fmt.Errorf("order %d was issued for another symbol: index %d, this log is %q at index %d", c.OrderID, symbolIndexOf(c.OrderID), symbol, index)
 			}
 			maxCounter = max(maxCounter, counterOf(c.OrderID))
 		}

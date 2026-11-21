@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -83,12 +84,31 @@ func TestLogHeaderMismatch(t *testing.T) {
 	}{
 		{"other symbol", data, "B", 0, `for symbol "A" at index 0`},
 		{"other index", data, "A", 1, `for symbol "A" at index 0`},
-		{"not a log", []byte("hello, world!!!"), "A", 0, "not a command log"},
+		{"not a log", []byte("hello, world!!!"), "A", 0, `not a command log: magic "hello, w", want "MECMDLOG"`},
 		{"version", append([]byte("MECMDLOG\x02\x00"), data[10:]...), "A", 0, "version 2"},
 		{"short", data[:5], "A", 0, "header"},
 	} {
 		_, err := readHeader(bytes.NewReader(tc.data), tc.symbol, tc.index)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// A corrupt record's error shows what was found against what was expected.
+func TestCorruptRecordErrorsShowTheValues(t *testing.T) {
+	data, starts := encodeLog(sampleRecords())
+	for _, tc := range []struct {
+		name string
+		at   int64
+		want string
+	}{
+		{"checksum of a middle record", starts[2] - 1, "stored "},
+		{"implausible length", starts[1] + 2, fmt.Sprintf("want %d to %d", payloadFixed, payloadMax)},
+	} {
+		bad := slices.Clone(data)
+		bad[tc.at] ^= 0xff
+		if _, _, _, err := decodeLog(t, bad); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
 		}
 	}
@@ -437,8 +457,8 @@ func TestIDStoreRefusesCorruption(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "ids"), []byte("garbage"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Config{Symbols: []string{"A"}, DataDir: dir}); !errors.Is(err, ErrCorruptLog) {
-		t.Fatalf("New with a corrupt ids file: err = %v", err)
+	if _, err := New(Config{Symbols: []string{"A"}, DataDir: dir}); !errors.Is(err, ErrCorruptLog) || !strings.Contains(err.Error(), "ids file") {
+		t.Fatalf("New with a corrupt ids file: err = %v, want ErrCorruptLog naming the ids file", err)
 	}
 }
 

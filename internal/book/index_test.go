@@ -265,7 +265,7 @@ func TestOrderIndexCheckCatchesCorruption(t *testing.T) {
 			x.cur.slots[i].node = nil
 			x.n--
 		}},
-		{"not growing, but next is not 0", func(x *orderIndex) { x.next = 3 }},
+		{"not growing, but next is 3, want 0", func(x *orderIndex) { x.next = 3 }},
 	}
 	growing := []struct {
 		want    string

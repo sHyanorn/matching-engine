@@ -127,7 +127,7 @@ func (c *Config) normalize() error {
 		// IsLocal rejects a log name that this Windows maps to a device,
 		// such as CON.log or NUL.log.
 		if !symbolPattern.MatchString(s) || !filepath.IsLocal(s+".log") {
-			return fmt.Errorf("engine: invalid symbol %q", s)
+			return fmt.Errorf("engine: invalid symbol %q, want a match of %s that is a valid file name with .log added", s, symbolPattern)
 		}
 		if seen[s] {
 			return fmt.Errorf("engine: duplicate symbol %q", s)

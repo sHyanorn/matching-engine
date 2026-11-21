@@ -81,8 +81,11 @@ func Next(b []byte) (t Type, body []byte, n int, err error) {
 	length := int(le.Uint16(b))
 	t = Type(b[2])
 	size, ok := bodySize(t)
-	if !ok || length != 1+size {
-		return 0, nil, 0, fmt.Errorf("%w: type %q, length %d", ErrFrame, byte(t), length)
+	if !ok {
+		return 0, nil, 0, fmt.Errorf("%w: unknown type %q", ErrFrame, byte(t))
+	}
+	if length != 1+size {
+		return 0, nil, 0, fmt.Errorf("%w: type %q has length %d, want %d", ErrFrame, byte(t), length, 1+size)
 	}
 	n = HeaderSize + size
 	if len(b) < n {

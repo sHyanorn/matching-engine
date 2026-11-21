@@ -32,8 +32,11 @@ func (s idStore) load() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(data) != 12 || crc32.Checksum(data[:8], castagnoli) != binary.LittleEndian.Uint32(data[8:]) {
-		return 0, fmt.Errorf("%w: %s", ErrCorruptLog, s.path)
+	if len(data) != 12 {
+		return 0, fmt.Errorf("%w: ids file %s is %d bytes, want 12", ErrCorruptLog, s.path, len(data))
+	}
+	if sum, stored := crc32.Checksum(data[:8], castagnoli), binary.LittleEndian.Uint32(data[8:]); sum != stored {
+		return 0, fmt.Errorf("%w: ids file %s has checksum %08x, computed %08x", ErrCorruptLog, s.path, stored, sum)
 	}
 	return binary.LittleEndian.Uint64(data), nil
 }

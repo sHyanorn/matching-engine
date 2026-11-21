@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -66,6 +67,9 @@ func TestNewValidatesConfig(t *testing.T) {
 	}
 	if _, err := New(Config{Symbols: []string{"A"}}); err == nil {
 		t.Error("New accepted a config without DataDir")
+	}
+	if _, err := New(Config{Symbols: []string{"btc-usd"}, DataDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), `"btc-usd", want a match of ^[A-Z0-9]`) {
+		t.Errorf("New with a lower case symbol: err = %v, want it to show the symbol and the pattern", err)
 	}
 	for _, tc := range []struct {
 		name string

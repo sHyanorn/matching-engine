@@ -310,13 +310,13 @@ func (r *oeRun) take(at int64) error {
 		case oe.TypePong:
 			seq := oe.DecodePong(body).ClientSeq
 			if seq == 0 || seq > uint64(r.total) || r.got[seq-1] {
-				return fmt.Errorf("unexpected Pong %d", seq)
+				return fmt.Errorf("got Pong with client_seq %d, want each of 1 to %d once", seq, r.total)
 			}
 			r.rtt[seq-1] = at - r.due(int(seq-1))
 			r.got[seq-1] = true
 		case oe.TypeSymbol, oe.TypeHeartbeat:
 		default:
-			return fmt.Errorf("unexpected %q frame", byte(t))
+			return fmt.Errorf("%q frame, want Pong, Symbol or Heartbeat", byte(t))
 		}
 		b = b[n:]
 	}

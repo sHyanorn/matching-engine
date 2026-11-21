@@ -181,8 +181,8 @@ func TestNextRejectsMalformedHeaders(t *testing.T) {
 			b := make([]byte, size+1)
 			le.PutUint16(b, uint16(length))
 			b[2] = byte(typ)
-			if _, _, _, err := Next(b[:HeaderSize]); !errors.Is(err, ErrFrame) {
-				t.Errorf("type %q with length %d: Next = %v, want ErrFrame", byte(typ), length, err)
+			if _, _, _, err := Next(b[:HeaderSize]); !errors.Is(err, ErrFrame) || !strings.Contains(err.Error(), "has length") {
+				t.Errorf("type %q with length %d: Next = %v, want ErrFrame naming the length", byte(typ), length, err)
 			}
 		}
 	}
@@ -190,8 +190,8 @@ func TestNextRejectsMalformedHeaders(t *testing.T) {
 		if _, known := wireSize[Type(c)]; known {
 			continue
 		}
-		if _, _, _, err := Next([]byte{1, 0, byte(c)}); !errors.Is(err, ErrFrame) {
-			t.Errorf("type %q: Next = %v, want ErrFrame", byte(c), err)
+		if _, _, _, err := Next([]byte{1, 0, byte(c)}); !errors.Is(err, ErrFrame) || !strings.Contains(err.Error(), "unknown type") {
+			t.Errorf("type %q: Next = %v, want ErrFrame naming the unknown type", byte(c), err)
 		}
 	}
 }

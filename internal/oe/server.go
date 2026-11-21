@@ -243,7 +243,7 @@ func (ss *session) handle(t Type, body []byte) error {
 		case p.ClientSeq <= ss.lastClientSeq:
 			return nil // a resend
 		case p.ClientSeq != ss.lastClientSeq+1:
-			return fmt.Errorf("oe: client_seq %d after %d", p.ClientSeq, ss.lastClientSeq)
+			return fmt.Errorf("oe: client_seq %d after %d, want %d", p.ClientSeq, ss.lastClientSeq, ss.lastClientSeq+1)
 		}
 		ss.lastClientSeq = p.ClientSeq
 		return queue(ss, Pong(p))
@@ -267,7 +267,7 @@ func (ss *session) login(m Login) error {
 	}
 	if reason != 0 {
 		ss.out = LoginRejected{Reason: reason}.Append(ss.out)
-		return fmt.Errorf("%w: login refused: %v", errEnd, reason)
+		return fmt.Errorf("%w: login refused: %v (version %d, want %d; session %d, want 0)", errEnd, reason, m.Version, Version, m.Session)
 	}
 	s := ss.srv
 	s.mu.Lock()

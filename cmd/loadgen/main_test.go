@@ -215,6 +215,14 @@ func TestRunWritesReport(t *testing.T) {
 	}
 }
 
+// The error for a bad flag value shows the values the run was given.
+func TestRunNamesTheBadValues(t *testing.T) {
+	err := run(context.Background(), []string{"-rate", "0", "-conns", "-3"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "-rate 0") || !strings.Contains(err.Error(), "-conns -3") {
+		t.Errorf("run with -rate 0 -conns -3 = %v, want an error showing both values", err)
+	}
+}
+
 // A word that is not a flag must fail the run, not leave it on the defaults.
 func TestRunRejectsStrayArguments(t *testing.T) {
 	for _, args := range [][]string{{"50000"}, {"-rate", "500", "extra"}} {
