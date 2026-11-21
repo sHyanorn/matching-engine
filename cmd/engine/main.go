@@ -49,6 +49,9 @@ func healthcheck(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("healthcheck: unexpected argument %q, want flags only", fs.Arg(0))
+	}
 	host, port, err := net.SplitHostPort(*addr)
 	if err != nil {
 		return err
@@ -88,6 +91,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	oeAddr := fs.String("oe-addr", "", "address to serve OE1 binary order entry on (docs/API.md); off if empty")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("engine: unexpected argument %q, want flags only (healthcheck only as the first argument)", fs.Arg(0))
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 

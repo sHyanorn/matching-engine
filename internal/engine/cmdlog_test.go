@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"hash/crc32"
+	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 )
@@ -168,6 +170,30 @@ func TestLogDamage(t *testing.T) {
 			t.Errorf("%s: torn %v, err %v; want ErrCorruptLog", tc.name, torn, err)
 		case good != tc.good:
 			t.Errorf("%s: good %d, want %d", tc.name, good, tc.good)
+		}
+	}
+}
+
+// A read that fails while the tail is checked is an I/O error to report as
+// it is, not damage to the log.
+func TestReadErrorInTheTailIsNotCorruption(t *testing.T) {
+	data, starts := encodeLog(sampleRecords())
+	badSum := slices.Clone(data)
+	badSum[starts[2]-1] ^= 0xff
+	zeroLen := append(slices.Clone(data), 0, 0, 0, 0)
+	boom := errors.New("disk read failed")
+	for _, tc := range []struct {
+		name string
+		body []byte
+		size int64
+	}{
+		{"checksum of a middle record", badSum[starts[0]:starts[2]], int64(len(data))},
+		{"zero length field", zeroLen[starts[0]:], int64(len(zeroLen)) + 8},
+	} {
+		r := io.MultiReader(bytes.NewReader(tc.body), iotest.ErrReader(boom))
+		_, _, err := readRecords(r, starts[0], tc.size, func(logRecord) error { return nil })
+		if !errors.Is(err, boom) || errors.Is(err, ErrCorruptLog) {
+			t.Errorf("%s: err = %v, want the read error and no ErrCorruptLog", tc.name, err)
 		}
 	}
 }

@@ -67,9 +67,19 @@ func TestNewValidatesConfig(t *testing.T) {
 	if _, err := New(Config{Symbols: []string{"A"}}); err == nil {
 		t.Error("New accepted a config without DataDir")
 	}
-	if e, err := New(Config{Symbols: []string{"A"}, DataDir: t.TempDir(), History: -1}); err == nil {
-		t.Error("New accepted a negative History")
-		_ = e.Close()
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"History", Config{History: -1}},
+		{"QueueSize", Config{QueueSize: -1}},
+		{"MaxBatch", Config{MaxBatch: -1}},
+	} {
+		tc.cfg.Symbols, tc.cfg.DataDir = []string{"A"}, t.TempDir()
+		if e, err := New(tc.cfg); err == nil {
+			t.Errorf("New accepted a negative %s", tc.name)
+			_ = e.Close()
+		}
 	}
 	e, err := New(Config{Symbols: []string{"BTC-USD", "ETH_USD", "X.1"}, DataDir: t.TempDir()})
 	if err != nil {

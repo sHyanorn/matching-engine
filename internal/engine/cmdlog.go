@@ -142,8 +142,14 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 		}
 		n := int64(binary.LittleEndian.Uint32(lenBuf[:]))
 		if n < payloadFixed || n > payloadMax {
-			if lenBuf == [4]byte{} && zeros(br) {
-				return off, true, nil
+			if lenBuf == [4]byte{} {
+				zero, err := zeros(br)
+				if err != nil {
+					return off, false, err
+				}
+				if zero {
+					return off, true, nil
+				}
 			}
 			return corrupt(fmt.Sprintf("payload length %d", n))
 		}
@@ -165,7 +171,14 @@ func readRecords(r io.Reader, start, size int64, fn func(logRecord) error) (good
 		if crc32.Checksum(p[:n], castagnoli) != binary.LittleEndian.Uint32(p[n:]) {
 			// The last record, or one where a zero tail begins, was cut
 			// short by a crash.
-			if end == size || zeros(br) {
+			cut := end == size
+			if !cut {
+				var err error
+				if cut, err = zeros(br); err != nil {
+					return off, false, err
+				}
+			}
+			if cut {
 				if wholeRecord(p) {
 					return corrupt(fmt.Sprintf("payload length %d over a whole record", n))
 				}
@@ -199,15 +212,18 @@ func wholeRecord(rest []byte) bool {
 	return len(rest) >= n+4 && crc32.Checksum(rest[:n], castagnoli) == binary.LittleEndian.Uint32(rest[n:])
 }
 
-func zeros(r io.Reader) bool {
+func zeros(r io.Reader) (bool, error) {
 	var buf [4096]byte
 	for {
 		n, err := r.Read(buf[:])
 		if !bytes.Equal(buf[:n], make([]byte, n)) {
-			return false
+			return false, nil
+		}
+		if err == io.EOF {
+			return true, nil
 		}
 		if err != nil {
-			return err == io.EOF
+			return false, err
 		}
 	}
 }

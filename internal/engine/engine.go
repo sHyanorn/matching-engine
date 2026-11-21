@@ -137,7 +137,10 @@ func (c *Config) normalize() error {
 	if c.DataDir == "" {
 		return errors.New("engine: no data directory configured")
 	}
-	if c.QueueSize <= 0 {
+	if c.QueueSize < 0 {
+		return fmt.Errorf("engine: negative QueueSize %d", c.QueueSize)
+	}
+	if c.QueueSize == 0 {
 		c.QueueSize = DefaultQueueSize
 	}
 	if c.SyncInterval == 0 {
@@ -149,7 +152,10 @@ func (c *Config) normalize() error {
 	if c.History == 0 {
 		c.History = defaultHistory
 	}
-	if c.MaxBatch <= 0 {
+	if c.MaxBatch < 0 {
+		return fmt.Errorf("engine: negative MaxBatch %d", c.MaxBatch)
+	}
+	if c.MaxBatch == 0 {
 		c.MaxBatch = defaultMaxBatch
 	}
 	if c.Clock == nil {

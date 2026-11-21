@@ -591,6 +591,23 @@ func TestPprofServedApart(t *testing.T) {
 	}
 }
 
+// A word that is not a flag stops flag parsing. It must fail the start
+// rather than run the engine on the defaults.
+func TestRunRejectsStrayArguments(t *testing.T) {
+	for _, extra := range [][]string{{"run"}, {"healthcheck"}} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		args := append([]string{"-addr", "127.0.0.1:0", "-data", t.TempDir()}, extra...)
+		err := run(ctx, args, io.Discard)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+			t.Errorf("run %v = %v, want an unexpected argument error", args, err)
+		}
+	}
+	if err := healthcheck([]string{"-addr", "127.0.0.1:1", "extra"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("healthcheck with a stray argument = %v, want an unexpected argument error", err)
+	}
+}
+
 func TestHealthcheck(t *testing.T) {
 	in := start(t, t.TempDir())
 	addr := strings.TrimPrefix(in.base, "http://")

@@ -143,8 +143,9 @@ func uintAfter(b, key []byte) (uint64, []byte, bool) {
 	return v, b[n:], n > 0
 }
 
-// tradesTotal reads the engine's matching_engine_trades_total for symbol,
-// 0 before its first trade.
+// tradesTotal reads the engine's matching_engine_trades_total for symbol.
+// The engine exports the series from its start, at 0, so a missing line
+// is an error.
 func (l *loader) tradesTotal(ctx context.Context) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.base+"/metrics", nil)
 	if err != nil {
@@ -166,5 +167,8 @@ func (l *loader) tradesTotal(ctx context.Context) (int, error) {
 			return int(f), err
 		}
 	}
-	return 0, sc.Err()
+	if err := sc.Err(); err != nil {
+		return 0, err
+	}
+	return 0, fmt.Errorf("/metrics has no matching_engine_trades_total line for symbol %q", l.cfg.symbol)
 }

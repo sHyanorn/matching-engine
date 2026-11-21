@@ -215,6 +215,16 @@ func TestRunWritesReport(t *testing.T) {
 	}
 }
 
+// A word that is not a flag must fail the run, not leave it on the defaults.
+func TestRunRejectsStrayArguments(t *testing.T) {
+	for _, args := range [][]string{{"50000"}, {"-rate", "500", "extra"}} {
+		err := run(context.Background(), args, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+			t.Errorf("run %v = %v, want an unexpected argument error", args, err)
+		}
+	}
+}
+
 // Canceling a run stops it at once, even while the engine is stalled and
 // requests pile up.
 func TestCancelDuringStall(t *testing.T) {

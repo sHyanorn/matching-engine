@@ -165,6 +165,23 @@ func TestTradeCheckCatchesBadPushes(t *testing.T) {
 	}
 }
 
+// A series the engine does not export is a wrong symbol or endpoint, not a
+// counter at 0.
+func TestTradesTotalNeedsItsSeries(t *testing.T) {
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("matching_engine_trades_total{symbol=\"BTC-USD\"} 7\n"))
+	}))
+	defer hs.Close()
+	l := &loader{cfg: config{symbol: "BTC-USD"}, base: hs.URL}
+	if n, err := l.tradesTotal(context.Background()); err != nil || n != 7 {
+		t.Errorf("tradesTotal for an exported symbol = %d, %v, want 7, nil", n, err)
+	}
+	l.cfg.symbol = "ETH-USD"
+	if n, err := l.tradesTotal(context.Background()); err == nil || !strings.Contains(err.Error(), "ETH-USD") {
+		t.Errorf("tradesTotal for a symbol without a series = %d, %v, want an error naming the symbol", n, err)
+	}
+}
+
 func TestScanTrades(t *testing.T) {
 	// The events of a buy that traded with two makers, then rested.
 	events := []byte(`"events":[{"seq":5,"ts":1,"type":"accepted","order_id":768,"side":"buy","price":101,"qty":9},` +
