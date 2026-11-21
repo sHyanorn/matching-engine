@@ -11,7 +11,6 @@
 package oe
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 )
@@ -79,7 +78,7 @@ func Next(b []byte) (t Type, body []byte, n int, err error) {
 	if len(b) < HeaderSize {
 		return 0, nil, 0, nil
 	}
-	length := int(binary.LittleEndian.Uint16(b))
+	length := int(le.Uint16(b))
 	t = Type(b[2])
 	size, ok := bodySize(t)
 	if !ok || length != 1+size {
@@ -95,6 +94,6 @@ func Next(b []byte) (t Type, body []byte, n int, err error) {
 // header appends the length and type of a frame of type t to dst.
 func header(dst []byte, t Type) []byte {
 	size, _ := bodySize(t)
-	dst = binary.LittleEndian.AppendUint16(dst, uint16(1+size))
+	dst = le.AppendUint16(dst, uint16(1+size))
 	return append(dst, byte(t))
 }

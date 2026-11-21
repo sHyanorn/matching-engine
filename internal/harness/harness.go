@@ -168,7 +168,7 @@ func (e *Engine) order(m Msg, ack ReportType, out []Report) ([]Report, error) {
 		case book.EventRejected: // the only event of a rejected command
 			return out, fmt.Errorf("message %d: order %d side %d price %d qty %d: %v",
 				m.Seq, m.OrderID, m.Side, m.Price, m.Qty, ev.Reason)
-		default: // Rested: the benchmark has no report for it
+		case book.EventRested: // the benchmark has no report for it
 		}
 	}
 	return out, nil

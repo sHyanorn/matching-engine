@@ -114,19 +114,15 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	if err := conn.SetWriteDeadline(r.t0.Add(cfg.warmup + cfg.duration + 10*time.Second)); err != nil {
 		return nil, err
 	}
-	end := func() {
-		r.stop.Store(true)
-		_ = conn.Close()
-	}
 	read := make(chan error, 1)
 	go func() {
 		err := r.read(readerCPU)
 		if err != nil {
-			end() // the pacer stops too
+			r.end() // the pacer stops too
 		}
 		read <- err
 	}()
-	stopped := context.AfterFunc(ctx, end)
+	stopped := context.AfterFunc(ctx, r.end)
 	defer stopped()
 	// Each loop runs on a goroutine of its own, which a pinned thread
 	// does not outlive: a goroutine that ends locked to its thread ends
@@ -141,7 +137,7 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	select {
 	case readErr = <-read:
 	case <-time.After(5 * time.Second):
-		end()
+		r.end()
 		readErr = <-read
 	}
 	if err := ctx.Err(); err != nil {
@@ -182,6 +178,13 @@ func (r *oeRun) login() error {
 	}
 }
 
+// end stops the run and closes the connection, which ends the reader and
+// the pacer.
+func (r *oeRun) end() {
+	r.stop.Store(true)
+	_ = r.conn.Close()
+}
+
 // pace sends every request when it is due, then a Logout. With -spin it
 // spins on the clock, locked to its thread and pinned to cpu; otherwise it
 // sleeps until each request is due.
@@ -191,11 +194,6 @@ func (r *oeRun) pace(cpu int) error {
 		if pin(cpu) {
 			r.pinned[0] = cpu
 		}
-	}
-	fail := func(err error) error {
-		r.stop.Store(true)
-		_ = r.conn.Close()
-		return err
 	}
 	const heartbeat = int64(time.Second)
 	var prev, longest, wrote int64 // wrote: when a frame last went out
@@ -211,7 +209,8 @@ func (r *oeRun) pace(cpu int) error {
 		if now < r.due(i) {
 			if now-wrote >= heartbeat { // docs/API.md: after 1 s without sending
 				if _, err := r.conn.Write(oe.Heartbeat{}.Append(r.out[:0])); err != nil {
-					return fail(err)
+					r.end()
+					return err
 				}
 				prev, wrote = r.since(), now
 			}
@@ -227,7 +226,8 @@ func (r *oeRun) pace(cpu int) error {
 		longest = 0
 		var err error
 		if i, err = r.send(i, now); err != nil {
-			return fail(err)
+			r.end()
+			return err
 		}
 		prev = r.since() // the write is not a gap: it is what the loop is for
 		wrote = prev

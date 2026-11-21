@@ -53,7 +53,7 @@ func engineStatus(err error) (int, string) {
 		return http.StatusNotFound, "unknown_order"
 	case errors.Is(err, engine.ErrBusy):
 		return http.StatusServiceUnavailable, "busy"
-	case errors.Is(err, engine.ErrClosed), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, engine.ErrClosed), errors.Is(err, context.Canceled):
 		return http.StatusServiceUnavailable, "shutting_down"
 	case errors.Is(err, engine.ErrLogFailed):
 		return http.StatusInternalServerError, "log_failed"

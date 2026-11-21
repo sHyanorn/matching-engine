@@ -3,7 +3,6 @@ package book
 import (
 	"errors"
 	"fmt"
-	"iter"
 )
 
 // orderIndex maps the ID of every resting order to its node, for O(1)
@@ -99,20 +98,6 @@ func (x *orderIndex) move(k int) {
 	x.next = end
 	if end == len(x.old.slots) {
 		x.old, x.next = idTable{}, 0
-	}
-}
-
-// all yields every ID in the index with its node, in no particular order.
-// The index must not change during the iteration.
-func (x *orderIndex) all() iter.Seq2[OrderID, *orderNode] {
-	return func(yield func(OrderID, *orderNode) bool) {
-		for _, t := range [...]*idTable{&x.cur, &x.old} {
-			for _, s := range t.slots {
-				if s.node != nil && !yield(s.id, s.node) {
-					return
-				}
-			}
-		}
 	}
 }
 

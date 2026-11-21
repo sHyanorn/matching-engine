@@ -1,10 +1,25 @@
 package book
 
 import (
+	"iter"
 	"math/rand/v2"
 	"strings"
 	"testing"
 )
+
+// all yields every ID in the index with its node, in no particular order.
+// The index must not change during the iteration.
+func (x *orderIndex) all() iter.Seq2[OrderID, *orderNode] {
+	return func(yield func(OrderID, *orderNode) bool) {
+		for _, t := range [...]*idTable{&x.cur, &x.old} {
+			for _, s := range t.slots {
+				if s.node != nil && !yield(s.id, s.node) {
+					return
+				}
+			}
+		}
+	}
+}
 
 // TestOrderIndexMatchesMap drives the index with random inserts, deletes
 // and lookups, and checks it against a map after every operation, and with
