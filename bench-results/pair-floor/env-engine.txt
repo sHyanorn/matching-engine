@@ -1,0 +1,11 @@
+go: go version go1.27.4 linux/amd64
+os: Linux 6.8.0-138-generic x86_64, 8 CPUs allowed, cgroup cpu.max: unreadable
+kernel boot id: 0c5b271b-d9a8-4129-b2da-12365681f13e
+clock source: tsc
+empty timed region over 1000000 samples: p50 20ns, p99 21ns, max 221.112µs
+setsockopt(SO_BUSY_POLL, 50 µs): ok
+CPU(s):                                  48
+Model name:                              AMD Ryzen Threadripper 7960X 24-Cores
+Thread(s) per core:                      2
+Core(s) per socket:                      24
+Socket(s):                               1

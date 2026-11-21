@@ -1,0 +1,11 @@
+go: go version go1.27.4 linux/amd64
+os: Linux 6.8.0-147-generic x86_64, 8 CPUs allowed, cgroup cpu.max: unreadable
+kernel boot id: ee42b13b-f1be-4021-96a1-cb05ed8b266d
+clock source: tsc
+empty timed region over 1000000 samples: p50 20ns, p99 30ns, max 31.08µs
+setsockopt(SO_BUSY_POLL, 50 µs): ok
+CPU(s):                                  128
+Model name:                              AMD EPYC 9575F 64-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      64
+Socket(s):                               1
