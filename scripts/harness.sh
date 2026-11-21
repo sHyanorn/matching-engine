@@ -110,7 +110,7 @@ cases() {
 		printf '%-50s references %-6s matching-engine %-8s' "$scen" "$ref" "$ours" >> "$out/conformance.txt"
 		for e in matching-engine cpptrader geseq; do
 			printf ' %s %s' "$e" "$(./harness --engine "./${e}_adapter.so" --scenario "$scen" --seed 0 --count "$n" \
-				--mode audit | sed -n 's/^ *State audit: \([A-Z]*\).*/\1/p' || true)" >> "$out/conformance.txt"
+				--mode audit | sed -n 's/^ *State audit: \([A-Z]*\).*/\1/p')" >> "$out/conformance.txt"
 		done
 		echo >> "$out/conformance.txt"
 	done < cases.txt
@@ -155,10 +155,9 @@ perf() {
 
 summary() {
 	local out=$1
-	python3 -I - "$out" <<-'EOF'
+	python3 -I - "$out" "${scenarios[@]}" <<-'EOF'
 		import glob, os, re, statistics, sys
-		out = sys.argv[1]
-		scenarios = ["static", "normal", "swing-25", "swing-40", "flash-crash"]
+		out, scenarios = sys.argv[1], sys.argv[2:]
 		# Throughput is messages over wall time: the harness prints it only to
 		# 0.01M msgs/s, too coarse for a slow engine and for medians, which the
 		# benchmark's own scripts/run_challenge.py takes at full precision.
@@ -174,9 +173,11 @@ summary() {
 		            t = open(f).read()
 		            ok += "Status: PASS" in t
 		            valid += "Verdict: VALID" in t
-		            n = int(re.search(r"Messages processed: +([0-9]+)", t).group(1))
-		            secs = float(re.search(r"Wall time: +([0-9.]+) s", t).group(1))
-		            mps.append(n / secs / 1e6)
+		            n = re.search(r"Messages processed: +([0-9]+)", t)
+		            secs = re.search(r"Wall time: +([0-9.]+) s", t)
+		            if not (n and secs):
+		                sys.exit(f"{f}: no 'Messages processed' or 'Wall time' line in the harness output")
+		            mps.append(int(n.group(1)) / float(secs.group(1)) / 1e6)
 		            runs[e, s, os.path.basename(f)] = mps[-1]
 		        med = statistics.median(mps)
 		        print(f"{e:16} {s:12} {len(mps):4} {med:10.2f} {min(mps):6.2f} {max(mps):6.2f}  {ok:2}/{len(mps)} {valid:2}/{len(mps)}")

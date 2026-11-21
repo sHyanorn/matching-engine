@@ -50,10 +50,12 @@ for rate in "$@"; do
 		# shellcheck disable=SC2086 # the flags are meant to split
 		"$bin/engine" -addr "$addr" -data "$data" -symbols BTC-USD ${ENGINE_FLAGS:-} 2> "$out/rate-$rate-$n.engine.log" > /dev/null &
 		pid=$!
+		up=
 		for _ in $(seq 100); do
-			curl -fs "http://$addr/healthz" > /dev/null && break
+			curl -fs "http://$addr/healthz" > /dev/null && { up=1; break; }
 			sleep 0.1
 		done
+		[ -n "$up" ] || { echo "e2e: no healthy engine on $addr after 10 s, see $out/rate-$rate-$n.engine.log" >&2; exit 1; }
 		echo "== $rate/s, run $n"
 		# shellcheck disable=SC2086
 		"$bin/loadgen" -addr "$addr" -rate "$rate" -warmup "$warmup" -duration "$duration" \
