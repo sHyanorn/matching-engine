@@ -7,7 +7,9 @@
 // met, every request succeeded and every trade was pushed once and in
 // order (check.go); loadgen exits with an error otherwise.
 //
-// With -oe it measures the round trip of OE1 Pings instead (oe.go).
+// With -oe it measures the round trip of OE1 Pings instead, and with -oe
+// and -orders it sends the same flow over one OE1 session and times each
+// command from its due time to its Done (oe.go).
 package main
 
 import (
@@ -48,7 +50,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	fs.IntVar(&cfg.conns, "conns", 64, "keep-alive connections")
 	fs.Uint64Var(&cfg.seed, "seed", 1, "seed of the order flow")
 	fs.Float64Var(&cfg.sd, "sd", 5, "standard deviation of prices around the mid, in ticks")
-	fs.StringVar(&cfg.oeAddr, "oe", "", "send Pings over one OE1 session to this address instead of orders over REST")
+	fs.StringVar(&cfg.oeAddr, "oe", "", "send Pings, or with -orders the order flow, over one OE1 session to this address instead of orders over REST")
+	fs.BoolVar(&cfg.orders, "orders", false, "with -oe: send the order flow instead of Pings")
 	fs.BoolVar(&cfg.spin, "spin", true, "with -oe: spin the pacing thread, and on Linux the reading one, pinned to CPUs, instead of sleeping")
 	fs.DurationVar(&cfg.maxSendLag, "max-send-lag", 10*time.Microsecond, "with -oe: the largest p99.9 send lag of a valid run")
 	out := fs.String("out", "", "file to write the JSON report to")
@@ -58,6 +61,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("loadgen: unexpected argument %q, want flags only", fs.Arg(0))
+	}
+	if cfg.orders && cfg.oeAddr == "" {
+		return errors.New("loadgen: -orders without -oe: the REST mode always sends the order flow")
 	}
 	// The comparisons are written so that NaN fails them.
 	requests := cfg.rate * (cfg.warmup + cfg.duration).Seconds()
@@ -120,22 +126,29 @@ func printReport(w io.Writer, r report) error {
 	}
 	slices.Sort(counts)
 	var b strings.Builder
-	if r.Mode == "oe" {
-		fmt.Fprintf(&b, "OE1 Pings: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, one session, spin %v, reader spins %v, pinned to CPUs %v\n",
-			r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Spin, r.SpinRead, r.Pinned)
+	title := r.Symbol
+	switch r.Mode {
+	case "oe":
+		title = "OE1 Pings"
+	case "oe_orders":
+		title = "OE1 orders on " + r.Symbol
+	}
+	fmt.Fprintf(&b, "%s: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, ", title, r.TargetRate, r.Achieved, r.Duration, r.Warmup)
+	format := "%-20s %9d %8.0f %8.0f %8.0f %8.0f %8.0f %8.0f\n"
+	if r.Mode == "" {
+		fmt.Fprintf(&b, "%d connections\n", r.Conns)
 	} else {
-		fmt.Fprintf(&b, "%s: target %.0f/s, achieved %.0f/s over %gs after %gs warmup, %d connections\n",
-			r.Symbol, r.TargetRate, r.Achieved, r.Duration, r.Warmup, r.Conns)
+		fmt.Fprintf(&b, "one session, spin %v, reader spins %v, pinned to CPUs %v\n", r.Spin, r.SpinRead, r.Pinned)
+		format = "%-20s %9d %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f\n" // round trips of tens of microseconds
 	}
 	fmt.Fprintf(&b, "%s\n", strings.Join(counts, ", "))
-	if r.Mode != "oe" {
+	switch r.Mode {
+	case "":
 		fmt.Fprintf(&b, "trades: %d in replies, %d pushed, counter rose %d\n", r.Trades.Replies, r.Trades.Pushes, r.Trades.Metric)
+	case "oe_orders": // the session carries no pushes, and the counter is not read (D046)
+		fmt.Fprintf(&b, "trades: %d in replies\n", r.Trades.Replies)
 	}
 	fmt.Fprintf(&b, "%-20s %9s %8s %8s %8s %8s %8s %8s\n", "latency (µs)", "count", "p50", "p90", "p99", "p99.9", "p99.99", "max")
-	format := "%-20s %9d %8.0f %8.0f %8.0f %8.0f %8.0f %8.0f\n"
-	if r.Mode == "oe" { // round trips of tens of microseconds
-		format = "%-20s %9d %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f\n"
-	}
 	for _, row := range latencyRows {
 		s, ok := r.Latency[row.key]
 		if !ok {

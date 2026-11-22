@@ -10,23 +10,56 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/flow"
 	"github.com/sHyanorn/matching-engine/internal/oe"
 )
 
 // The OE1 mode (-oe) sends Pings over one session and times each from its
 // due time to its Pong (D042): the round trip of the network, both
 // kernels and the session's reader and writer, without the engine. It is
-// the floor that the engine's own latency is set against.
+// the floor that the engine's own latency is set against. With -orders it
+// sends the SPEC §9 flow instead, as the REST mode does, and times each
+// NewOrder and Cancel from its due time to its Done (D046).
 //
 // The session is pipelined: requests go out when they are due, whatever
 // has been answered. With -spin a pacing thread spins on the clock to send
-// them and, on Linux, a reader spins on the socket to stamp each Pong as
+// them and, on Linux, a reader spins on the socket to stamp each reply as
 // it arrives, each locked to its thread and pinned to a CPU of its own,
 // so that neither adds a wake-up to the round trip. Replies are matched by
 // client_seq, an index into arrays made before the run.
 
-// maxBatch bounds the Pings put into one write when several are due.
+// maxBatch bounds the frames put into one write when several are due.
 const maxBatch = 1024
+
+// outcome is how a command of the flow ended, named as classify names the
+// REST answer its Done stands for (worker.go).
+type outcome uint8
+
+const (
+	noDone outcome = iota // sent and not answered
+	orderRested
+	orderTraded
+	cancelCanceled
+	cancelFinished
+	cancelUnknown
+	commandBusy
+	commandError
+)
+
+var outcomeNames = [...]string{
+	orderRested: "order_rested", orderTraded: "order_traded",
+	cancelCanceled: "cancel_canceled", cancelFinished: "cancel_finished", cancelUnknown: "cancel_unknown",
+	commandBusy: "busy", commandError: "error",
+}
+
+// failed reports whether o fails the run, as a REST request answered busy
+// or with an error does.
+func (o outcome) failed() bool { return o == commandBusy || o == commandError }
+
+// command is a NewOrder or Cancel that went out: the request it was, and
+// for a new order its number in the flow, 0 for a cancel.
+type command struct{ request, order int32 }
 
 // errStopped ends a spinning read that the run no longer waits for.
 var errStopped = errors.New("loadgen: read stopped")
@@ -53,11 +86,12 @@ type oeRun struct {
 	total  int
 	stop   atomic.Bool // set when the run is over or canceled
 
-	// By request: send time minus due time, Pong arrival minus due time,
-	// whether the Pong arrived, and, at the first request of each write,
-	// the longest gap between two passes of the pacing loop since the last
-	// write, the write itself left out: how long the pacer could not run.
-	lag, rtt, gap []int64
+	// By request: send time minus due time and, at the first request of
+	// each call of send, the longest gap between two passes of the pacing
+	// loop since the call before, its write left out: how long the pacer
+	// could not run. By client_seq: reply arrival minus due time, and
+	// whether the Pong arrived. Pings are numbered as their requests are.
+	lag, gap, rtt []int64
 	got           []bool
 	out           []byte // the pacer's buffer
 	in            []byte // the reader's buffer
@@ -65,6 +99,29 @@ type oeRun struct {
 	spinRead      bool   // the reader spun on the socket
 	pinned        [2]int // CPUs the pacer and the reader were pinned to; -1: not pinned
 	err           error  // that ended the run early
+
+	// The order flow (-orders). A cancel whose order has no ID yet is not
+	// sent and takes no client_seq, so the pacer notes each command it
+	// sends in cmds and publishes their number in sent before the write
+	// that carries them: the reader looks at cmds only below sent.
+	gen     *flow.Generator
+	symbol  uint8           // index of cfg.symbol, from its Symbol frame
+	ids     []atomic.Uint64 // order ID by flow order number, once its Done is in
+	cmds    []command       // by client_seq
+	sent    atomic.Int64
+	nsent   int // the pacer's own count of cmds
+	skipped int // cancels of the window not sent
+
+	// The reader's: each command's outcome by client_seq, the last
+	// server_seq, the Events since the last Done (how many, their
+	// client_seq and the trades among them), the trades in the replies to
+	// the orders of the whole run, and the first command that failed.
+	res                 []outcome
+	serverSeq           uint64
+	events, eventTrades int
+	eventsOf            uint64
+	trades              int
+	firstFailed         oe.Done
 }
 
 // since is the time from t0, on the monotonic clock.
@@ -80,7 +137,7 @@ func measureOE(ctx context.Context, cfg config) (report, error) {
 	return r.report(), nil
 }
 
-// runOE sends cfg's Pings and collects their round trips.
+// runOE sends cfg's Pings, or its order flow, and collects the round trips.
 func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	dial := cfg.oeDial
 	if dial == nil {
@@ -96,6 +153,11 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	r.lag, r.rtt, r.gap = make([]int64, r.total), make([]int64, r.total), make([]int64, r.total)
 	r.got = make([]bool, r.total)
 	r.out = make([]byte, 0, maxBatch*31)
+	if cfg.orders {
+		r.gen = flow.New(cfg.seed, cfg.sd)
+		r.ids = make([]atomic.Uint64, r.total+1)
+		r.cmds, r.res = make([]command, r.total), make([]outcome, r.total)
+	}
 	if err := r.login(); err != nil {
 		return nil, fmt.Errorf("logging in to %s: %w", cfg.oeAddr, err)
 	}
@@ -129,7 +191,7 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	go func() { pace <- r.pace(pacerCPU) }()
 	paced := <-pace
 
-	// The Pongs still on their way get a few seconds: the server sends
+	// The replies still on their way get a few seconds: the server sends
 	// them before it closes the session on the Logout.
 	var readErr error
 	select {
@@ -145,7 +207,10 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	return r, nil
 }
 
-// login opens a session and leaves what follows LoginAccepted in r.in.
+// login opens a session and leaves in r.in what follows LoginAccepted or,
+// for the order flow, what follows cfg.symbol's Symbol frame, whose index
+// the orders name: the server sends the Symbol frames before anything
+// else, so another frame first means that it has no such symbol.
 func (r *oeRun) login() error {
 	if err := r.conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return err
@@ -155,23 +220,38 @@ func (r *oeRun) login() error {
 		return err
 	}
 	r.in = make([]byte, 0, 64<<10)
+	accepted := false
 	for {
 		t, body, n, err := oe.Next(r.in)
-		switch {
-		case err != nil:
-			return err
-		case n > 0 && t == oe.TypeLoginAccepted:
-			r.in = r.in[:copy(r.in, r.in[n:])]
-			return nil
-		case n > 0 && t == oe.TypeLoginRejected:
-			return fmt.Errorf("login refused: %v", oe.DecodeLoginRejected(body).Reason)
-		case n > 0:
-			return fmt.Errorf("got a %q frame before LoginAccepted", byte(t))
-		}
-		k, err := r.conn.Read(r.in[len(r.in):cap(r.in)])
-		r.in = r.in[:len(r.in)+k]
 		if err != nil {
 			return err
+		}
+		if n == 0 {
+			k, err := r.conn.Read(r.in[len(r.in):cap(r.in)])
+			r.in = r.in[:len(r.in)+k]
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		found := false
+		switch {
+		case !accepted && t == oe.TypeLoginAccepted:
+			accepted = true
+			found = !r.cfg.orders
+		case !accepted && t == oe.TypeLoginRejected:
+			return fmt.Errorf("login refused: %v", oe.DecodeLoginRejected(body).Reason)
+		case !accepted:
+			return fmt.Errorf("got a %q frame before LoginAccepted", byte(t))
+		case t != oe.TypeSymbol:
+			return fmt.Errorf("the engine has no symbol %q", r.cfg.symbol)
+		default:
+			s := oe.DecodeSymbol(body)
+			r.symbol, found = s.Index, s.Name == r.cfg.symbol
+		}
+		r.in = r.in[:copy(r.in, r.in[n:])]
+		if found {
+			return nil
 		}
 	}
 }
@@ -183,9 +263,10 @@ func (r *oeRun) end() {
 	_ = r.conn.Close()
 }
 
-// pace sends every request when it is due, then a Logout. With -spin it
-// spins on the clock, locked to its thread and pinned to cpu; otherwise it
-// sleeps until each request is due.
+// pace sends every request when it is due, but for the cancels that
+// command skips, then a Logout. With -spin it spins on the clock, locked
+// to its thread and pinned to cpu; otherwise it sleeps until each request
+// is due.
 func (r *oeRun) pace(cpu int) error {
 	if r.cfg.spin {
 		runtime.LockOSThread() // for good: see runOE
@@ -228,7 +309,10 @@ func (r *oeRun) pace(cpu int) error {
 			return err
 		}
 		prev = r.since() // the write is not a gap: it is what the loop is for
-		wrote = prev
+		// Requests that were all skipped cancels wrote nothing.
+		if len(r.out) > 0 {
+			wrote = prev
+		}
 	}
 	r.loggedOut.Store(true)
 	_, err := r.conn.Write(oe.Logout{}.Append(r.out[:0]))
@@ -244,18 +328,57 @@ func (r *oeRun) send(i int, now int64) (int, error) {
 		n++
 	}
 	r.out = r.out[:0]
-	for j := i; j < n; j++ {
-		r.out = oe.Ping{ClientSeq: uint64(j + 1)}.Append(r.out)
+	if r.cfg.orders {
+		for j := i; j < n; j++ {
+			r.command(j)
+		}
+		r.sent.Store(int64(r.nsent))
+	} else {
+		for j := i; j < n; j++ {
+			r.out = oe.Ping{ClientSeq: uint64(j + 1)}.Append(r.out)
+		}
 	}
 	sent := r.since()
 	for j := i; j < n; j++ {
 		r.lag[j] = sent - r.due(j)
 	}
+	if len(r.out) == 0 { // every request due was a cancel that is skipped
+		return n, nil
+	}
 	_, err := r.conn.Write(r.out)
 	return n, err
 }
 
-// read takes Pongs until the server closes the session after the Logout.
+// command appends the frame of request j, the next op of the flow. A cancel
+// needs its order's ID, which the order's Done carries: one whose order has
+// no Done yet, or failed, is skipped, as the REST mode skips it (worker.go),
+// so that no send waits for a reply.
+func (r *oeRun) command(j int) {
+	op := r.gen.Next()
+	c, seq := command{request: int32(j)}, uint64(r.nsent+1)
+	if op.Cancel {
+		id := r.ids[op.Order].Load()
+		if id == 0 {
+			if r.due(j) >= int64(r.cfg.warmup) {
+				r.skipped++
+			}
+			return
+		}
+		r.out = oe.Cancel{ClientSeq: seq, OrderID: book.OrderID(id)}.Append(r.out)
+	} else {
+		c.order = int32(op.Order)
+		side := book.Sell
+		if op.Buy {
+			side = book.Buy
+		}
+		r.out = oe.NewOrder{ClientSeq: seq, Symbol: r.symbol, Side: side, Type: book.Limit, TIF: book.GTC,
+			Price: book.Price(op.Price), Qty: book.Qty(op.Qty)}.Append(r.out)
+	}
+	r.cmds[r.nsent] = c
+	r.nsent++
+}
+
+// read takes replies until the server closes the session after the Logout.
 // With -spin, where the socket allows it, it spins on the socket, locked
 // to its thread and pinned to cpu.
 func (r *oeRun) read(cpu int) error {
@@ -286,7 +409,7 @@ func (r *oeRun) read(cpu int) error {
 		case errors.Is(err, io.EOF) && r.loggedOut.Load():
 			return nil
 		case r.stop.Load():
-			return nil // the run is over or canceled; missing Pongs show
+			return nil // the run is over or canceled; missing replies show
 		default:
 			return err
 		}
@@ -304,15 +427,30 @@ func (r *oeRun) take(at int64) error {
 		if n == 0 {
 			break
 		}
-		switch t {
-		case oe.TypePong:
+		switch {
+		case t == oe.TypeSymbol || t == oe.TypeHeartbeat:
+		case t == oe.TypePong && !r.cfg.orders:
 			seq := oe.DecodePong(body).ClientSeq
 			if seq == 0 || seq > uint64(r.total) || r.got[seq-1] {
 				return fmt.Errorf("got Pong with client_seq %d, want each of 1 to %d once", seq, r.total)
 			}
 			r.rtt[seq-1] = at - r.due(int(seq-1))
 			r.got[seq-1] = true
-		case oe.TypeSymbol, oe.TypeHeartbeat:
+		case t == oe.TypeEvent && r.cfg.orders:
+			e := oe.DecodeEvent(body)
+			if err := r.numbered(e.ServerSeq, e.ClientSeq); err != nil {
+				return err
+			}
+			r.events, r.eventsOf = r.events+1, e.ClientSeq
+			if e.Kind == book.EventTrade {
+				r.eventTrades++
+			}
+		case t == oe.TypeDone && r.cfg.orders:
+			if err := r.done(oe.DecodeDone(body), at); err != nil {
+				return err
+			}
+		case r.cfg.orders:
+			return fmt.Errorf("%q frame, want Event, Done, Symbol or Heartbeat", byte(t))
 		default:
 			return fmt.Errorf("%q frame, want Pong, Symbol or Heartbeat", byte(t))
 		}
@@ -320,6 +458,64 @@ func (r *oeRun) take(at int64) error {
 	}
 	r.in = r.in[:copy(r.in, b)]
 	return nil
+}
+
+// numbered checks the numbers of an Event or Done: server_seq rises by one
+// from 1, and a command's Events come together, before its Done.
+func (r *oeRun) numbered(serverSeq, clientSeq uint64) error {
+	if serverSeq != r.serverSeq+1 {
+		return fmt.Errorf("got server_seq %d after %d", serverSeq, r.serverSeq)
+	}
+	r.serverSeq = serverSeq
+	if r.events > 0 && clientSeq != r.eventsOf {
+		return fmt.Errorf("got a frame of client_seq %d after Events of %d without their Done", clientSeq, r.eventsOf)
+	}
+	return nil
+}
+
+// done records the answer to a command, which arrived at at.
+func (r *oeRun) done(d oe.Done, at int64) error {
+	if err := r.numbered(d.ServerSeq, d.ClientSeq); err != nil {
+		return err
+	}
+	sent := uint64(r.sent.Load())
+	if d.ClientSeq == 0 || d.ClientSeq > sent || r.res[d.ClientSeq-1] != noDone {
+		return fmt.Errorf("got Done with client_seq %d, want each of the %d sent once", d.ClientSeq, sent)
+	}
+	c := r.cmds[d.ClientSeq-1]
+	out := doneOutcome(c.order == 0, d, r.eventTrades > 0)
+	switch {
+	case out == orderRested || out == orderTraded:
+		r.ids[c.order].Store(uint64(d.OrderID))
+		r.trades += r.eventTrades
+	case out.failed() && r.firstFailed.ClientSeq == 0:
+		r.firstFailed = d
+	}
+	r.rtt[d.ClientSeq-1] = at - r.due(int(c.request))
+	r.res[d.ClientSeq-1] = out
+	r.events, r.eventTrades = 0, 0
+	return nil
+}
+
+// doneOutcome names the Done of a new order or a cancel as classify names
+// the REST answer with that status (docs/API.md): both kinds of 503 are
+// busy, and an answer the flow cannot bring about is an error.
+func doneOutcome(cancel bool, d oe.Done, traded bool) outcome {
+	switch {
+	case d.Status == oe.StatusBusy || d.Status == oe.StatusShuttingDown:
+		return commandBusy
+	case cancel && d.Status == oe.StatusOK:
+		return cancelCanceled
+	case cancel && d.Status == oe.StatusOrderFinished:
+		return cancelFinished
+	case cancel && d.Status == oe.StatusUnknownOrder:
+		return cancelUnknown
+	case cancel || d.Status != oe.StatusOK || d.OrderID == 0:
+		return commandError
+	case traded:
+		return orderTraded
+	}
+	return orderRested
 }
 
 // report describes the requests due in the measurement window.
@@ -334,8 +530,43 @@ func (r *oeRun) report() report {
 		rep.Pinned = r.pinned[:]
 	}
 	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
-	var rtt, lag, gap []int64
-	sent, missing := 0, 0
+	fill := r.pings
+	if cfg.orders {
+		fill = r.orders
+	}
+	sent, lag, problems := fill(&rep)
+	var gap []int64
+	for j := range r.total {
+		if d := r.due(j); d >= start && d < end && r.gap[j] != 0 {
+			gap = append(gap, r.gap[j])
+		}
+	}
+	rep.Achieved = float64(sent) / cfg.duration.Seconds()
+	if rep.Achieved < 0.99*cfg.rate {
+		rep.Problems = append(rep.Problems, fmt.Sprintf("achieved %.0f/s, below 99%% of the target", rep.Achieved))
+	}
+	rep.Problems = append(rep.Problems, problems...)
+	if r.err != nil {
+		rep.Problems = append(rep.Problems, r.err.Error())
+	}
+	rep.Latency["send_lag"] = summarize(lag)
+	if cfg.spin {
+		rep.Latency["hiccup"] = summarize(gap)
+	}
+	if p := rep.Latency["send_lag"].P999; p > micros(int64(cfg.maxSendLag)) {
+		rep.Problems = append(rep.Problems, fmt.Sprintf("send lag p99.9 %.1f µs, over %v", p, cfg.maxSendLag))
+	}
+	rep.Valid = len(rep.Problems) == 0
+	return rep
+}
+
+// pings fills rep for a run of Pings and returns how many of the window's
+// answered Pings went out in it, their send lags, and what makes the run
+// invalid.
+func (r *oeRun) pings(rep *report) (sent int, lag []int64, problems []string) {
+	start, end := int64(r.cfg.warmup), int64(r.cfg.warmup+r.cfg.duration)
+	var rtt []int64
+	missing := 0
 	for j := range r.total {
 		if !r.got[j] { // the warmup's Pings too, as in D030
 			missing++
@@ -351,29 +582,60 @@ func (r *oeRun) report() report {
 			sent++
 		}
 		rtt, lag = append(rtt, r.rtt[j]), append(lag, r.lag[j])
-		if r.gap[j] != 0 {
-			gap = append(gap, r.gap[j])
-		}
 	}
 	rep.Outcomes["pong"] = len(rtt)
-	rep.Achieved = float64(sent) / cfg.duration.Seconds()
-	if rep.Achieved < 0.99*cfg.rate {
-		rep.Problems = append(rep.Problems, fmt.Sprintf("achieved %.0f/s, below 99%% of the target", rep.Achieved))
-	}
 	if missing > 0 {
-		rep.Problems = append(rep.Problems, fmt.Sprintf("Pings with no Pong: %d", missing))
-	}
-	if r.err != nil {
-		rep.Problems = append(rep.Problems, r.err.Error())
+		problems = append(problems, fmt.Sprintf("Pings with no Pong: %d", missing))
 	}
 	rep.Latency["pong"] = summarize(rtt)
-	rep.Latency["send_lag"] = summarize(lag)
-	if cfg.spin {
-		rep.Latency["hiccup"] = summarize(gap)
+	return sent, lag, problems
+}
+
+// orders fills rep for a run of the order flow, as the REST mode reports
+// one (worker.go): a command that was answered busy or with an error
+// fails the run, the warmup's too, and is left out of the latencies.
+func (r *oeRun) orders(rep *report) (sent int, lag []int64, problems []string) {
+	cfg := r.cfg
+	rep.Mode, rep.Symbol, rep.Seed, rep.SD = "oe_orders", cfg.symbol, cfg.seed, cfg.sd
+	rep.Trades.Replies = r.trades
+	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
+	var reply, service []int64
+	missing, failed, warmupFailed := 0, 0, 0
+	for seq, c := range r.cmds[:r.nsent] {
+		j, out := int(c.request), r.res[seq]
+		if out == noDone {
+			missing++
+		}
+		if r.due(j) < start {
+			if out.failed() {
+				warmupFailed++
+			}
+			continue
+		}
+		if r.due(j)+r.lag[j] < end {
+			sent++
+		}
+		if out == noDone {
+			continue
+		}
+		rep.Outcomes[outcomeNames[out]]++
+		if out.failed() {
+			failed++
+			continue
+		}
+		reply, service, lag = append(reply, r.rtt[seq]), append(service, r.rtt[seq]-r.lag[j]), append(lag, r.lag[j])
 	}
-	if p := rep.Latency["send_lag"].P999; p > micros(int64(cfg.maxSendLag)) {
-		rep.Problems = append(rep.Problems, fmt.Sprintf("send lag p99.9 %.1f µs, over %v", p, cfg.maxSendLag))
+	if r.skipped > 0 {
+		rep.Outcomes["cancel_skipped"] = r.skipped
 	}
-	rep.Valid = len(rep.Problems) == 0
-	return rep
+	if n := failed + warmupFailed; n > 0 {
+		f := r.firstFailed
+		problems = append(problems, fmt.Sprintf("%d commands failed, %d of them in the warmup; the first: client_seq %d answered %v",
+			n, warmupFailed, f.ClientSeq, f.Status))
+	}
+	if missing > 0 {
+		problems = append(problems, fmt.Sprintf("commands with no Done: %d", missing))
+	}
+	rep.Latency["reply"], rep.Latency["service"] = summarize(reply), summarize(service)
+	return sent, lag, problems
 }

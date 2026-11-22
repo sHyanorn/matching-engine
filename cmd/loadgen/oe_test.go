@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,15 +16,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/flow"
 	"github.com/sHyanorn/matching-engine/internal/oe"
 )
 
 // fakeOE serves one OE1 session: it accepts the Login, answers each Ping
-// with its Pong delay after the Ping arrived, and closes on the Logout.
-// After the Ping numbered stallAt it reads nothing for stall, the Ping
-// numbered drop it never answers, and after the Ping numbered garbleAt it
-// sends a malformed frame. With no delay it writes all the Pongs that are
-// ready with one write, as the engine's server does.
+// with its Pong, and each NewOrder and Cancel with a Done, delay after the
+// frame arrived, and closes on the Logout. After the frame numbered stallAt
+// it reads nothing for stall, the frame numbered drop it never answers, and
+// after the frame numbered garbleAt it sends a malformed frame. With no
+// delay it writes all the answers that are ready with one write, as the
+// engine's server does.
+//
+// It names two symbols, fakeSymbol second. The nth NewOrder gets the ID
+// fakeOrderID(n) and an accepted Event before its Done, and every fourth a
+// trade Event too. The command numbered busyAt is answered busy, the one
+// numbered twiceAt twice, and the Done of the one numbered gapAt skips a
+// server_seq.
 type fakeOE struct {
 	delay      time.Duration
 	stallAt    uint64
@@ -30,30 +41,68 @@ type fakeOE struct {
 	drop       uint64
 	garbleAt   uint64
 	heartbeats *atomic.Int32 // counts the client's Heartbeats, if set
+
+	busyAt, twiceAt, gapAt uint64
+	commands               chan<- any // gets each NewOrder and Cancel that arrives, if set
+}
+
+const fakeSymbol = "BTC-USD"
+
+func fakeOrderID(n int) book.OrderID { return book.OrderID(n)<<8 | 1 }
+
+var fakeEvents = []book.EventKind{book.EventAccepted, book.EventTrade}
+
+// fakeAnswer is a frame to answer: a Ping, or a command, the ID its Done
+// carries and the kinds of its Events.
+type fakeAnswer struct {
+	seq    uint64
+	at     time.Time
+	ping   bool
+	id     book.OrderID
+	events []book.EventKind
 }
 
 func (f fakeOE) serve(c net.Conn) {
 	defer func() { _ = c.Close() }()
-	type pong struct {
-		seq uint64
-		at  time.Time
-	}
-	pongs := make(chan pong, 1<<20)
+	answers := make(chan fakeAnswer, 1<<20)
 	written := make(chan struct{})
 	go func() {
 		defer close(written)
+		var serverSeq uint64
+		add := func(b []byte, a fakeAnswer) []byte {
+			if a.ping {
+				return oe.Pong{ClientSeq: a.seq}.Append(b)
+			}
+			for _, kind := range a.events {
+				serverSeq++
+				b = oe.Event{ServerSeq: serverSeq, ClientSeq: a.seq, Event: book.Event{Kind: kind}}.Append(b)
+			}
+			d := oe.Done{ClientSeq: a.seq, Status: oe.StatusOK, OrderID: a.id}
+			if a.seq == f.busyAt {
+				d.Status = oe.StatusBusy
+			}
+			if a.seq == f.gapAt {
+				serverSeq++
+			}
+			for range 1 + b2i(a.seq == f.twiceAt) {
+				serverSeq++
+				d.ServerSeq = serverSeq
+				b = d.Append(b)
+			}
+			return b
+		}
 		var b []byte
-		for p := range pongs {
-			time.Sleep(time.Until(p.at.Add(f.delay)))
-			b = oe.Pong{ClientSeq: p.seq}.Append(b[:0])
+		for a := range answers {
+			time.Sleep(time.Until(a.at.Add(f.delay)))
+			b = add(b[:0], a)
 		more:
-			for f.delay == 0 { // with a delay, each Pong waits for its own time
+			for f.delay == 0 { // with a delay, each answer waits for its own time
 				select {
-				case p, ok := <-pongs:
+				case a, ok := <-answers:
 					if !ok {
 						break more
 					}
-					b = oe.Pong{ClientSeq: p.seq}.Append(b)
+					b = add(b, a)
 				default:
 					break more
 				}
@@ -64,11 +113,12 @@ func (f fakeOE) serve(c net.Conn) {
 		}
 	}()
 	defer func() {
-		close(pongs)
+		close(answers)
 		<-written
 	}()
 	var buf []byte
 	tmp := make([]byte, 4096)
+	orders := 0
 	for {
 		n, err := c.Read(tmp)
 		at := time.Now()
@@ -82,34 +132,60 @@ func (f fakeOE) serve(c net.Conn) {
 				break
 			}
 			buf = buf[size:]
+			a := fakeAnswer{at: at}
 			switch t {
 			case oe.TypeLogin:
-				if _, err := c.Write(oe.LoginAccepted{Session: 1, NextServerSeq: 1}.Append(nil)); err != nil {
+				b := oe.LoginAccepted{Session: 1, NextServerSeq: 1}.Append(nil)
+				b = oe.Symbol{Index: 0, Name: "ETH-USD"}.Append(b)
+				if _, err := c.Write(oe.Symbol{Index: 1, Name: fakeSymbol}.Append(b)); err != nil {
 					return
 				}
+				continue
 			case oe.TypePing:
-				seq := oe.DecodePing(body).ClientSeq
-				if seq != f.drop {
-					pongs <- pong{seq, at}
+				a.seq, a.ping = oe.DecodePing(body).ClientSeq, true
+			case oe.TypeNewOrder:
+				m := oe.DecodeNewOrder(body)
+				orders++
+				a.seq, a.id, a.events = m.ClientSeq, fakeOrderID(orders), fakeEvents[:1+b2i(orders%4 == 0)]
+				if f.commands != nil {
+					f.commands <- m
 				}
-				if seq == f.stallAt {
-					time.Sleep(f.stall)
-				}
-				if seq == f.garbleAt {
-					if _, err := c.Write([]byte{0xff, 0xff, 'x'}); err != nil {
-						return
-					}
+			case oe.TypeCancel:
+				m := oe.DecodeCancel(body)
+				a.seq, a.id = m.ClientSeq, m.OrderID
+				if f.commands != nil {
+					f.commands <- m
 				}
 			case oe.TypeHeartbeat:
 				if f.heartbeats != nil {
 					f.heartbeats.Add(1)
 				}
+				continue
 			case oe.TypeLogout:
 				return
 			default:
+				continue
+			}
+			if a.seq != f.drop {
+				answers <- a
+			}
+			if a.seq == f.stallAt {
+				time.Sleep(f.stall)
+			}
+			if a.seq == f.garbleAt {
+				if _, err := c.Write([]byte{0xff, 0xff, 'x'}); err != nil {
+					return
+				}
 			}
 		}
 	}
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // listenOE serves f on a loopback port and returns a dialer for it.
@@ -313,15 +389,227 @@ func TestOEHeartbeats(t *testing.T) {
 	}
 }
 
+// ordersConfig is oeConfig for the order flow, without a warmup, so that
+// the report's outcomes cover the whole run.
+func ordersConfig(dial func() (net.Conn, error)) config {
+	cfg := oeConfig(dial)
+	cfg.orders, cfg.symbol, cfg.seed, cfg.sd, cfg.warmup = true, fakeSymbol, 7, 5, 0
+	return cfg
+}
+
+// runOrders runs cfg's flow against f and returns the run, its report and
+// the commands f got.
+func runOrders(t *testing.T, f fakeOE, cfg func(*config)) (*oeRun, report, []any) {
+	t.Helper()
+	got := make(chan any, 1<<16)
+	f.commands = got
+	c := ordersConfig(listenOE(t, f))
+	if cfg != nil {
+		cfg(&c)
+	}
+	r, err := runOE(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run ended when f closed the session, after its last command.
+	frames := make([]any, len(got))
+	for i := range frames {
+		frames[i] = <-got
+	}
+	return r, r.report(), frames
+}
+
+// sentFlow checks that frames are the first total ops of cfg's flow in
+// order, numbered from 1 and naming fakeSymbol by its index, with only
+// cancels left out. It returns how many are left out.
+func sentFlow(t *testing.T, cfg config, total int, frames []any) (skipped int) {
+	t.Helper()
+	gen := flow.New(cfg.seed, cfg.sd)
+	k := 0
+	for i := range total {
+		op := gen.Next()
+		var want any = oe.Cancel{ClientSeq: uint64(k + 1), OrderID: fakeOrderID(op.Order)}
+		if !op.Cancel {
+			side := book.Sell
+			if op.Buy {
+				side = book.Buy
+			}
+			want = oe.NewOrder{ClientSeq: uint64(k + 1), Symbol: 1, Side: side, Type: book.Limit, TIF: book.GTC,
+				Price: book.Price(op.Price), Qty: book.Qty(op.Qty)}
+		}
+		switch {
+		case k < len(frames) && frames[k] == want:
+			k++
+		case op.Cancel:
+			skipped++
+		default:
+			t.Fatalf("frame %d of %d is not op %d of the flow, %+v; the frames from there: %+v", k+1, len(frames), i+1, want, frames[k:min(k+3, len(frames))])
+		}
+	}
+	if k != len(frames) {
+		t.Fatalf("%d frames after the flow's %d ops, the first: %+v", len(frames)-k, total, frames[k])
+	}
+	return skipped
+}
+
+// rateAside fails the test for every problem of a run but a missed rate:
+// whether the target rate went out depends on how busy the machine is, and
+// any other problem is the tool's or the server's.
+func rateAside(t *testing.T, r report) {
+	t.Helper()
+	for _, p := range r.Problems {
+		if strings.HasPrefix(p, "achieved ") {
+			t.Log(p)
+		} else {
+			t.Errorf("invalid run: %s", p)
+		}
+	}
+}
+
+// The commands that go out are the flow of the seed, as the REST mode
+// sends it, and each Done is counted as the REST answer it stands for.
+func TestOEOrdersSendTheFlow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a load in real time")
+	}
+	r, rep, frames := runOrders(t, fakeOE{}, nil)
+	rateAside(t, rep)
+	skipped := sentFlow(t, r.cfg, r.total, frames)
+	orders := 0
+	for _, f := range frames {
+		if _, ok := f.(oe.NewOrder); ok {
+			orders++
+		}
+	}
+	// The fake answers every command ok, and every fourth order with a
+	// trade after its accepted Event.
+	want := map[string]int{"order_traded": orders / 4, "order_rested": orders - orders/4, "cancel_canceled": len(frames) - orders}
+	if skipped > 0 {
+		want["cancel_skipped"] = skipped
+	}
+	if !maps.Equal(rep.Outcomes, want) || rep.Trades.Replies != orders/4 {
+		t.Errorf("outcomes %v and %d trades for %d orders and %d cancels sent, want %v and %d trades",
+			rep.Outcomes, rep.Trades.Replies, orders, len(frames)-orders, want, orders/4)
+	}
+	for _, k := range []string{"reply", "service", "send_lag"} {
+		if n := rep.Latency[k].Count; n != len(frames) {
+			t.Errorf("%d %s samples, want one per command, %d", n, k, len(frames))
+		}
+	}
+	if rep.Mode != "oe_orders" || orders < r.total/2 || len(frames) == orders {
+		t.Errorf("mode %q, %d orders and %d cancels in %d requests", rep.Mode, orders, len(frames)-orders, r.total)
+	}
+}
+
+// A cancel whose order has no Done yet when it is due is not sent, and
+// takes no client_seq: with every Done 2 ms late, the cancels of the last
+// orders are skipped, no command waits for a reply, and none is answered
+// in under 2 ms.
+func TestOEOrdersSkipACancelWhoseOrderIsUnanswered(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a load in real time")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Go's clock on Windows advances once per tick (bench-results/m6-windows)")
+	}
+	const d = 2 * time.Millisecond
+	r, rep, frames := runOrders(t, fakeOE{delay: d}, nil)
+	rateAside(t, rep)
+	skipped := sentFlow(t, r.cfg, r.total, frames)
+	if skipped == 0 || rep.Outcomes["cancel_skipped"] != skipped {
+		t.Errorf("%d cancels not sent, %d counted as cancel_skipped; want some, all counted", skipped, rep.Outcomes["cancel_skipped"])
+	}
+	if least := slices.Min(r.rtt[:r.nsent]); least < int64(d) {
+		t.Errorf("a command answered in %v, want none under %v", time.Duration(least), d)
+	}
+	// Open loop: a request due every 500 µs went out then, with 2 ms to
+	// wait for each reply.
+	if p50 := rep.Latency["send_lag"].P50; p50 > 400 {
+		t.Errorf("send lag p50 %.0f µs, want far below the 500 µs between requests", p50)
+	}
+}
+
+// A run is invalid if a command got no Done or more than one, if a
+// server_seq is missing, or if a command failed, in the warmup too.
+func TestOEOrdersInvalidRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a load in real time")
+	}
+	for _, c := range []struct {
+		name string
+		f    fakeOE
+		want string
+	}{
+		{"a command with no Done", fakeOE{drop: 3}, "commands with no Done: 1"},
+		{"a server_seq skipped", fakeOE{gapAt: 3}, "got server_seq "},
+		{"a second Done for a command", fakeOE{twiceAt: 3}, "got Done with client_seq 3, want each of the "},
+		{"a command of the warmup answered busy", fakeOE{busyAt: 3}, "1 commands failed, 1 of them in the warmup; the first: client_seq 3 answered busy"},
+	} {
+		_, rep, _ := runOrders(t, c.f, func(cfg *config) { cfg.warmup = 100 * time.Millisecond })
+		if rep.Valid || !slices.ContainsFunc(rep.Problems, func(p string) bool { return strings.HasPrefix(p, c.want) }) {
+			t.Errorf("%s: valid %v, problems %q; want invalid by %q", c.name, rep.Valid, rep.Problems, c.want)
+		}
+	}
+}
+
 // discardConn takes every write.
 type discardConn struct{ net.Conn }
 
 func (discardConn) Write(b []byte) (int, error) { return len(b), nil }
 
-func TestOELoopsAllocateNothing(t *testing.T) {
-	r := &oeRun{cfg: config{rate: 10_000}, conn: discardConn{}, period: 1e5, total: 10_000}
+// offlineRun is a run of 10,000 requests, 100 µs apart, whose writes go
+// nowhere: a test makes its sends and hands it its replies.
+func offlineRun(orders bool) *oeRun {
+	r := &oeRun{cfg: config{rate: 10_000, orders: orders}, conn: discardConn{}, period: 1e5, total: 10_000}
 	r.lag, r.rtt, r.gap, r.got = make([]int64, r.total), make([]int64, r.total), make([]int64, r.total), make([]bool, r.total)
 	r.out, r.in = make([]byte, 0, maxBatch*31), make([]byte, 0, 4096)
+	if orders {
+		r.gen = flow.New(1, 5)
+		r.ids, r.cmds, r.res = make([]atomic.Uint64, r.total+1), make([]command, r.total), make([]outcome, r.total)
+	}
+	return r
+}
+
+// A command is timed from the due time of its own request, also once
+// skipped cancels have left the client_seq behind the requests.
+func TestOEOrdersAreTimedFromTheirDueTimes(t *testing.T) {
+	r := offlineRun(true)
+	// No order is answered, so every cancel is skipped.
+	i := 0
+	for r.nsent == i || r.cmds[r.nsent-1].request != int32(i-1) {
+		var err error
+		if i, err = r.send(i, r.due(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seq := uint64(r.nsent) // of the order that request i-1 was
+	r.in = oe.Done{ServerSeq: 1, ClientSeq: seq, Status: oe.StatusOK, OrderID: fakeOrderID(1)}.Append(r.in)
+	if err := r.take(r.due(i-1) + 1234); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.rtt[seq-1]; got != 1234 || seq == uint64(i) {
+		t.Errorf("request %d, sent as client_seq %d and answered 1,234 ns after it was due, is timed at %d ns", i, seq, got)
+	}
+}
+
+// A command's Events come together, before its Done: a Done after the
+// Events of another command ends the run.
+func TestOEOrdersEventsBelongToTheNextDone(t *testing.T) {
+	for _, of := range []uint64{0, 2} {
+		r := offlineRun(true)
+		if _, err := r.send(0, r.due(0)); err != nil { // the first op is an order
+			t.Fatal(err)
+		}
+		r.in = oe.Event{ServerSeq: 1, ClientSeq: of, Event: book.Event{Kind: book.EventAccepted}}.Append(r.in)
+		r.in = oe.Done{ServerSeq: 2, ClientSeq: 1, Status: oe.StatusOK, OrderID: fakeOrderID(1)}.Append(r.in)
+		if err := r.take(r.due(0)); err == nil {
+			t.Errorf("the Done of client_seq 1 after an Event of client_seq %d was taken", of)
+		}
+	}
+}
+
+func TestOELoopsAllocateNothing(t *testing.T) {
+	r := offlineRun(false)
 	i, seq := 0, uint64(1)
 	allocs := testing.AllocsPerRun(1000, func() {
 		var err error
@@ -336,6 +624,40 @@ func TestOELoopsAllocateNothing(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Errorf("%v allocations to send a Ping and take its Pong, want 0", allocs)
+	}
+
+	// The order flow: each command is answered at once, so that cancels go
+	// out too, and every other order with Events first.
+	r = offlineRun(true)
+	i, cancels := 0, 0
+	var serverSeq uint64
+	allocs = testing.AllocsPerRun(1000, func() {
+		was := r.nsent
+		var err error
+		if i, err = r.send(i, r.due(i)); err != nil {
+			t.Fatal(err)
+		}
+		if r.nsent == was {
+			return // a skipped cancel: none here, where every order is answered before the next request
+		}
+		seq := uint64(r.nsent)
+		if r.cmds[was].order == 0 {
+			cancels++
+		} else if seq%2 == 0 {
+			for _, kind := range fakeEvents {
+				serverSeq++
+				r.in = oe.Event{ServerSeq: serverSeq, ClientSeq: seq, Event: book.Event{Kind: kind}}.Append(r.in)
+			}
+		}
+		serverSeq++
+		r.in = oe.Done{ServerSeq: serverSeq, ClientSeq: seq, Status: oe.StatusOK, OrderID: fakeOrderID(int(seq))}.Append(r.in)
+		if err := r.take(r.due(i) + 1000); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 || r.nsent != i || cancels < 200 || r.trades == 0 {
+		t.Errorf("%v allocations to send a command and take its reply, want 0; %d of %d requests sent, %d of them cancels, %d trades",
+			allocs, r.nsent, i, cancels, r.trades)
 	}
 }
 
@@ -361,7 +683,10 @@ func TestOESendTakesWhatIsDue(t *testing.T) {
 	}
 }
 
-func TestRunOEWritesReport(t *testing.T) {
+// runOEReport runs loadgen with -oe against a fakeOE and the flags given,
+// and returns what it printed and the report it wrote.
+func runOEReport(t *testing.T, flags ...string) (string, report) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("runs a load in real time")
 	}
@@ -379,13 +704,10 @@ func TestRunOEWritesReport(t *testing.T) {
 	var stdout bytes.Buffer
 	// The send lag bound is far above this machine's noise: the run is
 	// valid unless the tool fails.
-	err = run(context.Background(), []string{"-oe", ln.Addr().String(), "-rate", "1000", "-warmup", "0s",
-		"-duration", "500ms", "-max-send-lag", "1h", "-out", out}, &stdout)
-	if err != nil {
+	args := append([]string{"-oe", ln.Addr().String(), "-rate", "1000", "-warmup", "0s",
+		"-duration", "500ms", "-max-send-lag", "1h", "-out", out}, flags...)
+	if err := run(context.Background(), args, &stdout); err != nil {
 		t.Fatalf("%v\n%s", err, stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "request to pong") || !strings.Contains(stdout.String(), "\nvalid\n") {
-		t.Errorf("report:\n%s", stdout.String())
 	}
 	data, err := os.ReadFile(out)
 	if err != nil {
@@ -395,7 +717,45 @@ func TestRunOEWritesReport(t *testing.T) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		t.Fatal(err)
 	}
+	return stdout.String(), r
+}
+
+func TestRunOEWritesReport(t *testing.T) {
+	stdout, r := runOEReport(t)
+	if !strings.Contains(stdout, "request to pong") || !strings.Contains(stdout, "\nvalid\n") {
+		t.Errorf("report:\n%s", stdout)
+	}
 	if r.Mode != "oe" || r.Outcomes["ping"] != 500 || r.Latency["pong"].Count != 500 || r.Latency["send_lag"].Count != 500 {
-		t.Errorf("report %s", data)
+		t.Errorf("report %+v", r)
+	}
+}
+
+// With -orders the same flags send the flow of -seed and -sd on -symbol,
+// and the report has the REST mode's rows.
+func TestRunOEOrdersWritesReport(t *testing.T) {
+	stdout, r := runOEReport(t, "-orders", "-symbol", fakeSymbol, "-seed", "7", "-sd", "3")
+	for _, want := range []string{"OE1 orders on " + fakeSymbol, "\ntrades: ", " in replies\n", "request to reply", "service time", "send lag", "\nvalid\n"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("no %q in the report:\n%s", want, stdout)
+		}
+	}
+	offered := 0
+	for _, n := range r.Outcomes {
+		offered += n
+	}
+	if r.Mode != "oe_orders" || r.Symbol != fakeSymbol || r.Seed != 7 || r.SD != 3 || offered != 500 ||
+		r.Trades.Replies == 0 || r.Latency["reply"].Count == 0 || r.Latency["reply"].Count != r.Latency["service"].Count {
+		t.Errorf("report %+v", r)
+	}
+	if _, ok := r.Latency["pong"]; ok || r.Outcomes["ping"] != 0 {
+		t.Errorf("a run of the order flow reports Pings: %+v", r)
+	}
+}
+
+// -orders chooses what an OE1 session carries, so it needs -oe.
+func TestRunOrdersNeedsOE(t *testing.T) {
+	err := run(context.Background(), []string{"-orders"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "-orders without -oe") {
+		t.Errorf("run -orders = %v, want an error asking for -oe", err)
 	}
 }

@@ -73,7 +73,7 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] One pair of rented machines: deployment, results retrieval and the network floor
 - [x] Orders and cancels over a session
 - [x] Session resume after a broken connection
-- [ ] loadgen sends the SPEC §9 flow over OE1
+- [x] loadgen sends the SPEC §9 flow over OE1
 - [ ] Pilot pair: every flow five times, and the tuning comparisons
 - [ ] Four more pairs with the configuration fixed
 - [ ] Publish every run, each latency with its pair's floor and as a range over pairs

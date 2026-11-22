@@ -30,6 +30,7 @@ type config struct {
 
 	// The OE1 mode, measureOE.
 	oeAddr     string
+	orders     bool // send the order flow instead of Pings
 	spin       bool
 	maxSendLag time.Duration            // of a valid run, at p99.9
 	oeDial     func() (net.Conn, error) // tests: instead of dialing oeAddr
@@ -38,7 +39,7 @@ type config struct {
 
 // report is the result of a measurement, written as JSON.
 type report struct {
-	Mode       string             `json:"mode,omitempty"` // "oe" for OE1; REST otherwise
+	Mode       string             `json:"mode,omitempty"` // "oe" for OE1 Pings, "oe_orders" for the flow over OE1; REST otherwise
 	Spin       bool               `json:"spin,omitempty"`
 	SpinRead   bool               `json:"spin_read,omitempty"`   // the reader spun on the socket
 	Pinned     []int              `json:"pinned_cpus,omitempty"` // of the pacer and the reader; -1: not pinned
