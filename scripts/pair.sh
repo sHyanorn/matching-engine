@@ -6,6 +6,8 @@
 #   scripts/pair.sh boot       print the start command of a Pod
 #   scripts/pair.sh engine     serve OE1 on 0.0.0.0:9000
 #   scripts/pair.sh client     measure against ENGINE_ADDR, publish the results
+#   scripts/pair.sh supervise  run the engines of the pilot matrix on request
+#   scripts/pair.sh matrix     run the pilot matrix against a supervisor, publish the results
 #   scripts/pair.sh selftest   print a line every minute
 #
 # A Pod runs `bash -c` with the text that boot prints, in the golang image
@@ -30,6 +32,15 @@
 # whether SO_BUSY_POLL can be set, the kernel's boot ID (the same on two
 # Pods only if they share a host), and the RUNPOD_* variables, but for
 # those whose names suggest a secret.
+#
+# supervise and matrix are the pilot (cmd/pairrun). supervise serves the
+# control port 9100 and, with the engine's OE1 port 9000 and HTTP port
+# 8080, is what the client reaches: it runs one loopback R1 run, then
+# starts a fresh engine for each run the client asks for. matrix, on the
+# other machine, runs the plan against ENGINE_OE, ENGINE_HTTP and ENGINE_CTL
+# (host:port of the three), with the Pod's own DEADLINE as the end of its
+# time, and publishes its results as client does. PILOT_* variables
+# override the plan's rates and durations for a rehearsal (cmd/pairrun).
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -57,7 +68,7 @@ boot() {
 
 build() {
 	cd "$repo"
-	CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -o bin/ ./cmd/engine ./cmd/loadgen
+	CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -o bin/ ./cmd/engine ./cmd/loadgen ./cmd/pairrun
 	GOTOOLCHAIN=local go build -o bin/pair scripts/pair.go
 }
 
@@ -74,6 +85,8 @@ envtxt() {
 	echo "clock source: $(show /sys/devices/system/clocksource/clocksource0/current_clocksource)"
 	echo "net.core.busy_read: $(show /proc/sys/net/core/busy_read), net.core.busy_poll: $(show /proc/sys/net/core/busy_poll)"
 	bin/pair probe
+	echo "thread siblings: $(for c in /sys/devices/system/cpu/cpu[0-9]*; do echo -n "${c##*/}=$(show "$c/topology/thread_siblings_list") "; done)"
+	echo "cgroup memory.max: $(show /sys/fs/cgroup/memory.max), taskset: $(taskset --version 2>&1 | head -n 1)"
 	env | grep '^RUNPOD_' | grep -Eiv '^[^=]*(KEY|SECRET|TOKEN|PASS)' | sort || true
 	lscpu
 }
@@ -81,6 +94,16 @@ envtxt() {
 engine() {
 	envtxt
 	exec bin/engine -addr 127.0.0.1:8080 -oe-addr 0.0.0.0:9000 -data "$(mktemp -d)"
+}
+
+# publish packs the results, prints the archive and serves it.
+publish() {
+	tar -czf results.tgz results
+	echo "pair: results.tgz $(wc -c < results.tgz) bytes, sha256 $(sha256sum results.tgz | cut -d ' ' -f 1)"
+	echo "-- begin results.tgz base64"
+	base64 results.tgz
+	echo "-- end results.tgz base64"
+	exec bin/pair serve :8000 "$RESULT_PATH" results.tgz
 }
 
 client() {
@@ -99,12 +122,21 @@ client() {
 			-out "results/run-$n.json" > "results/run-$n.txt" 2>&1 || true
 		cat "results/run-$n.txt"
 	done
-	tar -czf results.tgz results
-	echo "pair: results.tgz $(wc -c < results.tgz) bytes, sha256 $(sha256sum results.tgz | cut -d ' ' -f 1)"
-	echo "-- begin results.tgz base64"
-	base64 results.tgz
-	echo "-- end results.tgz base64"
-	exec bin/pair serve :8000 "$RESULT_PATH" results.tgz
+	publish
+}
+
+supervise() {
+	envtxt
+	exec bin/pairrun supervise -engine bin/engine -loadgen bin/loadgen -listen :9100 -work "$(mktemp -d)"
+}
+
+matrix() {
+	: "${ENGINE_OE:?}" "${ENGINE_HTTP:?}" "${ENGINE_CTL:?}" "${RESULT_PATH:?}"
+	mkdir -p results
+	envtxt > results/env.txt
+	bin/pairrun client -loadgen bin/loadgen -oe "$ENGINE_OE" -http "$ENGINE_HTTP" -ctl "$ENGINE_CTL" -out results \
+		${DEADLINE:+-deadline "$DEADLINE"} ${DEADLINE_MARGIN:+-deadline-margin "$DEADLINE_MARGIN"} || echo "pair: pairrun client failed with status $?"
+	publish
 }
 
 selftest() {
@@ -124,9 +156,17 @@ client)
 	build
 	client
 	;;
+supervise)
+	build
+	supervise
+	;;
+matrix)
+	build
+	matrix
+	;;
 selftest) selftest ;;
 *)
-	sed -n '6,9p' "$0" >&2
+	sed -n '6,11p' "$0" >&2
 	exit 2
 	;;
 esac

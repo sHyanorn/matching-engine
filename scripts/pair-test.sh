@@ -14,6 +14,14 @@
 #
 #   scripts/pair-test.sh
 #
+# With the argument `pilot` it runs the pilot instead (scripts/pair.sh
+# supervise and matrix, cmd/pairrun): two Pods on this machine, each on
+# half of its CPUs, with the plan's durations and send lag bound
+# shortened by PILOT_* variables, and checks that the results come out
+# whole, can be fetched from port 8000 with no one logged in, and say that
+# they are a rehearsal. It takes minutes; the summary of what it found is
+# printed. Ports 8000, 8080, 9000 and 9100 must be free.
+#
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
 # 8080 and 9000 must be free. Needs Go at go.mod's version, git, GNU tar,
@@ -107,19 +115,28 @@ deadline=()
 # pod NAME MODE COMMIT SECONDS [VAR=VALUE...] starts a Pod that deletes
 # itself SECONDS from now, with its output in NAME.log.
 pod() {
-	local name=$1 mode=$2 c=$3 at=$((now + $4))
+	local name=$1 mode=$2 c=$3 at=$((now + $4)) pin=() a
 	shift 4
 	deadline+=("$name $at")
+	local vars=()
+	for a in "$@"; do
+		case $a in
+		CPUS=*) pin=(taskset -c "${a#CPUS=}") ;;
+		*) vars+=("$a") ;;
+		esac
+	done
 	env PATH="$go:$PATH" TMPDIR="$t/tmp" CURL_HOME="$t/curl" MODE="$mode" COMMIT="$c" TREE="$tree" \
-		DEADLINE="$at" RUNPOD_POD_ID="$name" RUNPOD_API_KEY="$key" "$@" \
-		setsid bash -c "$boot" > "$t/$name.log" 2>&1 &
+		DEADLINE="$at" RUNPOD_POD_ID="$name" RUNPOD_API_KEY="$key" "${vars[@]}" \
+		"${pin[@]}" setsid bash -c "$boot" > "$t/$name.log" 2>&1 &
 	pids+=($!)
 }
-pod engine engine "$commit" 40
-pod client client "$commit" 45 ENGINE_ADDR=127.0.0.1:9000 RESULT_PATH="$path" RUNS=2 WARMUP=1s DURATION=2s
-pod selftest selftest "$commit" 10
-pod other selftest "$other" 10
-pod added selftest "$added" 10
+if [ "${1:-}" != pilot ]; then
+	pod engine engine "$commit" 40
+	pod client client "$commit" 45 ENGINE_ADDR=127.0.0.1:9000 RESULT_PATH="$path" RUNS=2 WARMUP=1s DURATION=2s
+	pod selftest selftest "$commit" 10
+	pod other selftest "$other" 10
+	pod added selftest "$added" 10
+fi
 
 failed=0
 check() {
@@ -146,6 +163,65 @@ refused() {
 	grep -qx "$2" "$t/$1.log" && grep -qx 'pair: stopped with status 1' "$t/$1.log" &&
 		not grep -q '^pair: alive' "$t/$1.log"
 }
+
+# pilot rehearses the pilot's two modes. The plan's durations and send lag
+# bound are shortened; nothing else differs from a rented pair but the
+# CPUs, which the two Pods share half and half. The result files are kept
+# in $PILOT_KEEP when it is set.
+pilot() {
+	local over=("PILOT_WARMUP=${PILOT_WARMUP:-1s}" "PILOT_DURATION=${PILOT_DURATION:-3s}" "PILOT_LONG=${PILOT_LONG:-5s}" PILOT_MAX_SEND_LAG=20ms DEADLINE_MARGIN=30s)
+	pod supervise supervise "$commit" 2400 CPUS=0,1 "${over[@]}"
+	pod matrix matrix "$commit" 2400 CPUS=2,3 ENGINE_OE=127.0.0.1:9000 ENGINE_HTTP=127.0.0.1:8080 ENGINE_CTL=127.0.0.1:9100 \
+		RESULT_PATH="$path" "${over[@]}"
+	for _ in $(seq 1800); do
+		grep -q -- '-- end results.tgz base64' "$t/matrix.log" && break
+		sleep 1
+	done
+	sum=$(sed -n 's/^pair: results.tgz [0-9]* bytes, sha256 //p' "$t/matrix.log")
+	curl -fsS --noproxy '*' --retry 5 --retry-connrefused -o "$t/fetched.tgz" "http://127.0.0.1:8000/$path/results.tgz" || true
+	sed -n '/^-- begin results.tgz base64$/,/^-- end results.tgz base64$/p' "$t/matrix.log" | sed '1d;$d' |
+		base64 -d > "$t/logged.tgz" || true
+	mkdir "$t/results" && tar -xzf "$t/fetched.tgz" -C "$t/results" || true
+	local r=$t/results/results
+	check "the archive served on port 8000 has the SHA-256 in the log" summed "$t/fetched.tgz"
+	check "the base64 copy in the log has the same SHA-256" summed "$t/logged.tgz"
+	check "the archive holds the plan, the runs, the loopback run, G2 and the summary" \
+		bash -c 'cd "$0" && [ -s env.txt ] && [ -s plan.json ] && [ -s runs.jsonl ] && [ -s loopback.json ] && [ -s g2.json ] && [ -s summary.json ] && [ -s summary.txt ]' "$r"
+	check "every line of runs.jsonl is a JSON object and every run has its two report files" \
+		python3 -I -c '
+import json, os, sys
+r = sys.argv[1]
+for line in open(os.path.join(r, "runs.jsonl")):
+    run = json.loads(line)
+    base = os.path.splitext(os.path.join(r, run["report"]))[0]
+    for ext in (".json", ".txt"):
+        assert os.path.exists(base + ext), run["report"]
+' "$r"
+	check "the summary says that this is a rehearsal and not publishable" \
+		python3 -I -c '
+import json, sys
+s = json.load(open(sys.argv[1] + "/summary.json"))
+assert s["rehearsal"] is True and s["publishable"] is False
+' "$r"
+	check "the control port serves nothing but its routes" \
+		bash -c '[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" http://127.0.0.1:9100/proc/self/environ)" = 404 ] &&
+			[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:9100/start?config=nope")" = 400 ]'
+	check "no response of the control port holds the environment" \
+		bash -c '! curl -s --noproxy "*" http://127.0.0.1:9100/host | grep -qE "PATH=|RUNPOD|COMMIT"'
+	check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$r"
+	if [ -n "${PILOT_KEEP:-}" ]; then
+		mkdir -p "$PILOT_KEEP" && cp -r "$r"/. "$PILOT_KEEP"/
+	fi
+	[ -s "$r/summary.txt" ] && cat "$r/summary.txt"
+	[ "$failed" = 0 ] || {
+		tail -n 20 "$t"/*.log
+		exit 1
+	}
+}
+if [ "${1:-}" = pilot ]; then
+	pilot
+	exit
+fi
 
 touch "$t/deletes"
 for _ in $(seq 240); do
