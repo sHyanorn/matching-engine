@@ -28,18 +28,45 @@ type config struct {
 	sd       float64
 	pushWait time.Duration // tests: how long to wait for pushes still missing at the end; 0 means 5 s
 
-	// The OE1 mode, measureOE.
+	// The OE1 mode, measureOE. At most one of orders, ioc and ackCancel is
+	// set; none means Pings.
 	oeAddr     string
-	orders     bool // send the order flow instead of Pings
+	orders     bool   // flow R3: the order flow of SPEC §9
+	ioc        bool   // flow R1: IOC orders that cancel at once
+	ackCancel  bool   // flow R2: each order is canceled once its Done is in
+	httpAddr   string // with an order flow: the engine's HTTP address, for the trades counter and the stream
+	push       bool   // flow T: time and check the trade pushes of the R3 run
 	spin       bool
 	maxSendLag time.Duration            // of a valid run, at p99.9
+	replyWait  time.Duration            // tests: how long to wait for replies still missing at the end; 0 means 5 s
 	oeDial     func() (net.Conn, error) // tests: instead of dialing oeAddr
-	beforeSend func(i int)              // tests: called before each write, with its first request
+	beforeSend func(i int)              // tests: called before each write that carries an order, with its first
+}
+
+// orderFlow reports whether the OE1 mode sends orders rather than Pings.
+func (c config) orderFlow() bool { return c.orders || c.ioc || c.ackCancel }
+
+// pushTimeout is how long a run waits at its end for the pushes still
+// missing.
+func (c config) pushTimeout() time.Duration {
+	if c.pushWait == 0 {
+		return 5 * time.Second
+	}
+	return c.pushWait
+}
+
+// replyTimeout is how long the OE1 mode waits at its end for the replies
+// still missing.
+func (c config) replyTimeout() time.Duration {
+	if c.replyWait == 0 {
+		return 5 * time.Second
+	}
+	return c.replyWait
 }
 
 // report is the result of a measurement, written as JSON.
 type report struct {
-	Mode       string             `json:"mode,omitempty"` // "oe" for OE1 Pings, "oe_orders" for the flow over OE1; REST otherwise
+	Mode       string             `json:"mode,omitempty"` // OE1: "oe" for Pings, "oe_orders", "oe_ioc" or "oe_ack_cancel" for a flow; REST otherwise
 	Spin       bool               `json:"spin,omitempty"`
 	SpinRead   bool               `json:"spin_read,omitempty"`   // the reader spun on the socket
 	Pinned     []int              `json:"pinned_cpus,omitempty"` // of the pacer and the reader; -1: not pinned
@@ -56,6 +83,7 @@ type report struct {
 	Valid      bool               `json:"valid"`
 	Problems   []string           `json:"problems,omitempty"`
 	Outcomes   map[string]int     `json:"outcomes"`
+	Cancels    int                `json:"cancels_sent,omitempty"` // oe_ack_cancel: Cancels sent for the orders of the window
 	Trades     tradeCounts        `json:"trades"`
 	Latency    map[string]summary `json:"latency_us"`
 }
@@ -166,11 +194,7 @@ send:
 	for _, w := range workers {
 		replied = replied.plus(w.trades)
 	}
-	wait := cfg.pushWait
-	if wait == 0 {
-		wait = 5 * time.Second
-	}
-	missing := l.join.wait(wait, &l.tape.pushed, replied.n)
+	missing := l.join.wait(cfg.pushTimeout(), &l.tape.pushed, replied.n)
 	closing.Store(true)
 	_ = stream.Close(websocket.StatusNormalClosure, "")
 	err = <-streamErr // the reader has stopped: l.tape is final

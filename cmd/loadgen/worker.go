@@ -279,29 +279,9 @@ func (l *loader) report(workers []*worker, replied tradeSum, missing int, stream
 	if n := r.Outcomes["busy"] + r.Outcomes["error"] + warmupFailed; n > 0 {
 		r.Problems = append(r.Problems, fmt.Sprintf("%d requests failed, %d of them in the warmup; the first: %s", n, warmupFailed, firstErr))
 	}
-	if missing > 0 {
-		r.Problems = append(r.Problems, fmt.Sprintf("%d orders that traded got no trade push", missing))
-	}
-	if streamErr != nil {
-		r.Problems = append(r.Problems, fmt.Sprintf("trade stream ended: %v", streamErr))
-	}
-	tp := &l.tape
-	pushed := int(tp.pushed.Load())
-	r.Trades = tradeCounts{Replies: replied.n, Pushes: pushed, Metric: rose}
-	switch {
-	case tp.problem != "":
-		r.Problems = append(r.Problems, tp.problem)
-	case pushed != replied.n:
-		r.Problems = append(r.Problems, fmt.Sprintf("%d trade pushes for %d trades in the replies", pushed, replied.n))
-	case tp.sum != replied.sum:
-		r.Problems = append(r.Problems, "the trade pushes differ from the trades in the replies")
-	}
-	switch {
-	case metricsErr != nil:
-		r.Problems = append(r.Problems, fmt.Sprintf("reading matching_engine_trades_total: %v", metricsErr))
-	case rose != replied.n:
-		r.Problems = append(r.Problems, fmt.Sprintf("matching_engine_trades_total rose by %d for %d trades in the replies", rose, replied.n))
-	}
+	var problems []string
+	r.Trades, problems = l.tradeProblems(replied, true, missing, streamErr, rose, metricsErr)
+	r.Problems = append(r.Problems, problems...)
 	r.Valid = len(r.Problems) == 0
 	r.Latency = map[string]summary{
 		"trade_push": summarize(l.join.samples),

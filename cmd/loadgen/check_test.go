@@ -87,16 +87,19 @@ func edit(t *testing.T, msg []byte, field string, v any) []byte {
 	return out
 }
 
-// TestTradeCheckCatchesBadPushes runs loadgen through a proxy that spoils
-// one trade push in each way the check must catch.
-func TestTradeCheckCatchesBadPushes(t *testing.T) {
-	const k = 20 // the push to spoil
+// badPush spoils the trade pushes in one way the check must catch: tamper
+// gets each push numbered from 1 and returns the messages to send in its
+// place, and want is what the problem found must contain.
+type badPush struct {
+	name   string
+	tamper func(t *testing.T, n int, msg []byte) [][]byte
+	want   string
+}
+
+// badPushes lists the ways to spoil the push numbered k.
+func badPushes(k int) []badPush {
 	var held []byte
-	cases := []struct {
-		name   string
-		tamper func(t *testing.T, n int, msg []byte) [][]byte
-		want   string
-	}{
+	return []badPush{
 		{"missing", func(t *testing.T, n int, msg []byte) [][]byte {
 			if n == k {
 				return nil
@@ -146,7 +149,13 @@ func TestTradeCheckCatchesBadPushes(t *testing.T) {
 			return [][]byte{msg}
 		}, "the trade pushes differ from the trades in the replies"},
 	}
-	for _, tc := range cases {
+}
+
+// TestTradeCheckCatchesBadPushes runs loadgen through a proxy that spoils
+// one trade push in each way the check must catch.
+func TestTradeCheckCatchesBadPushes(t *testing.T) {
+	const k = 20 // the push to spoil
+	for _, tc := range badPushes(k) {
 		t.Run(tc.name, func(t *testing.T) {
 			addr := tamperProxy(t, startEngine(t, nil), func(n int, msg []byte) [][]byte { return tc.tamper(t, n, msg) })
 			cfg := testConfig(addr)

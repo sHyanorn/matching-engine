@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/engine"
 	"github.com/sHyanorn/matching-engine/internal/flow"
 	"github.com/sHyanorn/matching-engine/internal/oe"
 )
@@ -30,40 +31,59 @@ import (
 // engine's server does.
 //
 // It names two symbols, fakeSymbol second. The nth NewOrder gets the ID
-// fakeOrderID(n) and an accepted Event before its Done, and every fourth a
-// trade Event too. The command numbered busyAt is answered busy, the one
-// numbered twiceAt twice, and the Done of the one numbered gapAt skips a
-// server_seq.
+// fakeOrderID(n), and, as the engine does, the Events accepted and rested
+// before its Done, and every fourth the Events accepted and trade, unless it
+// is an order of -ioc or -ack-cancel: a buy at their prices meets no ask. An
+// IOC order is answered with the Events accepted and canceled and a Done in
+// state canceled, any other order with a Done in state open, and a Cancel
+// with a Done in state canceled. The command
+// numbered busyAt is answered busy, the one numbered twiceAt twice, and the
+// Done of the one numbered gapAt skips a server_seq. reply, if set, may
+// change the answer to each NewOrder and Cancel, given the command.
 type fakeOE struct {
-	delay      time.Duration
-	stallAt    uint64
-	stall      time.Duration
-	drop       uint64
-	garbleAt   uint64
-	heartbeats *atomic.Int32 // counts the client's Heartbeats, if set
+	delay       time.Duration
+	cancelDelay time.Duration // if not 0, the delay of a Cancel's Done
+	stallAt     uint64
+	stall       time.Duration
+	drop        uint64
+	garbleAt    uint64
+	heartbeats  *atomic.Int32 // counts the client's Heartbeats, if set
 
 	busyAt, twiceAt, gapAt uint64
-	commands               chan<- any // gets each NewOrder and Cancel that arrives, if set
+	commands               chan<- any                   // gets each NewOrder and Cancel that arrives, if set
+	trade                  func(book.Event)             // gets each trade Event, when its order arrives, if set
+	sessions               *atomic.Int32                // counts the sessions open, if set
+	reply                  func(cmd any, a *fakeAnswer) // changes an answer before it is queued, if set
 }
 
 const fakeSymbol = "BTC-USD"
 
 func fakeOrderID(n int) book.OrderID { return book.OrderID(n)<<8 | 1 }
 
-var fakeEvents = []book.EventKind{book.EventAccepted, book.EventTrade}
+var (
+	fakeEvents     = []book.EventKind{book.EventAccepted, book.EventTrade}
+	fakeIOCEvents  = []book.EventKind{book.EventAccepted, book.EventCanceled}
+	fakeRestEvents = []book.EventKind{book.EventAccepted, book.EventRested} // what the engine sends for an order that rests
+)
 
-// fakeAnswer is a frame to answer: a Ping, or a command, the ID its Done
-// carries and the kinds of its Events.
+// fakeAnswer is a frame to answer: a Ping, or a command, the Done it gets
+// and the kinds of its Events, of which the trade one is trade.
 type fakeAnswer struct {
 	seq    uint64
 	at     time.Time
+	delay  time.Duration
 	ping   bool
-	id     book.OrderID
 	events []book.EventKind
+	trade  book.Event
+	done   oe.Done // but for its server_seq
 }
 
 func (f fakeOE) serve(c net.Conn) {
 	defer func() { _ = c.Close() }()
+	if f.sessions != nil { // counted down before the connection closes
+		f.sessions.Add(1)
+		defer f.sessions.Add(-1)
+	}
 	answers := make(chan fakeAnswer, 1<<20)
 	written := make(chan struct{})
 	go func() {
@@ -75,9 +95,13 @@ func (f fakeOE) serve(c net.Conn) {
 			}
 			for _, kind := range a.events {
 				serverSeq++
-				b = oe.Event{ServerSeq: serverSeq, ClientSeq: a.seq, Event: book.Event{Kind: kind}}.Append(b)
+				e := book.Event{Kind: kind}
+				if kind == book.EventTrade {
+					e = a.trade
+				}
+				b = oe.Event{ServerSeq: serverSeq, ClientSeq: a.seq, Event: e}.Append(b)
 			}
-			d := oe.Done{ClientSeq: a.seq, Status: oe.StatusOK, OrderID: a.id}
+			d := a.done
 			if a.seq == f.busyAt {
 				d.Status = oe.StatusBusy
 			}
@@ -93,10 +117,10 @@ func (f fakeOE) serve(c net.Conn) {
 		}
 		var b []byte
 		for a := range answers {
-			time.Sleep(time.Until(a.at.Add(f.delay)))
+			time.Sleep(time.Until(a.at.Add(a.delay)))
 			b = add(b[:0], a)
 		more:
-			for f.delay == 0 { // with a delay, each answer waits for its own time
+			for f.delay == 0 && f.cancelDelay == 0 { // with a delay, each answer waits for its own time
 				select {
 				case a, ok := <-answers:
 					if !ok {
@@ -118,7 +142,7 @@ func (f fakeOE) serve(c net.Conn) {
 	}()
 	var buf []byte
 	tmp := make([]byte, 4096)
-	orders := 0
+	orders, bookSeq := 0, uint64(0)
 	for {
 		n, err := c.Read(tmp)
 		at := time.Now()
@@ -132,7 +156,8 @@ func (f fakeOE) serve(c net.Conn) {
 				break
 			}
 			buf = buf[size:]
-			a := fakeAnswer{at: at}
+			a := fakeAnswer{at: at, delay: f.delay}
+			var cmd any
 			switch t {
 			case oe.TypeLogin:
 				b := oe.LoginAccepted{Session: 1, NextServerSeq: 1}.Append(nil)
@@ -146,16 +171,29 @@ func (f fakeOE) serve(c net.Conn) {
 			case oe.TypeNewOrder:
 				m := oe.DecodeNewOrder(body)
 				orders++
-				a.seq, a.id, a.events = m.ClientSeq, fakeOrderID(orders), fakeEvents[:1+b2i(orders%4 == 0)]
-				if f.commands != nil {
-					f.commands <- m
+				a.seq, a.events = m.ClientSeq, fakeRestEvents
+				a.done = oe.Done{ClientSeq: m.ClientSeq, Status: oe.StatusOK, OrderID: fakeOrderID(orders), State: engine.StateOpen}
+				switch {
+				case m.TIF == book.IOC:
+					a.events, a.done.State, a.done.Reason = fakeIOCEvents, engine.StateCanceled, book.ReasonIOCRemainder
+				case orders%4 == 0 && m.Price < ackPrice:
+					bookSeq++
+					a.events = fakeEvents
+					a.trade = book.Event{Seq: bookSeq, Kind: book.EventTrade, OrderID: a.done.OrderID, MakerID: fakeOrderID(1000),
+						Side: m.Side, Price: m.Price, Qty: m.Qty}
+					if f.trade != nil {
+						f.trade(a.trade)
+					}
 				}
+				cmd = m
 			case oe.TypeCancel:
 				m := oe.DecodeCancel(body)
-				a.seq, a.id = m.ClientSeq, m.OrderID
-				if f.commands != nil {
-					f.commands <- m
+				a.seq = m.ClientSeq
+				a.done = oe.Done{ClientSeq: m.ClientSeq, Status: oe.StatusOK, OrderID: m.OrderID, State: engine.StateCanceled, Reason: book.ReasonUserCancel}
+				if f.cancelDelay != 0 {
+					a.delay = f.cancelDelay
 				}
+				cmd = m
 			case oe.TypeHeartbeat:
 				if f.heartbeats != nil {
 					f.heartbeats.Add(1)
@@ -165,6 +203,14 @@ func (f fakeOE) serve(c net.Conn) {
 				return
 			default:
 				continue
+			}
+			if cmd != nil {
+				if f.commands != nil {
+					f.commands <- cmd
+				}
+				if f.reply != nil {
+					f.reply(cmd, &a)
+				}
 			}
 			if a.seq != f.drop {
 				answers <- a
@@ -659,6 +705,77 @@ func TestOELoopsAllocateNothing(t *testing.T) {
 		t.Errorf("%v allocations to send a command and take its reply, want 0; %d of %d requests sent, %d of them cancels, %d trades",
 			allocs, r.nsent, i, cancels, r.trades)
 	}
+
+	// R1: each order is answered at once with its two Events.
+	r = newOERun(config{rate: 10_000, duration: time.Second, ioc: true}, discardConn{})
+	r.in = make([]byte, 0, 4096)
+	i, serverSeq = 0, 0
+	allocs = testing.AllocsPerRun(1000, func() {
+		var err error
+		if i, err = r.send(i, r.due(i)); err != nil {
+			t.Fatal(err)
+		}
+		seq := uint64(r.nsent)
+		for _, kind := range fakeIOCEvents {
+			serverSeq++
+			r.in = oe.Event{ServerSeq: serverSeq, ClientSeq: seq, Event: book.Event{Kind: kind}}.Append(r.in)
+		}
+		serverSeq++
+		r.in = oe.Done{ServerSeq: serverSeq, ClientSeq: seq, Status: oe.StatusOK, OrderID: fakeOrderID(int(seq)),
+			State: engine.StateCanceled, Reason: book.ReasonIOCRemainder}.Append(r.in)
+		if err := r.take(r.due(i) + 1000); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 || r.nsent != i || slices.ContainsFunc(r.res[:i], func(o outcome) bool { return o != orderCanceled }) {
+		t.Errorf("%v allocations to send an IOC order and take its reply, want 0; %d of %d requests sent, outcomes %v",
+			allocs, r.nsent, i, r.res[:min(i, 5)])
+	}
+
+	// R2: the Done of each order queues its Cancel, which goes out with a
+	// later order, and every command is answered at once.
+	r = newOERun(config{rate: 10_000, duration: time.Second, ackCancel: true}, discardConn{})
+	r.in = make([]byte, 0, 4096)
+	i, serverSeq, cancels = 0, 0, 0
+	allocs = testing.AllocsPerRun(1000, func() {
+		was := r.nsent
+		var err error
+		if i, err = r.send(i, r.due(i)); err != nil {
+			t.Fatal(err)
+		}
+		for seq := was + 1; seq <= r.nsent; seq++ {
+			c := r.cmds[seq-1]
+			d := oe.Done{ClientSeq: uint64(seq), Status: oe.StatusOK, OrderID: fakeOrderID(int(c.request) + 1), State: engine.StateOpen}
+			if c.order == 0 {
+				cancels++
+				d.State, d.Reason = engine.StateCanceled, book.ReasonUserCancel
+			} else {
+				for _, kind := range fakeRestEvents {
+					serverSeq++
+					r.in = oe.Event{ServerSeq: serverSeq, ClientSeq: uint64(seq), Event: book.Event{Kind: kind}}.Append(r.in)
+				}
+			}
+			serverSeq++
+			d.ServerSeq = serverSeq
+			r.in = d.Append(r.in)
+		}
+		if err := r.take(r.due(i) + 1000); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 || cancels < 900 || r.answered.Load() != int64(i) {
+		t.Errorf("%v allocations to send an order and a Cancel and take their replies, want 0; %d Cancels sent for %d orders, %d answered",
+			allocs, cancels, i, r.answered.Load())
+	}
+	for seq, out := range r.res[:r.nsent] {
+		want := orderRested
+		if r.cmds[seq].order == 0 {
+			want = cancelCanceled
+		}
+		if out != want {
+			t.Fatalf("client_seq %d, order %d: outcome %v, want %v", seq+1, r.cmds[seq].order, outcomeNames[out], outcomeNames[want])
+		}
+	}
 }
 
 // Every write the pacer makes carries a Ping, at a rate whose period is
@@ -687,6 +804,12 @@ func TestOESendTakesWhatIsDue(t *testing.T) {
 // and returns what it printed and the report it wrote.
 func runOEReport(t *testing.T, flags ...string) (string, report) {
 	t.Helper()
+	return runOEReportWith(t, fakeOE{}, flags...)
+}
+
+// runOEReportWith is runOEReport against f.
+func runOEReportWith(t *testing.T, f fakeOE, flags ...string) (string, report) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("runs a load in real time")
 	}
@@ -697,7 +820,7 @@ func runOEReport(t *testing.T, flags ...string) (string, report) {
 	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		if c, err := ln.Accept(); err == nil {
-			fakeOE{}.serve(c)
+			f.serve(c)
 		}
 	}()
 	out := filepath.Join(t.TempDir(), "r.json")
@@ -706,16 +829,20 @@ func runOEReport(t *testing.T, flags ...string) (string, report) {
 	// valid unless the tool fails.
 	args := append([]string{"-oe", ln.Addr().String(), "-rate", "1000", "-warmup", "0s",
 		"-duration", "500ms", "-max-send-lag", "1h", "-out", out}, flags...)
-	if err := run(context.Background(), args, &stdout); err != nil {
-		t.Fatalf("%v\n%s", err, stdout.String())
-	}
+	runErr := run(context.Background(), args, &stdout)
 	data, err := os.ReadFile(out)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v: %v\n%s", runErr, err, stdout.String())
 	}
 	var r report
 	if err := json.Unmarshal(data, &r); err != nil {
 		t.Fatal(err)
+	}
+	// Whether the target rate went out depends on how busy the machine is,
+	// as rateAside says: the caller sees a miss in the report, and any other
+	// reason for run to fail stops the test here.
+	if runErr != nil && (len(r.Problems) == 0 || slices.ContainsFunc(r.Problems, func(p string) bool { return !strings.HasPrefix(p, "achieved ") })) {
+		t.Fatalf("%v\n%s", runErr, stdout.String())
 	}
 	return stdout.String(), r
 }

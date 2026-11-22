@@ -141,6 +141,42 @@ func uintAfter(b, key []byte) (uint64, []byte, bool) {
 	return v, b[n:], n > 0
 }
 
+// tradeProblems makes the trade checks of a run, which the REST mode and the
+// OE1 mode share, and returns the trades each source counted and what is
+// wrong with them. The checks of the stream are made only if the run read it
+// (streamed): missing is the number of measured orders that traded and got no
+// push, and streamErr what ended the stream. rose is the rise of the engine's
+// counter, which metricsErr says could not be read.
+func (l *loader) tradeProblems(replied tradeSum, streamed bool, missing int, streamErr error, rose int, metricsErr error) (tradeCounts, []string) {
+	var problems []string
+	counts := tradeCounts{Replies: replied.n, Metric: rose}
+	if streamed {
+		if missing > 0 {
+			problems = append(problems, fmt.Sprintf("%d orders that traded got no trade push", missing))
+		}
+		if streamErr != nil {
+			problems = append(problems, fmt.Sprintf("trade stream ended: %v", streamErr))
+		}
+		tp := &l.tape
+		counts.Pushes = int(tp.pushed.Load())
+		switch {
+		case tp.problem != "":
+			problems = append(problems, tp.problem)
+		case counts.Pushes != replied.n:
+			problems = append(problems, fmt.Sprintf("%d trade pushes for %d trades in the replies", counts.Pushes, replied.n))
+		case tp.sum != replied.sum:
+			problems = append(problems, "the trade pushes differ from the trades in the replies")
+		}
+	}
+	switch {
+	case metricsErr != nil:
+		problems = append(problems, fmt.Sprintf("reading matching_engine_trades_total: %v", metricsErr))
+	case rose != replied.n:
+		problems = append(problems, fmt.Sprintf("matching_engine_trades_total rose by %d for %d trades in the replies", rose, replied.n))
+	}
+	return counts, problems
+}
+
 // tradesTotal reads the engine's matching_engine_trades_total for symbol.
 // The engine exports the series from its start, at 0, so a missing line
 // is an error.

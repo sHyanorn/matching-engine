@@ -20,7 +20,9 @@ import (
 // kernels and the session's reader and writer, without the engine. It is
 // the floor that the engine's own latency is set against. With -orders it
 // sends the SPEC §9 flow instead, as the REST mode does, and times each
-// NewOrder and Cancel from its due time to its Done (D046).
+// NewOrder and Cancel from its due time to its Done (D046). With -ioc it
+// sends IOC orders that cancel at once, and with -ack-cancel orders that
+// are each canceled once their Done is in (oe_flows.go).
 //
 // The session is pipelined: requests go out when they are due, whatever
 // has been answered. With -spin a pacing thread spins on the clock to send
@@ -40,6 +42,7 @@ const (
 	noDone outcome = iota // sent and not answered
 	orderRested
 	orderTraded
+	orderCanceled // an IOC order that was canceled at once
 	cancelCanceled
 	cancelFinished
 	cancelUnknown
@@ -48,7 +51,7 @@ const (
 )
 
 var outcomeNames = [...]string{
-	orderRested: "order_rested", orderTraded: "order_traded",
+	orderRested: "order_rested", orderTraded: "order_traded", orderCanceled: "order_canceled",
 	cancelCanceled: "cancel_canceled", cancelFinished: "cancel_finished", cancelUnknown: "cancel_unknown",
 	commandBusy: "busy", commandError: "error",
 }
@@ -91,6 +94,8 @@ type oeRun struct {
 	// loop since the call before, its write left out: how long the pacer
 	// could not run. By client_seq: reply arrival minus due time, and
 	// whether the Pong arrived. Pings are numbered as their requests are.
+	// With -ack-cancel rtt of a Cancel is its reply arrival minus its send
+	// time.
 	lag, gap, rtt []int64
 	got           []bool
 	out           []byte // the pacer's buffer
@@ -100,10 +105,11 @@ type oeRun struct {
 	pinned        [2]int // CPUs the pacer and the reader were pinned to; -1: not pinned
 	err           error  // that ended the run early
 
-	// The order flow (-orders). A cancel whose order has no ID yet is not
-	// sent and takes no client_seq, so the pacer notes each command it
-	// sends in cmds and publishes their number in sent before the write
-	// that carries them: the reader looks at cmds only below sent.
+	// The order flows. A cancel of the -orders flow whose order has no ID
+	// yet is not sent and takes no client_seq, so the pacer notes each
+	// command it sends in cmds and publishes their number in sent before
+	// the write that carries them: the reader looks at cmds only below
+	// sent.
 	gen     *flow.Generator
 	symbol  uint8           // index of cfg.symbol, from its Symbol frame
 	ids     []atomic.Uint64 // order ID by flow order number, once its Done is in
@@ -112,16 +118,32 @@ type oeRun struct {
 	nsent   int // the pacer's own count of cmds
 	skipped int // cancels of the window not sent
 
+	// With -ack-cancel: when the Cancel of each order went out, by request
+	// (0: not sent), and the queue of the order numbers whose Done said
+	// that they rest, from the reader, the only producer, to the pacer, the
+	// only consumer. The reader writes cq[n] and then publishes n+1 in
+	// queued; the pacer has taken the first taken. A Done of an order is
+	// counted in answered after its order is queued.
+	cancelAt []int64
+	cq       []int32
+	queued   atomic.Int64
+	taken    int
+	answered atomic.Int64
+
 	// The reader's: each command's outcome by client_seq, the last
 	// server_seq, the Events since the last Done (how many, their
-	// client_seq and the trades among them), the trades in the replies to
-	// the orders of the whole run, and the first command that failed.
+	// client_seq, the trades among them and the kinds of the first two),
+	// the trade Events of the whole run, counted and as the sum of their
+	// hashes (check.go), and the first command that failed.
 	res                 []outcome
 	serverSeq           uint64
 	events, eventTrades int
 	eventsOf            uint64
+	kinds               [2]book.EventKind
 	trades              int
+	tradeSum            uint64
 	firstFailed         oe.Done
+	firstFound          string // what the first failed command of -ioc or -ack-cancel answered
 }
 
 // since is the time from t0, on the monotonic clock.
@@ -129,7 +151,41 @@ func (r *oeRun) since() int64 { return int64(time.Since(r.t0)) }
 
 func (r *oeRun) due(i int) int64 { return int64(float64(i) * r.period) }
 
+// newOERun makes the run of cfg on conn with every array the run fills, so
+// that nothing allocates once it has begun. Requests are numbered from 0 and
+// client_seqs from 1; with -ack-cancel there are two client_seqs for each
+// order, its own and its Cancel's.
+func newOERun(cfg config, conn net.Conn) *oeRun {
+	r := &oeRun{cfg: cfg, conn: conn, period: float64(time.Second) / cfg.rate}
+	r.total = int(cfg.rate * (cfg.warmup + cfg.duration).Seconds())
+	seqs := r.total
+	if cfg.ackCancel {
+		seqs = 2 * r.total
+	}
+	r.lag, r.rtt, r.gap = make([]int64, r.total), make([]int64, seqs), make([]int64, r.total)
+	r.got = make([]bool, r.total)
+	r.out = make([]byte, 0, maxBatch*31)
+	if cfg.orderFlow() {
+		r.cmds, r.res = make([]command, seqs), make([]outcome, seqs)
+	}
+	if cfg.orders {
+		r.gen = flow.New(cfg.seed, cfg.sd)
+	}
+	if cfg.orders || cfg.ackCancel {
+		r.ids = make([]atomic.Uint64, r.total+1)
+	}
+	if cfg.ackCancel {
+		r.cancelAt, r.cq = make([]int64, r.total), make([]int32, r.total)
+	}
+	return r
+}
+
+// measureOE runs cfg and describes it. With -http it also checks the run's
+// trades against the engine (oe_check.go).
 func measureOE(ctx context.Context, cfg config) (report, error) {
+	if cfg.httpAddr != "" {
+		return measureChecked(ctx, cfg)
+	}
 	r, err := runOE(ctx, cfg)
 	if err != nil {
 		return report{}, err
@@ -148,16 +204,7 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	r := &oeRun{cfg: cfg, conn: conn, period: float64(time.Second) / cfg.rate}
-	r.total = int(cfg.rate * (cfg.warmup + cfg.duration).Seconds())
-	r.lag, r.rtt, r.gap = make([]int64, r.total), make([]int64, r.total), make([]int64, r.total)
-	r.got = make([]bool, r.total)
-	r.out = make([]byte, 0, maxBatch*31)
-	if cfg.orders {
-		r.gen = flow.New(cfg.seed, cfg.sd)
-		r.ids = make([]atomic.Uint64, r.total+1)
-		r.cmds, r.res = make([]command, r.total), make([]outcome, r.total)
-	}
+	r := newOERun(cfg, conn)
 	if err := r.login(); err != nil {
 		return nil, fmt.Errorf("logging in to %s: %w", cfg.oeAddr, err)
 	}
@@ -196,7 +243,7 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 	var readErr error
 	select {
 	case readErr = <-read:
-	case <-time.After(5 * time.Second):
+	case <-time.After(cfg.replyTimeout()):
 		r.end()
 		readErr = <-read
 	}
@@ -208,7 +255,7 @@ func runOE(ctx context.Context, cfg config) (*oeRun, error) {
 }
 
 // login opens a session and leaves in r.in what follows LoginAccepted or,
-// for the order flow, what follows cfg.symbol's Symbol frame, whose index
+// for an order flow, what follows cfg.symbol's Symbol frame, whose index
 // the orders name: the server sends the Symbol frames before anything
 // else, so another frame first means that it has no such symbol.
 func (r *oeRun) login() error {
@@ -238,7 +285,7 @@ func (r *oeRun) login() error {
 		switch {
 		case !accepted && t == oe.TypeLoginAccepted:
 			accepted = true
-			found = !r.cfg.orders
+			found = !r.cfg.orderFlow()
 		case !accepted && t == oe.TypeLoginRejected:
 			return fmt.Errorf("login refused: %v", oe.DecodeLoginRejected(body).Reason)
 		case !accepted:
@@ -263,10 +310,18 @@ func (r *oeRun) end() {
 	_ = r.conn.Close()
 }
 
+// cancelPoll is the longest a sleeping pacer of -ack-cancel waits before it
+// looks for a Cancel to send: the reader queues one when an order's Done is
+// in, and does not wake the pacer.
+const cancelPoll = 50 * time.Microsecond
+
 // pace sends every request when it is due, but for the cancels that
-// command skips, then a Logout. With -spin it spins on the clock, locked
-// to its thread and pinned to cpu; otherwise it sleeps until each request
-// is due.
+// command skips, then a Logout. With -ack-cancel it also sends each Cancel
+// the reader has queued, with the orders that are due or alone, and after
+// the last order it waits for the Dones still to come, up to
+// cfg.replyTimeout, so that every order that rests is canceled. With -spin
+// it spins on the clock, locked to its thread and pinned to cpu; otherwise
+// it sleeps until each request is due.
 func (r *oeRun) pace(cpu int) error {
 	if r.cfg.spin {
 		runtime.LockOSThread() // for good: see runOE
@@ -276,7 +331,8 @@ func (r *oeRun) pace(cpu int) error {
 	}
 	const heartbeat = int64(time.Second)
 	var prev, longest, wrote int64 // wrote: when a frame last went out
-	for i := 0; i < r.total; {
+	var giveUp int64               // when to stop waiting for the last Dones
+	for i := 0; ; {
 		if r.stop.Load() {
 			return nil
 		}
@@ -285,7 +341,19 @@ func (r *oeRun) pace(cpu int) error {
 			longest = max(longest, now-prev)
 		}
 		prev = now
-		if now < r.due(i) {
+		// Counted before the queue is looked at: a Done queues its Cancel
+		// first, so the queue holds every Cancel of the Dones counted.
+		answered := r.answered.Load()
+		orderDue := i < r.total && now >= r.due(i)
+		if !orderDue && r.taken == int(r.queued.Load()) {
+			if i == r.total {
+				if giveUp == 0 {
+					giveUp = now + int64(r.cfg.replyTimeout())
+				}
+				if !r.cfg.ackCancel || answered == int64(r.total) || now >= giveUp {
+					break
+				}
+			}
 			if now-wrote >= heartbeat { // docs/API.md: after 1 s without sending
 				if _, err := r.conn.Write(oe.Heartbeat{}.Append(r.out[:0])); err != nil {
 					r.end()
@@ -294,15 +362,24 @@ func (r *oeRun) pace(cpu int) error {
 				prev, wrote = r.since(), now
 			}
 			if !r.cfg.spin {
-				time.Sleep(time.Duration(min(r.due(i), wrote+heartbeat) - now))
+				wake := wrote + heartbeat
+				if i < r.total {
+					wake = min(wake, r.due(i))
+				}
+				if r.cfg.ackCancel {
+					wake = min(wake, now+int64(cancelPoll))
+				}
+				time.Sleep(time.Duration(wake - now))
 			}
 			continue
 		}
-		if r.cfg.beforeSend != nil {
-			r.cfg.beforeSend(i)
+		if orderDue {
+			if r.cfg.beforeSend != nil {
+				r.cfg.beforeSend(i)
+			}
+			r.gap[i] = longest
+			longest = 0
 		}
-		r.gap[i] = longest
-		longest = 0
 		var err error
 		if i, err = r.send(i, now); err != nil {
 			r.end()
@@ -319,20 +396,24 @@ func (r *oeRun) pace(cpu int) error {
 	return err
 }
 
-// send writes request i, due by now, and those after it that are due by
-// now too, at most maxBatch, with one write, and returns the next request
-// to send.
+// send writes the requests from i that are due by now, at most maxBatch,
+// with one write, and with -ack-cancel the Cancels that are queued, in the
+// room that is left in the write. It returns the next request to send.
 func (r *oeRun) send(i int, now int64) (int, error) {
-	n := i + 1
+	n := i
 	for n < r.total && n < i+maxBatch && r.due(n) <= now {
 		n++
 	}
 	r.out = r.out[:0]
-	if r.cfg.orders {
+	var cancels int // where the Cancels of this write begin in cmds
+	if r.cfg.orderFlow() {
 		for j := i; j < n; j++ {
 			r.command(j)
 		}
-		r.sent.Store(int64(r.nsent))
+		cancels = r.nsent
+		if r.cfg.ackCancel {
+			r.cancels(maxBatch - (n - i))
+		}
 	} else {
 		for j := i; j < n; j++ {
 			r.out = oe.Ping{ClientSeq: uint64(j + 1)}.Append(r.out)
@@ -342,6 +423,12 @@ func (r *oeRun) send(i int, now int64) (int, error) {
 	for j := i; j < n; j++ {
 		r.lag[j] = sent - r.due(j)
 	}
+	for _, c := range r.cmds[cancels:r.nsent] {
+		r.cancelAt[c.request] = sent
+	}
+	if r.cfg.orderFlow() {
+		r.sent.Store(int64(r.nsent)) // after the times, which the reader reads
+	}
 	if len(r.out) == 0 { // every request due was a cancel that is skipped
 		return n, nil
 	}
@@ -349,11 +436,20 @@ func (r *oeRun) send(i int, now int64) (int, error) {
 	return n, err
 }
 
-// command appends the frame of request j, the next op of the flow. A cancel
+// command appends the frame of request j, and notes it, as a command of the
+// flow chosen. For -orders it is the next op of the flow, and a cancel
 // needs its order's ID, which the order's Done carries: one whose order has
 // no Done yet, or failed, is skipped, as the REST mode skips it (worker.go),
 // so that no send waits for a reply.
 func (r *oeRun) command(j int) {
+	if r.cfg.ioc {
+		r.fixedOrder(j, book.IOC, iocPrice)
+		return
+	}
+	if r.cfg.ackCancel {
+		r.fixedOrder(j, book.GTC, ackPrice)
+		return
+	}
 	op := r.gen.Next()
 	c, seq := command{request: int32(j)}, uint64(r.nsent+1)
 	if op.Cancel {
@@ -429,27 +525,33 @@ func (r *oeRun) take(at int64) error {
 		}
 		switch {
 		case t == oe.TypeSymbol || t == oe.TypeHeartbeat:
-		case t == oe.TypePong && !r.cfg.orders:
+		case t == oe.TypePong && !r.cfg.orderFlow():
 			seq := oe.DecodePong(body).ClientSeq
 			if seq == 0 || seq > uint64(r.total) || r.got[seq-1] {
 				return fmt.Errorf("got Pong with client_seq %d, want each of 1 to %d once", seq, r.total)
 			}
 			r.rtt[seq-1] = at - r.due(int(seq-1))
 			r.got[seq-1] = true
-		case t == oe.TypeEvent && r.cfg.orders:
+		case t == oe.TypeEvent && r.cfg.orderFlow():
 			e := oe.DecodeEvent(body)
 			if err := r.numbered(e.ServerSeq, e.ClientSeq); err != nil {
 				return err
 			}
+			if r.events < len(r.kinds) {
+				r.kinds[r.events] = e.Kind
+			}
 			r.events, r.eventsOf = r.events+1, e.ClientSeq
 			if e.Kind == book.EventTrade {
 				r.eventTrades++
+				r.trades++
+				r.tradeSum += trade{bookSeq: e.Seq, taker: uint64(e.OrderID), maker: uint64(e.MakerID),
+					price: int64(e.Price), qty: int64(e.Qty)}.hash()
 			}
-		case t == oe.TypeDone && r.cfg.orders:
+		case t == oe.TypeDone && r.cfg.orderFlow():
 			if err := r.done(oe.DecodeDone(body), at); err != nil {
 				return err
 			}
-		case r.cfg.orders:
+		case r.cfg.orderFlow():
 			return fmt.Errorf("%q frame, want Event, Done, Symbol or Heartbeat", byte(t))
 		default:
 			return fmt.Errorf("%q frame, want Pong, Symbol or Heartbeat", byte(t))
@@ -473,7 +575,9 @@ func (r *oeRun) numbered(serverSeq, clientSeq uint64) error {
 	return nil
 }
 
-// done records the answer to a command, which arrived at at.
+// done records the answer to a command, which arrived at at. A Cancel of
+// -ack-cancel is timed from its own send, every other command from the due
+// time of its request.
 func (r *oeRun) done(d oe.Done, at int64) error {
 	if err := r.numbered(d.ServerSeq, d.ClientSeq); err != nil {
 		return err
@@ -483,18 +587,39 @@ func (r *oeRun) done(d oe.Done, at int64) error {
 		return fmt.Errorf("got Done with client_seq %d, want each of the %d sent once", d.ClientSeq, sent)
 	}
 	c := r.cmds[d.ClientSeq-1]
-	out := doneOutcome(c.order == 0, d, r.eventTrades > 0)
+	cancel := c.order == 0
+	out := r.outcome(c, d)
+	from := r.due(int(c.request))
+	if cancel && r.cfg.ackCancel {
+		from = r.cancelAt[c.request]
+	}
 	switch {
 	case out == orderRested || out == orderTraded:
 		r.ids[c.order].Store(uint64(d.OrderID))
-		r.trades += r.eventTrades
+		if r.cfg.ackCancel {
+			r.queue(c.order)
+		}
 	case out.failed() && r.firstFailed.ClientSeq == 0:
-		r.firstFailed = d
+		r.firstFailed, r.firstFound = d, r.found(c, d)
 	}
-	r.rtt[d.ClientSeq-1] = at - r.due(int(c.request))
+	if r.cfg.ackCancel && !cancel {
+		r.answered.Add(1)
+	}
+	r.rtt[d.ClientSeq-1] = at - from
 	r.res[d.ClientSeq-1] = out
-	r.events, r.eventTrades = 0, 0
+	r.events, r.eventTrades, r.kinds = 0, 0, [2]book.EventKind{}
 	return nil
+}
+
+// outcome names the Done of a command of the flow chosen.
+func (r *oeRun) outcome(c command, d oe.Done) outcome {
+	switch {
+	case r.cfg.ioc:
+		return r.iocOutcome(d)
+	case r.cfg.ackCancel:
+		return r.ackOutcome(c, d)
+	}
+	return doneOutcome(c.order == 0, d, r.eventTrades > 0)
 }
 
 // doneOutcome names the Done of a new order or a cancel as classify names
@@ -531,7 +656,10 @@ func (r *oeRun) report() report {
 	}
 	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
 	fill := r.pings
-	if cfg.orders {
+	switch {
+	case cfg.ackCancel:
+		fill = r.ackCancels
+	case cfg.orderFlow():
 		fill = r.orders
 	}
 	sent, lag, problems := fill(&rep)
@@ -591,12 +719,17 @@ func (r *oeRun) pings(rep *report) (sent int, lag []int64, problems []string) {
 	return sent, lag, problems
 }
 
-// orders fills rep for a run of the order flow, as the REST mode reports
-// one (worker.go): a command that was answered busy or with an error
-// fails the run, the warmup's too, and is left out of the latencies.
+// orders fills rep for a run of the order flow or of R1, as the REST mode
+// reports one (worker.go): a command that was answered busy or with an
+// error fails the run, the warmup's too, and is left out of the latencies.
 func (r *oeRun) orders(rep *report) (sent int, lag []int64, problems []string) {
 	cfg := r.cfg
-	rep.Mode, rep.Symbol, rep.Seed, rep.SD = "oe_orders", cfg.symbol, cfg.seed, cfg.sd
+	rep.Symbol = cfg.symbol
+	if cfg.ioc {
+		rep.Mode = "oe_ioc"
+	} else {
+		rep.Mode, rep.Seed, rep.SD = "oe_orders", cfg.seed, cfg.sd
+	}
 	rep.Trades.Replies = r.trades
 	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
 	var reply, service []int64
@@ -628,14 +761,20 @@ func (r *oeRun) orders(rep *report) (sent int, lag []int64, problems []string) {
 	if r.skipped > 0 {
 		rep.Outcomes["cancel_skipped"] = r.skipped
 	}
+	rep.Latency["reply"], rep.Latency["service"] = summarize(reply), summarize(service)
+	return sent, lag, r.commandProblems(failed, warmupFailed, missing)
+}
+
+// commandProblems says what the commands of an order flow that failed or
+// got no Done make wrong with the run.
+func (r *oeRun) commandProblems(failed, warmupFailed, missing int) (problems []string) {
 	if n := failed + warmupFailed; n > 0 {
 		f := r.firstFailed
-		problems = append(problems, fmt.Sprintf("%d commands failed, %d of them in the warmup; the first: client_seq %d answered %v",
-			n, warmupFailed, f.ClientSeq, f.Status))
+		problems = append(problems, fmt.Sprintf("%d commands failed, %d of them in the warmup; the first: client_seq %d answered %v%s",
+			n, warmupFailed, f.ClientSeq, f.Status, r.firstFound))
 	}
 	if missing > 0 {
 		problems = append(problems, fmt.Sprintf("commands with no Done: %d", missing))
 	}
-	rep.Latency["reply"], rep.Latency["service"] = summarize(reply), summarize(service)
-	return sent, lag, problems
+	return problems
 }
