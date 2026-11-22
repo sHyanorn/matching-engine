@@ -1,0 +1,15 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+        │ PlaceOrder  │              SendOrder              │
+        │   sec/op    │   sec/op     vs base                │
+Order-4   5.386µ ± 7%   1.468µ ± 6%  -72.74% (p=0.000 n=10)
+
+        │ PlaceOrder │             SendOrder              │
+        │    B/op    │    B/op     vs base                │
+Order-4   542.0 ± 0%   102.0 ± 1%  -81.18% (p=0.000 n=10)
+
+        │ PlaceOrder │              SendOrder              │
+        │ allocs/op  │ allocs/op   vs base                 │
+Order-4   3.000 ± 0%   0.000 ± 0%  -100.00% (p=0.000 n=10)

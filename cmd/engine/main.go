@@ -145,11 +145,12 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 		logger.Info("serving pprof", "addr", pl.Addr().String())
 	}
 	var oeLn net.Listener
+	var oeSrv *oe.Server
 	if *oeAddr != "" {
 		if oeLn, err = net.Listen("tcp", *oeAddr); err != nil {
 			return errors.Join(err, ln.Close())
 		}
-		oeSrv := oe.NewServer(oe.ServerOptions{Symbols: eng.Symbols(), Logger: logger})
+		oeSrv = oe.NewServer(oe.ServerOptions{Engine: eng, Symbols: eng.Symbols(), Logger: logger})
 		go func() {
 			if err := oeSrv.Serve(oeLn); err != nil {
 				logger.Error("oe listener failed", "err", err)
@@ -178,6 +179,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 
 	logger.Info("shutting down")
 	srv.BeginShutdown()
+	if oeSrv != nil {
+		oeSrv.BeginShutdown()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
 	err = hs.Shutdown(shutdownCtx)

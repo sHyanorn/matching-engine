@@ -1,0 +1,60 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1559 ns/op	     155 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1480 ns/op	     154 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1556 ns/op	     155 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1685 ns/op	     154 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1729 ns/op	     155 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1565 ns/op	     155 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1624 ns/op	     154 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1516 ns/op	     155 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1340 ns/op	     155 B/op	       1 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSendOrder-4   	  300000	      1500 ns/op	     155 B/op	       1 allocs/op
+PASS

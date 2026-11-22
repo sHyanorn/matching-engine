@@ -189,8 +189,8 @@ func TestProtocolErrorsClose(t *testing.T) {
 		name string
 		f    frame
 	}{
-		{"NewOrder, not served yet", NewOrder{ClientSeq: 1}},
-		{"Cancel, not served yet", Cancel{ClientSeq: 1, OrderID: 1}},
+		{"NewOrder with no engine", NewOrder{ClientSeq: 1}},
+		{"Cancel with no engine", Cancel{ClientSeq: 1, OrderID: 1}},
 		{"a second Login", Login{Version: Version}},
 		{"a server frame", Pong{ClientSeq: 1}},
 		{"a wrong length", rawFrame{0x02, 0x00, byte(TypePing), 0}},
@@ -417,7 +417,8 @@ func pingPong(c *client, n int) error {
 }
 
 func TestPingAllocatesNothing(t *testing.T) {
-	ss := &session{srv: NewServer(ServerOptions{}), id: 1, wake: make(chan struct{}, 1)}
+	ss := newSession(NewServer(ServerOptions{}), nil)
+	ss.id = 1
 	ss.out = make([]byte, 0, 64)
 	buf := make([]byte, 0, 64)
 	allocs := testing.AllocsPerRun(1000, func() {

@@ -337,30 +337,12 @@ type Result struct {
 // and once the order is queued PlaceOrder waits for its result (D020). See
 // ErrLogFailed for what a log failure means.
 func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
-	m, ok := e.bySymbol[o.Symbol]
-	if !ok {
-		return Result{}, ErrUnknownSymbol
-	}
-	if len(o.ClientID) > MaxClientIDLen {
-		return Result{}, ErrClientIDLen
-	}
-	if err := ctx.Err(); err != nil {
-		return Result{}, err // nothing submitted, so no ID is taken
-	}
-	counter, err := e.nextID()
+	m, cmd, err := e.prepareOrder(ctx, o)
 	if err != nil {
-		return Result{}, err
+		return Result{OrderID: cmd.OrderID}, err
 	}
-	id := makeOrderID(counter, m.index)
-	cmd := book.Command{
-		Kind: book.CommandNewOrder, OrderID: id,
-		Side: o.Side, Type: o.Type, TIF: o.TIF, Price: o.Price, Qty: o.Qty,
-	}
-	if r := cmd.Validate(); r != book.ReasonNone {
-		return Result{OrderID: id}, &InvalidError{Reason: r}
-	}
-	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd, clientID: o.ClientID}, orBusy)
-	return Result{OrderID: id, Events: resp.events, Status: resp.status}, err
+	resp, err := e.send(ctx, m, request{kind: reqCommand, cmd: cmd, clientID: o.ClientID}, orBusy)
+	return Result{OrderID: cmd.OrderID, Events: resp.events, Status: resp.status}, err
 }
 
 // CancelOrder submits a cancel of order id to the book of the symbol the
@@ -370,15 +352,11 @@ func (e *Engine) PlaceOrder(ctx context.Context, o NewOrder) (Result, error) {
 // reaching a book; an issued ID that is not resting gives a Rejected event
 // with ReasonUnknownOrder.
 func (e *Engine) CancelOrder(ctx context.Context, id book.OrderID) (Result, error) {
-	cmd := book.Command{Kind: book.CommandCancel, OrderID: id}
-	if r := cmd.Validate(); r != book.ReasonNone {
-		return Result{OrderID: id}, &InvalidError{Reason: r}
+	m, cmd, err := e.prepareCancel(id)
+	if err != nil {
+		return Result{OrderID: id}, err
 	}
-	m, ok := e.marketOf(id)
-	if !ok {
-		return Result{OrderID: id}, ErrUnknownOrder
-	}
-	resp, err := e.send(ctx, m, &request{kind: reqCommand, cmd: cmd}, orBusy)
+	resp, err := e.send(ctx, m, request{kind: reqCommand, cmd: cmd}, orBusy)
 	return Result{OrderID: id, Events: resp.events, Status: resp.status}, err
 }
 
@@ -396,7 +374,7 @@ func (e *Engine) Depth(ctx context.Context, symbol string, n int) (Depth, error)
 	if !ok {
 		return Depth{}, ErrUnknownSymbol
 	}
-	resp, err := e.send(ctx, m, &request{kind: reqDepth, n: n}, orWait)
+	resp, err := e.send(ctx, m, request{kind: reqDepth, n: n}, orWait)
 	return resp.depth, err
 }
 
@@ -408,7 +386,7 @@ func (e *Engine) Order(ctx context.Context, id book.OrderID) (OrderStatus, bool,
 	if !ok {
 		return OrderStatus{}, false, nil
 	}
-	resp, err := e.send(ctx, m, &request{kind: reqOrder, id: id}, orWait)
+	resp, err := e.send(ctx, m, request{kind: reqOrder, id: id}, orWait)
 	return resp.status, resp.found, err
 }
 
@@ -531,32 +509,27 @@ const (
 	orWait queueFull = false // wait for room until ctx ends: queries
 )
 
-// send queues r on m and waits for its response. It holds the read lock
-// while sending, so Close cannot close the queue under it.
-func (e *Engine) send(ctx context.Context, m *market, r *request, full queueFull) (response, error) {
+// send queues r on m and waits for its response.
+func (e *Engine) send(ctx context.Context, m *market, r request, full queueFull) (response, error) {
 	if err := ctx.Err(); err != nil {
 		// Checked first: a select with a ready queue and a done context
 		// would pick either case at random.
 		return response{}, err
 	}
 	r.reply = make(chan response, 1)
-	e.mu.RLock()
-	if e.closed {
-		e.mu.RUnlock()
-		return response{}, ErrClosed
-	}
 	if full == orBusy {
-		select {
-		case m.in <- r:
-		default:
-			e.mu.RUnlock()
-			return response{}, ErrBusy
+		if err := e.enqueue(m, r); err != nil {
+			return response{}, err
 		}
-		e.mu.RUnlock()
 		// A queued command is always applied (Close drains the queue), so
 		// its result is waited for rather than lost to ctx (D020).
 		resp := <-r.reply
 		return resp, resp.err
+	}
+	e.mu.RLock()
+	if e.closed {
+		e.mu.RUnlock()
+		return response{}, ErrClosed
 	}
 	select {
 	case m.in <- r:

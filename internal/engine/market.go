@@ -17,9 +17,10 @@ const (
 	reqUnsubscribe                    // remove sub
 )
 
-// request is one unit of work for a market's goroutine. reply is buffered
-// (capacity 1), so the goroutine never blocks on a caller that stopped
-// waiting.
+// request is one unit of work for a market's goroutine, passed by value. A
+// command is answered through sink, with tag, if it has one, and through
+// reply otherwise. reply is buffered (capacity 1), so the goroutine never
+// blocks on a caller that stopped waiting.
 type request struct {
 	kind     reqKind
 	cmd      book.Command
@@ -28,6 +29,8 @@ type request struct {
 	id       book.OrderID
 	sub      *Subscription
 	reply    chan response
+	sink     Sink
+	tag      uint64
 }
 
 type response struct {
@@ -44,13 +47,14 @@ type response struct {
 type market struct {
 	symbol string
 	index  int
-	in     chan *request
+	in     chan request
 
 	maxBatch int
 	clock    func() int64
 	book     *book.Book
 	log      *cmdLog
-	batch    []*request
+	batch    []request
+	touched  []Sink // sinks that got a reply in this batch, in order, without repeats of the last
 	logBuf   []byte
 	recEnds  []int        // end offset in logBuf of each command's record
 	out      []book.Event // reused output buffer for book.Apply
@@ -67,7 +71,7 @@ func openMarket(path, symbol string, index int, cfg Config) (*market, uint64, er
 	m := &market{
 		symbol:   symbol,
 		index:    index,
-		in:       make(chan *request, cfg.QueueSize),
+		in:       make(chan request, cfg.QueueSize),
 		maxBatch: cfg.MaxBatch,
 		clock:    cfg.Clock,
 		book:     book.New(),
@@ -155,10 +159,10 @@ func (m *market) drain() bool {
 // leaves the batch in the file, so the batch is applied. When every batch
 // is fsynced, the commands applied after a failed write or fsync get the
 // error too, with their events: durability was promised and is unknown.
-func (m *market) process(batch []*request) {
+func (m *market) process(batch []request) {
 	m.logBuf, m.recEnds = m.logBuf[:0], m.recEnds[:0]
-	for _, r := range batch {
-		if r.kind == reqCommand {
+	for i := range batch {
+		if r := &batch[i]; r.kind == reqCommand {
 			r.cmd.Timestamp = m.clock()
 			m.logBuf = appendRecord(m.logBuf, logRecord{cmd: r.cmd, clientID: r.clientID})
 			m.recEnds = append(m.recEnds, len(m.logBuf))
@@ -167,7 +171,8 @@ func (m *market) process(batch []*request) {
 	logged, unsynced := m.log.write(m.logBuf, m.recEnds)
 
 	cmd := 0
-	for _, r := range batch {
+	for i := range batch {
+		r := &batch[i]
 		var resp response
 		switch r.kind {
 		case reqCommand:
@@ -177,9 +182,13 @@ func (m *market) process(batch []*request) {
 				break
 			}
 			m.out = m.book.Apply(r.cmd, m.out[:0])
-			// One copy, since m.out is overwritten by the next Apply,
-			// shared read-only by the caller and every subscriber.
-			resp.events = slices.Clone(m.out)
+			resp.events = m.out
+			if r.sink == nil || len(m.subs) > 0 {
+				// One copy, since m.out is overwritten by the next Apply,
+				// shared read-only by the caller and every subscriber. A
+				// sink uses the events before it returns.
+				resp.events = slices.Clone(m.out)
+			}
 			resp.status, resp.found = m.orders.track(r.cmd, r.clientID, resp.events)
 			resp.err = unsynced
 			m.publish(resp.events)
@@ -196,8 +205,20 @@ func (m *market) process(batch []*request) {
 		case reqUnsubscribe:
 			m.unsubscribe(r.sub)
 		}
+		if r.sink != nil {
+			r.sink.Reply(r.tag, Reply{Kind: r.cmd.Kind, OrderID: r.cmd.OrderID, Events: resp.events, Status: resp.status, Err: resp.err})
+			if n := len(m.touched); n == 0 || m.touched[n-1] != r.sink {
+				m.touched = append(m.touched, r.sink)
+			}
+			continue
+		}
 		r.reply <- resp
 	}
+	for i, s := range m.touched {
+		s.Flush()
+		m.touched[i] = nil
+	}
+	m.touched = m.touched[:0]
 }
 
 // shutdown runs when the loop ends: it ends every subscription, then has

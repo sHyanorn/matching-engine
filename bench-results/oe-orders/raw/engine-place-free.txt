@@ -1,0 +1,60 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5150 ns/op	     543 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5530 ns/op	     542 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5531 ns/op	     542 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5233 ns/op	     542 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5548 ns/op	     543 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      4900 ns/op	     542 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5410 ns/op	     543 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5018 ns/op	     542 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5546 ns/op	     542 B/op	       3 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/engine
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkPlaceOrder-4   	  300000	      5361 ns/op	     542 B/op	       3 allocs/op
+PASS

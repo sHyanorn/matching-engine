@@ -50,7 +50,7 @@ func (s *Subscription) Err() error { return s.err }
 // more than once and after the engine has closed.
 func (s *Subscription) Close() {
 	// Only ErrClosed is possible, and closing the engine has ended s.
-	_, _ = s.engine.send(context.Background(), s.market, &request{kind: reqUnsubscribe, sub: s}, orWait)
+	_, _ = s.engine.send(context.Background(), s.market, request{kind: reqUnsubscribe, sub: s}, orWait)
 }
 
 // Subscribe starts a subscription to symbol's events. buffer is the
@@ -68,7 +68,7 @@ func (e *Engine) Subscribe(ctx context.Context, symbol string, buffer, depth int
 	}
 	ch := make(chan Update, buffer)
 	s := &Subscription{C: ch, ch: ch, engine: e, market: m}
-	resp, err := e.send(ctx, m, &request{kind: reqSubscribe, sub: s, n: depth}, orWait)
+	resp, err := e.send(ctx, m, request{kind: reqSubscribe, sub: s, n: depth}, orWait)
 	if err != nil {
 		if ctx.Err() != nil {
 			// The subscribe may already be queued: queue an unsubscribe

@@ -116,7 +116,7 @@ A snapshot followed by its deltas reproduces the book's levels, order counts inc
 
 OE1 is a binary protocol for sending orders and cancels over a persistent TCP session in fixed-length frames ([D041](DECISIONS.md)). The engine serves it on a listener of its own when started with `-oe-addr`, for example `-oe-addr 127.0.0.1:9000`; without the flag there is none. Like the HTTP API it has no TLS and no authentication. Depth, order status and market data stay on REST and WebSocket.
 
-**What this version serves:** logging in to a new session, `Ping`, `Heartbeat` and `Logout`. `NewOrder` and `Cancel` are defined below but not served yet: the server closes the connection when one arrives. Resuming a session is not served yet either: a session ends with its connection, so a `Login` that names an earlier session gets `LoginRejected` with `unknown_session`.
+**What this version serves:** logging in to a new session, `NewOrder`, `Cancel`, `Ping`, `Heartbeat` and `Logout`. Resuming a session is not served yet: a session ends with its connection, so a `Login` that names an earlier session gets `LoginRejected` with `unknown_session`.
 
 ### Frames
 
@@ -154,15 +154,15 @@ An event is `seq u64, ts i64, type u8, side u8, reason u8, level_side u8, level_
 
 ### Sessions
 
-The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4. This version sends only bad_version and unknown_session, and has no limit on sessions.
+The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, a random nonzero 64-bit value, so that a number from before an engine restart is not taken for a new session, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4. This version sends only bad_version and unknown_session, and has no limit on sessions.
 
 `client_seq` starts at 1 in a session and rises by one with each `NewOrder`, `Cancel` and `Ping`. A frame whose number is not above the last one taken is a resend and is dropped; a number that skips one closes the connection. `server_seq` starts at 1 and numbers every `Event` and `Done` of the session. A `Ping` is answered with a `Pong` of the same client_seq without reaching the engine; a `Pong` has no server_seq.
 
-Either side sends `Heartbeat` after 1 s without sending anything, and the server closes a connection on which nothing has arrived for 15 s. `Logout` ends the session: the server sends what it holds for the client, then closes the connection. The server sends `EndOfSession` before it closes a session on shutdown, and only then.
+Either side sends `Heartbeat` after 1 s without sending anything, and the server closes a connection on which nothing has arrived for 15 s. `Logout` ends the session: the server answers every command it has taken, sends all it holds for the client, then closes the connection; frames after the `Logout` are not read. When the server shuts down, it answers every command that arrives with `Done` shutting_down, answers the commands it has taken, sends `EndOfSession` and closes the connection, and sends `EndOfSession` only then.
 
 ### Commands and replies
 
-A `NewOrder` is `POST /v1/orders` without `client_id`, naming its symbol by index and with every field required: a tif of 0 is invalid, where REST would take a default. A `Cancel` is `DELETE /v1/orders/{id}`. Commands of one session for one symbol are applied in the order sent. The reply to a command is one `Event` frame per event in the REST reply, in book order, then one `Done`; the frames of one command come together. `Done.status` matches the REST answer one to one:
+A `NewOrder` is `POST /v1/orders` without `client_id`, naming its symbol by index and with every field required: a tif of 0 is invalid, where REST would take a default. A `Cancel` is `DELETE /v1/orders/{id}`. Commands of one session for one symbol are applied in the order sent. The reply to a command is one `Event` frame per event in the REST reply, in book order, then one `Done`; the frames of one command come together, and a reply that holds no events, as the 404 and 409 answers hold none, is a `Done` alone. Replies are matched to commands by client_seq: replies to commands for different symbols, and the `Done` that the server gives at once to a command it did not queue (`invalid`, `unknown_symbol`, `unknown_order`, `busy`, `shutting_down`), can come in another order than the commands were sent. `Done.status` matches the REST answer one to one:
 
 | `status` | REST answer |
 |---|---|
@@ -189,7 +189,7 @@ Orders stay on the book when a connection closes: there is no cancel on disconne
 
 A session whose unsent output passes 1 MB, or whose output takes over 10 s to write, is disconnected as a slow consumer. A client may put any number of frames in one write, and the server writes everything ready for a session in one write, without waiting for more.
 
-**Not served yet,** as they concern commands: a full symbol queue is answered with `Done` busy at once, and the server stops reading from a session that has 1,024 commands taken and not yet answered, so TCP holds the client back.
+A full symbol queue is answered with `Done` busy at once, and the server stops reading from a session that has 1,024 `NewOrder` and `Cancel` frames taken and not yet answered, so TCP holds the client back. A command answered at once does not count, nor does a `Ping`.
 
 ## Operations
 
@@ -213,4 +213,4 @@ A session whose unsent output passes 1 MB, or whose output takes over 10 s to wr
 
 The Go runtime and process metrics (`go_*`, `process_*`) are served too.
 
-`rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands not applied because of a log failure or shutdown. A command that took effect counts as `accepted`, `rejected` or its cancel result even if its log then failed. Requests that name no configured symbol are not counted, nor is a cancel of an ID whose counter the engine has not issued yet ([D019](DECISIONS.md)). Any other cancel goes to the symbol the ID's low byte names, even if that symbol did not issue it: it is written to that symbol's command log, rejected, and counted there as `unknown`.
+The three counters of orders, cancels and trades count REST requests; OE1 commands are not counted in them. `rejected` counts orders the book refused (for example `fok_unfillable`); `failed` counts commands not applied because of a log failure or shutdown. A command that took effect counts as `accepted`, `rejected` or its cancel result even if its log then failed. Requests that name no configured symbol are not counted, nor is a cancel of an ID whose counter the engine has not issued yet ([D019](DECISIONS.md)). Any other cancel goes to the symbol the ID's low byte names, even if that symbol did not issue it: it is written to that symbol's command log, rejected, and counted there as `unknown`.

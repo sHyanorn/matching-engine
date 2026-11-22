@@ -48,6 +48,7 @@ type orderTracker struct {
 	ring   []OrderStatus // finished orders, oldest overwritten first
 	next   int           // ring index the next finished order goes to
 	index  map[book.OrderID]int
+	free   []*OrderStatus // statuses of finished orders, ready for new ones
 }
 
 func newOrderTracker(symbol string, history int) *orderTracker {
@@ -76,7 +77,12 @@ func (t *orderTracker) lookup(id book.OrderID) (OrderStatus, bool) {
 func (t *orderTracker) track(c book.Command, clientID string, evs []book.Event) (OrderStatus, bool) {
 	var taker *OrderStatus
 	if c.Kind == book.CommandNewOrder {
-		taker = &OrderStatus{
+		if n := len(t.free); n > 0 {
+			taker, t.free = t.free[n-1], t.free[:n-1]
+		} else {
+			taker = new(OrderStatus)
+		}
+		*taker = OrderStatus{
 			Order: book.Order{
 				ID: c.OrderID, Side: c.Side, Type: c.Type, TIF: c.TIF,
 				Price: c.Price, Qty: c.Qty, Timestamp: c.Timestamp,
@@ -126,17 +132,20 @@ func (t *orderTracker) track(c book.Command, clientID string, evs []book.Event) 
 	return t.lookup(c.OrderID)
 }
 
-// finish moves s out of the open orders into the ring of finished ones.
+// finish moves s out of the open orders into the ring of finished ones,
+// and keeps s for a later order. s is left as it is, and is not touched by
+// anyone but the next new order.
 func (t *orderTracker) finish(s *OrderStatus) {
 	delete(t.open, s.ID)
 	s.Remaining = 0
 	if len(t.ring) < cap(t.ring) {
 		t.ring = append(t.ring, *s)
 		t.index[s.ID] = len(t.ring) - 1
-		return
+	} else {
+		delete(t.index, t.ring[t.next].ID)
+		t.ring[t.next] = *s
+		t.index[s.ID] = t.next
+		t.next = (t.next + 1) % cap(t.ring)
 	}
-	delete(t.index, t.ring[t.next].ID)
-	t.ring[t.next] = *s
-	t.index[s.ID] = t.next
-	t.next = (t.next + 1) % cap(t.ring)
+	t.free = append(t.free, s)
 }

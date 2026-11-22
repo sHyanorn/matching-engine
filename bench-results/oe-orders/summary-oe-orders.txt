@@ -1,0 +1,15 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+         │ oe-orders.txt │
+         │    sec/op     │
+Orders-4     5.253µ ± 7%
+
+         │ oe-orders.txt │
+         │     B/op      │
+Orders-4      140.0 ± 1%
+
+         │ oe-orders.txt │
+         │   allocs/op   │
+Orders-4      0.000 ± 0%

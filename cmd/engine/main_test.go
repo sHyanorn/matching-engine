@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/engine"
 	"github.com/sHyanorn/matching-engine/internal/oe"
 )
 
@@ -562,6 +564,88 @@ func TestOEServed(t *testing.T) {
 	}
 	if typ, _ := next(); typ != oe.TypeEndOfSession {
 		t.Fatalf("got %q at shutdown, want EndOfSession", byte(typ))
+	}
+}
+
+// oeDone sends frames over conn and reads the frames of the reply to the
+// command with client_seq seq, up to its Done, which it returns.
+func oeDone(t *testing.T, conn net.Conn, buf *[]byte, seq uint64, frames ...[]byte) oe.Done {
+	t.Helper()
+	_ = conn.SetDeadline(time.Now().Add(waitFor))
+	for _, f := range frames {
+		if _, err := conn.Write(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for {
+		typ, body, n, err := oe.Next(*buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			*buf = (*buf)[n:]
+			if typ == oe.TypeDone {
+				if d := oe.DecodeDone(body); d.ClientSeq == seq {
+					return d
+				}
+			}
+			continue
+		}
+		var tmp [512]byte
+		k, err := conn.Read(tmp[:])
+		if k == 0 && err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		*buf = append(*buf, tmp[:k]...)
+	}
+}
+
+// TestOEOrdersReachTheBook places and cancels orders over OE1 and finds
+// them over REST, then restarts the engine and finds them again: the
+// command log holds what OE1 sent.
+func TestOEOrdersReachTheBook(t *testing.T) {
+	dir := t.TempDir()
+	in := start(t, dir, "-oe-addr", "127.0.0.1:0")
+	conn, err := net.Dial("tcp", in.oe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	var buf []byte
+	first := oeDone(t, conn, &buf, 1, oe.Login{Version: oe.Version}.Append(nil),
+		oe.NewOrder{ClientSeq: 1, Symbol: 0, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 1000, Qty: 5}.Append(nil))
+	if first.Status != oe.StatusOK || first.State != engine.StateOpen || first.OrderID == 0 {
+		t.Fatalf("NewOrder: %+v, want ok and open", first)
+	}
+	if d := oeDone(t, conn, &buf, 2, oe.NewOrder{ClientSeq: 2, Symbol: 0, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 999, Qty: 7}.Append(nil)); d.Status != oe.StatusOK {
+		t.Fatalf("second NewOrder: %+v", d)
+	}
+	c := newClient(t, true)
+	var st orderStatus
+	decode(t, getOrder(t, c, in.base, uint64(first.OrderID)), &st)
+	if st.Status != "open" || st.Price != 1000 || st.Qty != 5 {
+		t.Fatalf("over REST: %+v, want the open order of 5 at 1000", st)
+	}
+	d := oeDone(t, conn, &buf, 3, oe.Cancel{ClientSeq: 3, OrderID: first.OrderID}.Append(nil))
+	if d.Status != oe.StatusOK || d.State != engine.StateCanceled || d.Reason != book.ReasonUserCancel {
+		t.Fatalf("Cancel: %+v", d)
+	}
+	decode(t, getOrder(t, c, in.base, uint64(first.OrderID)), &st)
+	if st.Status != "canceled" {
+		t.Fatalf("over REST after the cancel: %+v", st)
+	}
+	if err := in.stop(t); err != nil {
+		t.Fatalf("run returned %v, want nil", err)
+	}
+
+	in = start(t, dir)
+	c = newClient(t, true)
+	decode(t, getOrder(t, c, in.base, uint64(first.OrderID)), &st)
+	if st.Status != "canceled" {
+		t.Errorf("after a restart: %+v, want the canceled order", st)
+	}
+	if b := getBook(t, c, in.base); len(b.Bids) != 1 || b.Bids[0].Price != 999 || b.Bids[0].Qty != 7 {
+		t.Errorf("book after a restart: %+v, want one bid of 7 at 999", b.Bids)
 	}
 }
 
