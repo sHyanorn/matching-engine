@@ -176,14 +176,11 @@ func (c *conn) newOrder(m NewOrder) error {
 	if opts.Engine == nil {
 		return errNoEngine
 	}
-	if int(m.Symbol) >= len(opts.Symbols) {
-		if ok, err := c.admit(m.ClientSeq, 0, false); !ok {
-			return err
-		}
-		return c.respond(m.ClientSeq, Done{Status: StatusUnknownSymbol})
-	}
 	if ok, err := c.admit(m.ClientSeq, 0, true); !ok {
 		return err
+	}
+	if int(m.Symbol) >= len(opts.Symbols) {
+		return c.refuse(m.ClientSeq, book.CommandNewOrder, 0, engine.ErrUnknownSymbol)
 	}
 	id, err := opts.Engine.SendOrder(c.ss, m.ClientSeq, engine.NewOrder{
 		Symbol: opts.Symbols[m.Symbol], Side: m.Side, Type: m.Type, TIF: m.TIF, Price: m.Price, Qty: m.Qty,
@@ -209,18 +206,8 @@ func (c *conn) cancel(m Cancel) error {
 	return nil
 }
 
-// respond answers a command at once, without a place taken.
-func (c *conn) respond(seq uint64, d Done) error {
-	ss := c.ss
-	ss.mu.Lock()
-	ss.emitDoneLocked(seq, d)
-	ss.mu.Unlock()
-	ss.Flush()
-	return nil
-}
-
-// refuse answers a command the engine would not take, and gives back its
-// place.
+// refuse answers a command that was not queued, for the reason err, and
+// gives back its place.
 func (c *conn) refuse(seq uint64, kind book.CommandKind, id book.OrderID, err error) error {
 	d := refusalDone(kind, id, err)
 	ss := c.ss

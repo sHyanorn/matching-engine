@@ -482,8 +482,9 @@ func TestLogoutWaitsForAnswers(t *testing.T) {
 }
 
 // TestShutdownWaitsForAnswers: a server that is shutting down answers the
-// commands it took, answers new ones with shutting_down, then sends
-// EndOfSession and closes.
+// commands it took, answers new ones with shutting_down, an order for an
+// unknown symbol too, as REST answers it 503, then sends EndOfSession and
+// closes.
 func TestShutdownWaitsForAnswers(t *testing.T) {
 	fe := &fakeEngine{hold: true}
 	s, addr := startServer(t, ServerOptions{Engine: fe})
@@ -492,13 +493,16 @@ func TestShutdownWaitsForAnswers(t *testing.T) {
 	c.send(buyOrder(1), buyOrder(2))
 	waitFor(t, "the commands", func() bool { return fe.taken() == 2 })
 	s.BeginShutdown()
-	c.send(buyOrder(3), Cancel{ClientSeq: 4, OrderID: 1})
+	unrouted := buyOrder(5)
+	unrouted.Symbol = 9
+	c.send(buyOrder(3), Cancel{ClientSeq: 4, OrderID: 1}, unrouted)
 	c.expect(Done{ServerSeq: 1, ClientSeq: 3, Status: StatusShuttingDown})
 	c.expect(Done{ServerSeq: 2, ClientSeq: 4, Status: StatusShuttingDown, OrderID: 1})
+	c.expect(Done{ServerSeq: 3, ClientSeq: 5, Status: StatusShuttingDown})
 	c.expectQuiet()
 	fe.answer(2)
-	c.expect(wantFrames(1, 3, fakeReply(fakeCall{id: 1}))...)
-	c.expect(wantFrames(2, 6, fakeReply(fakeCall{id: 2}))...)
+	c.expect(wantFrames(1, 4, fakeReply(fakeCall{id: 1}))...)
+	c.expect(wantFrames(2, 7, fakeReply(fakeCall{id: 2}))...)
 	c.expect(EndOfSession{})
 	c.expectClosed()
 	if n := fe.taken(); n != 2 {
