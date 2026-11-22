@@ -1,0 +1,440 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+const (
+	engineStopWait  = 15 * time.Second // after SIGTERM, before SIGKILL
+	engineReadyWait = 30 * time.Second
+	engineHTTPAddr  = "0.0.0.0:8080"
+	engineOEAddr    = "0.0.0.0:9000"
+)
+
+// superviseOptions are what `pairrun supervise` is given.
+type superviseOptions struct {
+	Engine   string // the engine binary
+	Loadgen  string // the loadgen binary, for the loopback run
+	Listen   string // the control address
+	Work     string // engine data, engine logs and the loopback files
+	Params   params
+	httpAddr string  // tests: the engine's HTTP address, instead of engineHTTPAddr
+	oeAddr   string  // tests: the engine's OE1 address, instead of engineOEAddr
+	src      sources // tests: the files the host is read from, instead of procSources
+}
+
+// engineConfig is what a configuration adds to an engine's start, to its
+// environment and its flags.
+type engineConfig struct {
+	env  []string
+	args []string
+}
+
+// engineConfigs is the only place that defines the configurations of the
+// engine; the client asks for one by name and passes nothing else. goMemLimit
+// is the GOMEMLIMIT of gogc-off, in bytes.
+func engineConfigs(goMemLimit int64) map[string]engineConfig {
+	return map[string]engineConfig{
+		engineNormal: {},
+		engineGOGC:   {env: []string{"GOGC=off", "GOMEMLIMIT=" + strconv.FormatInt(goMemLimit, 10)}},
+		engineSpin:   {args: []string{"-oe-spin"}},
+	}
+}
+
+// supervisor runs the engine on this machine for the client on the other,
+// through a control port that has no authentication. It therefore serves
+// five routes and nothing else, runs only the binaries it was started with in
+// the configurations of its table, and never returns the environment.
+type supervisor struct {
+	ctx        context.Context // ends with the process
+	out        io.Writer
+	engineBin  string
+	loadgenBin string
+	work       string
+	httpAddr   string // the engine's listen addresses
+	oeAddr     string
+	params     params
+	src        sources
+	lookPath   func(string) (string, error)
+	now        func() time.Time
+	stopWait   time.Duration
+	readyWait  time.Duration
+	memLimit   int64
+	goMemLimit int64
+	configs    map[string]engineConfig
+	op         sync.Mutex // one start, stop or loopback run at a time
+	mu         sync.Mutex // guards the fields below
+	ready      bool
+	starts     int // every start, the loopback run's included
+	config     string
+	cmd        *exec.Cmd
+	exited     chan struct{} // closed once cmd has exited
+	dataDir    string
+}
+
+func newSupervisor(ctx context.Context, o superviseOptions, out io.Writer) (*supervisor, error) {
+	s := &supervisor{
+		ctx: ctx, out: out, params: o.Params, src: procSources, lookPath: exec.LookPath, now: time.Now,
+		stopWait: engineStopWait, readyWait: engineReadyWait,
+		httpAddr: orDefault(o.httpAddr, engineHTTPAddr), oeAddr: orDefault(o.oeAddr, engineOEAddr),
+	}
+	if o.src != (sources{}) {
+		s.src = o.src
+	}
+	var err error
+	for _, p := range []struct {
+		dst *string
+		src string
+	}{{&s.engineBin, o.Engine}, {&s.loadgenBin, o.Loadgen}, {&s.work, o.Work}} {
+		if *p.dst, err = filepath.Abs(p.src); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.MkdirAll(s.work, 0o755); err != nil {
+		return nil, err
+	}
+	if s.memLimit, err = memoryLimit(s.src); err != nil {
+		return nil, err
+	}
+	s.goMemLimit = s.memLimit / 2
+	s.configs = engineConfigs(s.goMemLimit)
+	return s, nil
+}
+
+// orDefault returns v, or def if v is empty.
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// logf writes a line to the supervisor's stdout. A line that cannot be
+// written is not worth failing a start for.
+func (s *supervisor) logf(format string, args ...any) {
+	_, _ = fmt.Fprintf(s.out, format+"\n", args...)
+}
+
+// supervise runs the supervisor of `pairrun supervise` until ctx ends.
+func supervise(ctx context.Context, o superviseOptions, stdout io.Writer) error {
+	s, err := newSupervisor(ctx, o, stdout)
+	if err != nil {
+		return err
+	}
+	return s.serve(o.Listen)
+}
+
+// serve serves the control port on listen, makes the loopback run and then
+// serves until the supervisor's context ends, when it stops the engine.
+func (s *supervisor) serve(listen string) (err error) {
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	// /start takes up to 45 s: the engine's stop, then its start.
+	hs := &http.Server{
+		Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 2 * time.Minute, MaxHeaderBytes: 8 << 10,
+	}
+	served := make(chan error, 1)
+	go func() { served <- hs.Serve(ln) }()
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err = errors.Join(err, hs.Shutdown(shutdown), s.stopEngine())
+	}()
+	s.logf("listening on %s", ln.Addr())
+
+	if err := s.loopback(); err != nil {
+		if s.ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	s.mu.Lock()
+	s.ready = true
+	s.mu.Unlock()
+	s.logf("ready")
+	select {
+	case <-s.ctx.Done():
+		return nil
+	case err := <-served:
+		return err
+	}
+}
+
+// ServeHTTP serves the control routes and answers every other path or
+// method with 404.
+func (s *supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method + " " + r.URL.Path {
+	case "GET /host":
+		s.serveRecord(w)
+	case "POST /start":
+		s.serveStart(w, r)
+	case "POST /stop":
+		s.serveStop(w)
+	case "GET /loopback.json":
+		http.ServeFile(w, r, filepath.Join(s.work, "loopback.json"))
+	case "GET /loopback.txt":
+		http.ServeFile(w, r, filepath.Join(s.work, "loopback.txt"))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *supervisor) serveRecord(w http.ResponseWriter) {
+	h, err := s.record()
+	if err != nil {
+		http.Error(w, "reading the host: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(h) // a client that has gone has no use for an error
+}
+
+func (s *supervisor) serveStart(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("config")
+	cfg, ok := s.configs[name]
+	if !ok {
+		http.Error(w, fmt.Sprintf("unknown config %q, want one of %s", name, strings.Join(slices.Sorted(maps.Keys(s.configs)), ", ")),
+			http.StatusBadRequest)
+		return
+	}
+	if !s.isReady() {
+		http.Error(w, "not ready: the loopback run has not finished", http.StatusServiceUnavailable)
+		return
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	if err := s.startEngine(name, cfg, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.serveRecord(w)
+}
+
+func (s *supervisor) serveStop(w http.ResponseWriter) {
+	if !s.isReady() {
+		http.Error(w, "not ready: the loopback run has not finished", http.StatusServiceUnavailable)
+		return
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	if err := s.stopEngine(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.serveRecord(w)
+}
+
+func (s *supervisor) isReady() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ready
+}
+
+// record describes the host now. The engine counts as running only until it
+// exits.
+func (s *supervisor) record() (hostRecord, error) {
+	m, err := readMachine(s.src, s.now())
+	if err != nil {
+		return hostRecord{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := hostRecord{Ready: s.ready, Starts: s.starts, machine: m, MemLimitBytes: s.memLimit, GoMemLimitBytes: s.goMemLimit}
+	if s.cmd != nil {
+		select {
+		case <-s.exited:
+		default:
+			h.Config, h.EnginePID = s.config, s.cmd.Process.Pid
+		}
+	}
+	return h, nil
+}
+
+// startEngine stops the running engine, gives a new one an empty data
+// directory and starts it as the configuration name, with prefix in front of
+// its command, and returns once it listens on both ports. The caller holds
+// s.op.
+func (s *supervisor) startEngine(name string, cfg engineConfig, prefix []string) error {
+	if err := s.stopEngine(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.starts++
+	n := s.starts
+	s.mu.Unlock()
+	dir, err := os.MkdirTemp(s.work, "data-")
+	if err != nil {
+		return err
+	}
+	logName := filepath.Join(s.work, fmt.Sprintf("engine-%03d.log", n))
+	logFile, err := os.Create(logName)
+	if err != nil {
+		return errors.Join(err, os.RemoveAll(dir))
+	}
+	argv := append(slices.Clone(prefix), s.engineBin, "-addr", s.httpAddr, "-oe-addr", s.oeAddr, "-data", dir)
+	argv = append(argv, cfg.args...)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	// An empty environment, not this process's: the engine gets what its
+	// configuration names and nothing else.
+	cmd.Env = append([]string{}, cfg.env...)
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	if err := cmd.Start(); err != nil {
+		return errors.Join(fmt.Errorf("starting the engine: %w", err), logFile.Close(), os.RemoveAll(dir))
+	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait() // how it ended is in its log
+		_ = logFile.Close()
+		close(exited)
+	}()
+	s.mu.Lock()
+	s.cmd, s.exited, s.dataDir, s.config = cmd, exited, dir, name
+	s.mu.Unlock()
+	if err := s.waitListening(exited); err != nil {
+		return errors.Join(fmt.Errorf("%w (log: %s)", err, logName), s.stopEngine())
+	}
+	return nil
+}
+
+// waitListening waits until the engine accepts connections on both ports.
+func (s *supervisor) waitListening(exited <-chan struct{}) error {
+	limit := time.NewTimer(s.readyWait)
+	defer limit.Stop()
+	for _, addr := range []string{dialAddr(s.httpAddr), dialAddr(s.oeAddr)} {
+		for {
+			conn, err := net.DialTimeout("tcp", addr, time.Second)
+			if err == nil {
+				_ = conn.Close() // only to see that it accepts
+				break
+			}
+			select {
+			case <-exited:
+				return fmt.Errorf("the engine exited before it listened on %s", addr)
+			case <-s.ctx.Done():
+				return s.ctx.Err()
+			case <-limit.C:
+				return fmt.Errorf("the engine did not listen on %s within %v", addr, s.readyWait)
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
+	select {
+	case <-exited: // the ports were another process's
+		return errors.New("the engine exited while the ports were checked")
+	default:
+		return nil
+	}
+}
+
+// stopEngine stops the running engine, if any, with SIGTERM and after
+// stopWait with SIGKILL, and removes its data directory.
+func (s *supervisor) stopEngine() error {
+	s.mu.Lock()
+	cmd, exited, dir := s.cmd, s.exited, s.dataDir
+	s.cmd, s.exited, s.dataDir, s.config = nil, nil, "", ""
+	s.mu.Unlock()
+	if cmd == nil {
+		return nil
+	}
+	select {
+	case <-exited:
+	default:
+		_ = cmd.Process.Signal(syscall.SIGTERM) // it may have exited just now, which is as good
+		select {
+		case <-exited:
+		case <-time.After(s.stopWait):
+			_ = cmd.Process.Kill()
+			<-exited
+		}
+	}
+	return os.RemoveAll(dir)
+}
+
+// loopback measures the engine over this machine's own loopback, as the
+// matrix's R1 does over the network: the same run, so that the pair's runs
+// can be set against what the engine and loadgen do without a network.
+// Loadgen takes this process's CPUs and spins on the two highest of them, so
+// the engine is kept off those. Whether loadgen finds the run valid is in its
+// report; only a run that cannot be made fails.
+func (s *supervisor) loopback() error {
+	s.op.Lock()
+	defer s.op.Unlock()
+	allowed, err := allowedCPUs(s.src.status)
+	if err != nil {
+		return err
+	}
+	var prefix []string
+	if list := engineCPUs(allowed); list != "" {
+		taskset, err := s.lookPath("taskset")
+		if err != nil {
+			return fmt.Errorf("the loopback run keeps the engine on CPUs %s with taskset: %w", list, err)
+		}
+		prefix = []string{taskset, "-c", list}
+	}
+	jsonName, txtName := filepath.Join(s.work, "loopback.json"), filepath.Join(s.work, "loopback.txt")
+	for _, name := range []string{jsonName, txtName} {
+		if err := os.Remove(name); err != nil && !os.IsNotExist(err) { // a stale file must not pass for this run's
+			return err
+		}
+	}
+	if err := s.startEngine(engineNormal, s.configs[engineNormal], prefix); err != nil {
+		return fmt.Errorf("loopback run: %w", err)
+	}
+	runErr := s.runLoopbackLoadgen(jsonName, txtName)
+	return errors.Join(runErr, s.stopEngine())
+}
+
+func (s *supervisor) runLoopbackLoadgen(jsonName, txtName string) error {
+	r1 := configNamed(planConfigs(s.params, dialAddr(s.oeAddr), dialAddr(s.httpAddr)), baseConfig)
+	txt, err := os.Create(txtName)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = txt.Close() }() // loadgen's output is read back as written
+	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(r1.Warmup)+time.Duration(r1.Duration)+loadgenSlack)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.loadgenBin, loadgenArgs(r1, jsonName)...)
+	cmd.Stdout, cmd.Stderr = txt, txt
+	cmd.WaitDelay = 5 * time.Second
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting loadgen for the loopback run: %w", err)
+	}
+	waitErr := cmd.Wait()
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	s.logf("loopback run finished: %v", waitErr)
+	return nil
+}
+
+// dialAddr is the address to connect to for an engine listening on listen:
+// this machine, if listen names every interface.
+func dialAddr(listen string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return listen
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
