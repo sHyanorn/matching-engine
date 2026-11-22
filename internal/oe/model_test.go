@@ -279,7 +279,7 @@ func runModel(t *testing.T, src opSource) {
 			m.ss.mu.Unlock()
 			m.ss.detach(m.c)
 			m.c = nil
-		case op == 11 && m.c == nil:
+		case op == 11: // also over a connection still attached
 			m.resume()
 		case op == 8 && m.c != nil: // fill every place
 			for m.room() {
@@ -331,7 +331,8 @@ func (m *model) finish() {
 
 // resume logs in again, from the server_seq the client expects, or now and
 // then from one that no session can have sent, and checks the outcome
-// against what the session holds.
+// against what the session holds. A refused resume leaves the connection
+// the session has, if any, as it was.
 func (m *model) resume() {
 	k := m.nextSeq
 	if m.src.intn(8) == 0 {
@@ -357,6 +358,9 @@ func (m *model) resume() {
 		m.fatalf("resume at %d (next %d, held from %d): refused with %v, want %v", k, next, first, reason, want)
 	}
 	if reason != 0 {
+		if old := m.c; old != nil && (m.ss.cur != old || old.state != running || len(old.out) != 0) {
+			m.fatalf("a refused resume at %d touched the attached connection: state %d, %d bytes queued", k, old.state, len(old.out))
+		}
 		return
 	}
 	m.c = c

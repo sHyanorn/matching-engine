@@ -379,18 +379,16 @@ func (c *conn) login(m Login) error {
 	defer ss.attach.Unlock()
 	ss.mu.Lock()
 	old := ss.cur
-	if old != nil {
-		old.abortLocked(errTakenOver)
-	}
-	ss.mu.Unlock()
-	if old != nil { // its reader and writer are done with the session when this closes
-		<-old.readerDone
-	}
-	ss.mu.Lock()
 	reason, detail := c.resumeLocked(ss, m.NextServerSeq)
 	ss.mu.Unlock()
 	if reason != 0 {
 		return refuse(reason, detail)
+	}
+	if old != nil {
+		// The reader and writer of old are done with the session when this
+		// closes. c takes no frame before that, so that the commands of the
+		// session reach a symbol in the order sent.
+		<-old.readerDone
 	}
 	c.start()
 	s.opts.Logger.Info("oe session resumed", "session", ss.id, "next_server_seq", m.NextServerSeq)
@@ -398,15 +396,21 @@ func (c *conn) login(m Login) error {
 }
 
 // resumeLocked attaches c to ss for a Login that expects server_seq k next:
-// it queues LoginAccepted and the frames held from k on. If it cannot, it
-// returns why. The caller holds ss.mu and has seen the last connection of ss
-// end.
+// it closes the connection ss has, if any, and queues LoginAccepted and the
+// frames held from k on. If it cannot, it returns why and leaves ss and its
+// connection as they were. The caller holds ss.mu. The output of ss is c's
+// from here on. A connection closed here takes no more frames, so
+// lastClientSeq stays until c takes one, but its reader may still be
+// passing one to the engine.
 func (c *conn) resumeLocked(ss *session, k uint64) (RejectReason, string) {
 	switch first := ss.heldFirstLocked(); {
 	case ss.gone || ss.drain != drainNone || k == 0 || k > ss.nextServerSeq:
 		return RejectUnknownSession, fmt.Sprintf("session %d is not held, or has not sent server_seq %d (next %d)", ss.id, k, ss.nextServerSeq)
 	case k < first:
 		return RejectReplayLost, fmt.Sprintf("session %d holds server_seq %d on, the client wants %d", ss.id, first, k)
+	}
+	if old := ss.cur; old != nil {
+		old.abortLocked(errTakenOver)
 	}
 	c.out = LoginAccepted{Session: ss.id, NextServerSeq: k, LastClientSeq: ss.lastClientSeq}.Append(c.out)
 	c.out = append(c.out, ss.held.from(k)...)

@@ -140,6 +140,38 @@ func TestResumeTakesOverTheAttachedConnection(t *testing.T) {
 	b.expect(answers(2, 4)...)
 }
 
+func TestRefusedLoginLeavesTheAttachedConnection(t *testing.T) {
+	// 200 bytes hold the last three frames, as in TestReplayLost.
+	_, addr := startServer(t, ServerOptions{Engine: &fakeEngine{}, Held: 200})
+	a := dial(t, addr)
+	id := a.login()
+	a.send(buyOrder(1), buyOrder(2), buyOrder(3))
+	a.expect(ordersAnswered(3)...)
+
+	orders := uint64(3) // answered so far, with three frames each
+	for _, tc := range []struct {
+		name string
+		next func(sent uint64) uint64
+		want RejectReason
+	}{
+		{"server_seq 0", func(uint64) uint64 { return 0 }, RejectUnknownSession},
+		{"a server_seq the session has not sent", func(sent uint64) uint64 { return sent + 2 }, RejectUnknownSession},
+		{"a server_seq no longer held", func(sent uint64) uint64 { return sent - 3 }, RejectReplayLost},
+	} {
+		b := dial(t, addr)
+		b.resume(id, tc.next(3*orders))
+		b.expect(LoginRejected{Reason: tc.want})
+		b.expectClosed()
+		// a is still the session's connection: its next order is answered.
+		orders++
+		a.send(buyOrder(orders))
+		a.expect(answers(orders, 3*orders-2)...)
+		if t.Failed() {
+			t.Fatal(tc.name)
+		}
+	}
+}
+
 func TestSessionsEnd(t *testing.T) {
 	var mu sync.Mutex
 	var fire []func()
