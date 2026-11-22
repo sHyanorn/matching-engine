@@ -187,7 +187,7 @@ A session is kept for 60 s after its connection ends, whatever ended it other th
 
 ### Flow control
 
-A session whose unsent output passes 1 MB, or whose output takes over 10 s to write, is disconnected as a slow consumer. A client may put any number of frames in one write, and the server writes everything ready for a session in one write, without waiting for more.
+A session whose unsent output passes 1 MB, or whose output takes over 10 s to write, is disconnected as a slow consumer. The frames a resume replays do not count towards the 1 MB. A client may put any number of frames in one write, and the server writes everything ready for a session in one write, without waiting for more.
 
 A full symbol queue is answered with `Done` busy at once, and the server stops reading from a session that has 1,024 `NewOrder` and `Cancel` frames taken and not yet answered, so TCP holds the client back. A command answered at once does not count, nor does a `Ping`.
 

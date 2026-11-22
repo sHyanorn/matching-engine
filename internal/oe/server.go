@@ -22,7 +22,7 @@ type ServerOptions struct {
 
 	Heartbeat    time.Duration // send a Heartbeat after this long without sending; 1 s
 	Idle         time.Duration // close a connection on which nothing arrived for this long; 15 s
-	MaxUnsent    int           // bytes of output a session may have waiting to be written; 1 MB
+	MaxUnsent    int           // bytes of output a session may have waiting to be written, apart from a resume's replay; 1 MB
 	WriteTimeout time.Duration // longest a write may take; 10 s
 	Held         int           // bytes of a session's output kept for a resume; 1 MB
 	ResumeWindow time.Duration // how long a session is kept after its connection ends; 60 s
@@ -231,6 +231,7 @@ type conn struct {
 	writerDone chan struct{} // closed when the writer has exited; nil until it starts
 	out        []byte        // frames queued for the writer
 	inFlight   int           // bytes of the write in progress
+	replay     int           // bytes of the answer to a resume not yet written; the first write carries them
 	state      state
 	abortErr   error // why the connection was aborted from elsewhere
 }
@@ -414,6 +415,7 @@ func (c *conn) resumeLocked(ss *session, k uint64) (RejectReason, string) {
 	}
 	c.out = LoginAccepted{Session: ss.id, NextServerSeq: k, LastClientSeq: ss.lastClientSeq}.Append(c.out)
 	c.out = append(c.out, ss.held.from(k)...)
+	c.replay = len(c.out)
 	c.bindLocked(ss)
 	return 0, ""
 }
@@ -447,13 +449,20 @@ func queue[F interface{ Append([]byte) []byte }](c *conn, f F) error {
 		return errEnd
 	}
 	c.out = f.Append(c.out)
-	over := len(c.out)+c.inFlight > c.srv.opts.MaxUnsent
+	over := c.overLocked()
 	ss.mu.Unlock()
 	if over {
 		return errSlowConsumer
 	}
 	c.signal()
 	return nil
+}
+
+// overLocked reports whether c has more output waiting than it may. The
+// answer to a resume does not count: LoginAccepted and the frames replayed,
+// which the client asked for and which are at most what the session holds.
+func (c *conn) overLocked() bool {
+	return len(c.out)+c.inFlight-c.replay > c.srv.opts.MaxUnsent
 }
 
 func (c *conn) signal() {
@@ -501,7 +510,7 @@ func (c *conn) write(done chan<- struct{}) {
 		if len(buf) > 0 {
 			err := c.writeNow(buf)
 			ss.mu.Lock()
-			c.inFlight = 0
+			c.inFlight, c.replay = 0, 0
 			if err != nil {
 				c.abortLocked(err)
 			}

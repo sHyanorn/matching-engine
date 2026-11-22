@@ -260,7 +260,7 @@ func (ss *session) emitLocked(fr []byte) {
 	ss.held.add(fr, seq)
 	if c := ss.cur; c != nil && c.state == running {
 		c.out = append(c.out, fr...)
-		if len(c.out)+c.inFlight > ss.srv.opts.MaxUnsent {
+		if c.overLocked() {
 			c.abortLocked(errSlowConsumer)
 		}
 	}

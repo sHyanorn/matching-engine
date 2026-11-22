@@ -2,6 +2,7 @@ package oe
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -375,5 +376,146 @@ func TestResumeAfterABrokenConnection(t *testing.T) {
 	}
 	if resting != n {
 		t.Errorf("%d orders rest on the book, want %d: each applied once", resting, n)
+	}
+}
+
+// takenOverUnread serves opts over pipes, which hold no bytes in flight,
+// and returns a session at the point where a resume from the oldest frame
+// held has taken it over and the new client, b, has read nothing: answered
+// orders have been answered and read on the first connection, and inFlight
+// more are with the engine, fe, which answers them when the test says. cur
+// is b's connection, and first and next are the oldest server_seq held and
+// the next the session sends.
+func takenOverUnread(t *testing.T, opts ServerOptions, answered, inFlight uint64) (fe *fakeEngine, ss *session, b *client, cur *conn, first, next uint64) {
+	t.Helper()
+	fe = &fakeEngine{}
+	opts.Engine, opts.Symbols = fe, testSymbols
+	opts.Heartbeat = time.Hour // no Heartbeat among the frames and bytes the tests count
+	s, ln := NewServer(opts), newPipeListener()
+	go func() { _ = s.Serve(ln) }()
+	t.Cleanup(func() { _ = s.Close() })
+	a := &client{t: t, c: ln.dial()}
+	t.Cleanup(func() { _ = a.c.Close() }) // before the server closes: nothing reads its last frames
+	id := a.login()
+	s.mu.Lock()
+	ss = s.sessions[id]
+	s.mu.Unlock()
+
+	for seq := uint64(1); seq <= answered; seq++ { // one at a time: a has little unread
+		a.send(buyOrder(seq))
+		a.expectSeqs(3*seq-2, 3*seq)
+	}
+	fe.mu.Lock()
+	fe.hold = true
+	fe.mu.Unlock()
+	for seq := answered + 1; seq <= answered+inFlight; seq++ {
+		a.send(buyOrder(seq))
+	}
+	waitFor(t, "the orders in flight", func() bool { return fe.taken() == int(answered+inFlight) })
+	ss.mu.Lock()
+	old := ss.cur
+	first, next = ss.heldFirstLocked(), ss.nextServerSeq
+	ss.mu.Unlock()
+	if first == 1 {
+		t.Fatalf("the session still holds its first frame after %d orders: the test needs it full", answered)
+	}
+
+	b = &client{t: t, c: ln.dial()}
+	t.Cleanup(func() { _ = b.c.Close() })
+	b.resume(id, first)
+	waitFor(t, "the takeover", func() bool {
+		ss.mu.Lock()
+		defer ss.mu.Unlock()
+		cur = ss.cur
+		return cur != old
+	})
+	return fe, ss, b, cur, first, next
+}
+
+// expectSeqs reads the Events and Dones with server_seq from to to.
+func (c *client) expectSeqs(from, to uint64) {
+	c.t.Helper()
+	for seq := from; seq <= to; seq++ {
+		f, err := c.next()
+		var got uint64
+		switch f := f.(type) {
+		case Event:
+			got = f.ServerSeq
+		case Done:
+			got = f.ServerSeq
+		}
+		if err != nil || got != seq {
+			c.t.Fatalf("got %+v, %v; want server_seq %d of %d to %d", f, err, seq, from, to)
+		}
+	}
+}
+
+// TestAFullReplayIsNotASlowConsumer resumes a session from the oldest frame
+// it holds, with the sizes docs/API.md gives, and has the reply to an order
+// in flight arrive before the client has read any of the replay. The client
+// gets the whole replay and then the reply.
+func TestAFullReplayIsNotASlowConsumer(t *testing.T) {
+	// An answer is 196 bytes: 5,400 of them are more than the 1 MB held.
+	const orders = 5400
+	fe, ss, b, cur, first, next := takenOverUnread(t, ServerOptions{}, orders, 1)
+	fe.answer(1)
+	ss.mu.Lock()
+	why := cur.abortErr
+	ss.mu.Unlock()
+	if why != nil {
+		t.Fatalf("the server closed the resumed connection: %v", why)
+	}
+	b.expect(LoginAccepted{Session: ss.id, NextServerSeq: first, LastClientSeq: orders + 1})
+	b.expectSeqs(first, next+2)
+}
+
+// TestReplayLeavesTheLimitOnOtherOutput queues, on a resumed connection
+// that reads none of them, the answers that fit in MaxUnsent beyond its
+// replay, which leave it open, and one more, which closes it: the same
+// while the replay is unwritten and once it is written.
+func TestReplayLeavesTheLimitOnOtherOutput(t *testing.T) {
+	// 1000 bytes hold five answers of 196 bytes, and five more fit in
+	// MaxUnsent; the sixth passes it.
+	const answer, fit = 196, 5
+	for _, read := range []bool{false, true} {
+		name := "the replay unwritten"
+		if read {
+			name = "the replay written"
+		}
+		t.Run(name, func(t *testing.T) {
+			fe, ss, b, cur, first, next := takenOverUnread(t, ServerOptions{Held: 1000, MaxUnsent: 1000}, 6, fit+1)
+			ss.mu.Lock()
+			replay := cur.replay
+			ss.mu.Unlock()
+			if want := len(LoginAccepted{}.Append(nil)) + fit*answer; replay != want {
+				t.Fatalf("a replay of %d bytes, want %d", replay, want)
+			}
+			unwritten := replay
+			if read {
+				b.expect(LoginAccepted{Session: ss.id, NextServerSeq: first, LastClientSeq: 6 + fit + 1})
+				b.expectSeqs(first, next-1)
+				waitFor(t, "the write of the replay to return", func() bool {
+					ss.mu.Lock()
+					defer ss.mu.Unlock()
+					return cur.replay == 0
+				})
+				unwritten = 0
+			}
+
+			fe.answer(fit) // b reads none of it
+			ss.mu.Lock()
+			st, unsent := cur.state, len(cur.out)+cur.inFlight
+			ss.mu.Unlock()
+			if st != running || unsent != unwritten+fit*answer {
+				t.Fatalf("after %d answers: state %d with %d bytes unsent, want it running with %d", fit, st, unsent, unwritten+fit*answer)
+			}
+			fe.answer(1)
+			ss.mu.Lock()
+			st, why := cur.state, cur.abortErr
+			ss.mu.Unlock()
+			if st != aborted || !errors.Is(why, errSlowConsumer) {
+				t.Fatalf("after one answer more: state %d, %v; want the connection closed as a slow consumer", st, why)
+			}
+		})
 	}
 }
