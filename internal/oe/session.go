@@ -2,7 +2,10 @@ package oe
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"sync"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
@@ -15,96 +18,217 @@ const maxTaken = 1024
 
 var errNoEngine = errors.New("oe: no engine to take commands")
 
-// newOrder passes a NewOrder to the engine, or answers it at once.
-func (ss *session) newOrder(m NewOrder) error {
-	opts := &ss.srv.opts
-	if ok, err := ss.next(m.ClientSeq); !ok {
-		return err
+// session is the state of one client, which outlives its connections: the
+// client_seq it has taken, the server_seq it has sent, the commands the
+// engine has not answered and the last output it sent, held for a resume.
+// It is the engine's Sink: replies are queued, on the goroutine of the
+// symbol, to the connection it has now, if any.
+type session struct {
+	srv    *Server
+	id     uint64
+	attach sync.Mutex // one Login at a time takes the session over
+
+	mu            sync.Mutex
+	room          sync.Cond // on mu: taken fell below maxTaken, or the connection is ending
+	cur           *conn     // the connection it has, nil between two
+	lastClientSeq uint64    // owned by the reader of cur; it hands the session over by ending
+	nextServerSeq uint64    // of the next Event or Done
+	taken         int       // commands passed to the engine and not yet answered
+	drain         drain
+	finished      bool        // every command is answered after a Logout or at shutdown
+	gone          bool        // dropped: it can no longer be resumed
+	held          held        // its last Events and Dones
+	expiry        func() bool // stops the timer that drops it after its connection ended
+	scratch       [96]byte    // a frame being encoded
+}
+
+// newSession opens a session with a random number other than 0. Numbers
+// counted from 1 would start again after a restart, and a Login that named
+// one from the earlier process could then name another client's session.
+func (s *Server) newSession() (*session, error) {
+	ss := &session{srv: s, nextServerSeq: 1, held: held{limit: s.opts.Held}}
+	ss.room.L = &ss.mu
+	for {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, fmt.Errorf("oe: session number: %w", err)
+		}
+		ss.id = le.Uint64(b[:])
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w: the server is shutting down", errEnd)
+		}
+		if _, taken := s.sessions[ss.id]; ss.id != 0 && !taken {
+			s.sessions[ss.id] = ss
+			s.mu.Unlock()
+			return ss, nil
+		}
+		s.mu.Unlock()
 	}
+}
+
+// heldFirstLocked is the lowest server_seq a resume can ask for.
+func (ss *session) heldFirstLocked() uint64 {
+	if ss.held.empty() {
+		return ss.nextServerSeq
+	}
+	return ss.held.first
+}
+
+// dropLocked ends the session for good, apart from taking it out of the
+// server's table.
+func (ss *session) dropLocked() {
+	ss.gone = true
+	if ss.expiry != nil {
+		ss.expiry()
+		ss.expiry = nil
+	}
+	ss.held.b = nil
+}
+
+// detach is the end of c's life as the session's connection. The session is
+// dropped if it is ending, and otherwise kept for a resume.
+func (ss *session) detach(c *conn) {
+	ss.mu.Lock()
+	if ss.cur != c { // a newer connection has taken the session over
+		ss.mu.Unlock()
+		return
+	}
+	ss.cur = nil
+	remove := ss.finished || ss.drain != drainNone
+	if remove {
+		ss.dropLocked()
+	} else {
+		ss.expiry = ss.srv.opts.afterFunc(ss.srv.opts.ResumeWindow, func() { ss.srv.expire(ss) })
+	}
+	ss.mu.Unlock()
+	if remove {
+		ss.srv.remove(ss)
+	}
+}
+
+// beginDrainLocked makes the session answer the commands it has taken and
+// take no more, and end when none is left: with EndOfSession if the server
+// is shutting down.
+func (ss *session) beginDrainLocked(d drain) {
+	if ss.drain == drainNone {
+		ss.drain = d
+	}
+	ss.room.Broadcast() // a reader waiting for room answers shutting_down
+	if ss.taken == 0 {
+		ss.endLocked()
+	}
+}
+
+// endLocked ends a session that has answered every command it took.
+func (ss *session) endLocked() {
+	ss.finished = true
+	c := ss.cur
+	if c == nil || c.state != running {
+		return
+	}
+	if ss.drain == drainShutdown {
+		c.out = EndOfSession{}.Append(c.out)
+	}
+	c.state = ending
+	c.signal()
+}
+
+// admit takes the frame with client_seq seq. It reports false if the frame
+// is to go no further: it is a resend, which is dropped; it was answered
+// with shutting_down; or the connection is over. A number that skips one
+// is an error. A command waits for one of the session's maxTaken places
+// first, and id is the order it is about, if it names one. The number is
+// taken in the same step as the place, so that a command is either passed
+// to the engine or left for the client to send again.
+func (c *conn) admit(seq uint64, id book.OrderID, command bool) (bool, error) {
+	ss := c.ss
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	for {
+		switch {
+		case c.state != running:
+			return false, errEnd
+		case seq <= ss.lastClientSeq:
+			return false, nil
+		case seq != ss.lastClientSeq+1:
+			return false, fmt.Errorf("oe: client_seq %d after %d, want %d", seq, ss.lastClientSeq, ss.lastClientSeq+1)
+		case !command || ss.drain != drainNone || ss.taken < maxTaken:
+			ss.lastClientSeq = seq
+			if command && ss.drain != drainNone {
+				ss.emitDoneLocked(seq, Done{Status: StatusShuttingDown, OrderID: id})
+				c.signal()
+				return false, nil
+			}
+			if command {
+				ss.taken++
+			}
+			return true, nil
+		}
+		ss.room.Wait()
+	}
+}
+
+// newOrder passes a NewOrder to the engine, or answers it at once.
+func (c *conn) newOrder(m NewOrder) error {
+	opts := &c.srv.opts
 	if opts.Engine == nil {
 		return errNoEngine
 	}
 	if int(m.Symbol) >= len(opts.Symbols) {
-		return ss.respond(m.ClientSeq, Done{Status: StatusUnknownSymbol})
+		if ok, err := c.admit(m.ClientSeq, 0, false); !ok {
+			return err
+		}
+		return c.respond(m.ClientSeq, Done{Status: StatusUnknownSymbol})
 	}
-	if ok, err := ss.reserve(m.ClientSeq, 0); !ok {
+	if ok, err := c.admit(m.ClientSeq, 0, true); !ok {
 		return err
 	}
-	id, err := opts.Engine.SendOrder(ss, m.ClientSeq, engine.NewOrder{
+	id, err := opts.Engine.SendOrder(c.ss, m.ClientSeq, engine.NewOrder{
 		Symbol: opts.Symbols[m.Symbol], Side: m.Side, Type: m.Type, TIF: m.TIF, Price: m.Price, Qty: m.Qty,
 	})
 	if err != nil {
-		return ss.refuse(m.ClientSeq, book.CommandNewOrder, id, err)
+		return c.refuse(m.ClientSeq, book.CommandNewOrder, id, err)
 	}
 	return nil
 }
 
 // cancel passes a Cancel to the engine, or answers it at once.
-func (ss *session) cancel(m Cancel) error {
-	opts := &ss.srv.opts
-	if ok, err := ss.next(m.ClientSeq); !ok {
-		return err
-	}
+func (c *conn) cancel(m Cancel) error {
+	opts := &c.srv.opts
 	if opts.Engine == nil {
 		return errNoEngine
 	}
-	if ok, err := ss.reserve(m.ClientSeq, m.OrderID); !ok {
+	if ok, err := c.admit(m.ClientSeq, m.OrderID, true); !ok {
 		return err
 	}
-	if err := opts.Engine.SendCancel(ss, m.ClientSeq, m.OrderID); err != nil {
-		return ss.refuse(m.ClientSeq, book.CommandCancel, m.OrderID, err)
+	if err := opts.Engine.SendCancel(c.ss, m.ClientSeq, m.OrderID); err != nil {
+		return c.refuse(m.ClientSeq, book.CommandCancel, m.OrderID, err)
 	}
 	return nil
 }
 
-// reserve takes one of the session's maxTaken places for a command, waiting
-// while none is free. It reports false if the command is not to go on: it
-// was answered with shutting_down, or the session is over. id is the order
-// the command is about, if it names one.
-func (ss *session) reserve(seq uint64, id book.OrderID) (bool, error) {
-	ss.mu.Lock()
-	for ss.taken >= maxTaken && ss.state == running && ss.drain == drainNone {
-		ss.room.Wait()
-	}
-	switch {
-	case ss.state != running:
-		ss.mu.Unlock()
-		return false, errEnd
-	case ss.drain != drainNone:
-		ss.appendDone(seq, Done{Status: StatusShuttingDown, OrderID: id})
-		ss.mu.Unlock()
-		ss.signal()
-		return false, nil
-	}
-	ss.taken++
-	ss.mu.Unlock()
-	return true, nil
-}
-
 // respond answers a command at once, without a place taken.
-func (ss *session) respond(seq uint64, d Done) error {
+func (c *conn) respond(seq uint64, d Done) error {
+	ss := c.ss
 	ss.mu.Lock()
-	if ss.state != running {
-		ss.mu.Unlock()
-		return errEnd
-	}
-	ss.appendDone(seq, d)
+	ss.emitDoneLocked(seq, d)
 	ss.mu.Unlock()
-	ss.signal()
+	ss.Flush()
 	return nil
 }
 
 // refuse answers a command the engine would not take, and gives back its
 // place.
-func (ss *session) refuse(seq uint64, kind book.CommandKind, id book.OrderID, err error) error {
+func (c *conn) refuse(seq uint64, kind book.CommandKind, id book.OrderID, err error) error {
 	d := refusalDone(kind, id, err)
+	ss := c.ss
 	ss.mu.Lock()
-	if ss.state == running {
-		ss.appendDone(seq, d)
-	}
+	ss.emitDoneLocked(seq, d)
 	ss.answeredLocked()
 	ss.mu.Unlock()
-	ss.signal()
+	ss.Flush()
 	return nil
 }
 
@@ -117,42 +241,56 @@ func (ss *session) answeredLocked() {
 	}
 }
 
-// appendDone queues the Done frame of a command that has no events.
-func (ss *session) appendDone(seq uint64, d Done) {
+// emitDoneLocked sends the Done frame of a command that has no events.
+func (ss *session) emitDoneLocked(seq uint64, d Done) {
 	d.ServerSeq, d.ClientSeq = ss.nextServerSeq, seq
-	ss.nextServerSeq++
-	ss.out = d.Append(ss.out)
-	ss.checkUnsentLocked()
+	ss.emitLocked(d.Append(ss.scratch[:0]))
 }
 
-// checkUnsentLocked ends a session that has more output waiting than it may.
-func (ss *session) checkUnsentLocked() {
-	if len(ss.out)+ss.inFlight > ss.srv.opts.MaxUnsent {
-		ss.abortLocked(errSlowConsumer)
+// emitLocked numbers the frame fr, which is one of ss.scratch and has the
+// server_seq the session sends next, holds it for a resume and queues it
+// on the connection, if there is one. A connection with more output
+// waiting than it may is closed.
+func (ss *session) emitLocked(fr []byte) {
+	if ss.gone {
+		return
+	}
+	seq := le.Uint64(fr[HeaderSize:])
+	ss.nextServerSeq = seq + 1
+	ss.held.add(fr, seq)
+	if c := ss.cur; c != nil && c.state == running {
+		c.out = append(c.out, fr...)
+		if len(c.out)+c.inFlight > ss.srv.opts.MaxUnsent {
+			c.abortLocked(errSlowConsumer)
+		}
 	}
 }
 
 // Reply queues the reply to a command: its events, then its Done. It runs
 // on the goroutine of the command's symbol and does not wait for the
-// writer or the client; a session that falls too far behind is closed.
+// writer or the client; a connection that falls too far behind is closed.
 func (ss *session) Reply(seq uint64, r engine.Reply) {
 	d, withEvents := replyDone(r)
 	ss.mu.Lock()
-	if ss.state == running {
-		if withEvents {
-			for _, e := range r.Events {
-				ss.out = Event{ServerSeq: ss.nextServerSeq, ClientSeq: seq, Event: e}.Append(ss.out)
-				ss.nextServerSeq++
-			}
+	if withEvents {
+		for _, e := range r.Events {
+			ss.emitLocked(Event{ServerSeq: ss.nextServerSeq, ClientSeq: seq, Event: e}.Append(ss.scratch[:0]))
 		}
-		ss.appendDone(seq, d)
 	}
+	ss.emitDoneLocked(seq, d)
 	ss.answeredLocked()
 	ss.mu.Unlock()
 }
 
 // Flush wakes the writer, once the engine has queued all it has for now.
-func (ss *session) Flush() { ss.signal() }
+func (ss *session) Flush() {
+	ss.mu.Lock()
+	c := ss.cur
+	ss.mu.Unlock()
+	if c != nil {
+		c.signal()
+	}
+}
 
 // replyDone is the Done for a command the engine has answered, and whether
 // the command's events are sent with it.

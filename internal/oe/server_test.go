@@ -417,22 +417,21 @@ func pingPong(c *client, n int) error {
 }
 
 func TestPingAllocatesNothing(t *testing.T) {
-	ss := newSession(NewServer(ServerOptions{}), nil)
-	ss.id = 1
-	ss.out = make([]byte, 0, 64)
+	c := attached(t, NewServer(ServerOptions{}))
+	c.out = make([]byte, 0, 64)
 	buf := make([]byte, 0, 64)
 	allocs := testing.AllocsPerRun(1000, func() {
-		ss.out = ss.out[:0]
-		buf = Ping{ClientSeq: ss.lastClientSeq + 1}.Append(buf[:0])
+		c.out = c.out[:0]
+		buf = Ping{ClientSeq: c.ss.lastClientSeq + 1}.Append(buf[:0])
 		typ, body, _, _ := Next(buf)
-		if err := ss.handle(typ, body); err != nil {
+		if err := c.handle(typ, body); err != nil {
 			t.Fatal(err)
 		}
 	})
 	if allocs != 0 {
 		t.Errorf("%v allocations to take a Ping and queue its Pong, want 0", allocs)
 	}
-	if ss.lastClientSeq < 1000 {
-		t.Fatalf("took %d Pings", ss.lastClientSeq)
+	if c.ss.lastClientSeq < 1000 {
+		t.Fatalf("took %d Pings", c.ss.lastClientSeq)
 	}
 }

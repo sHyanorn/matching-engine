@@ -1,0 +1,19 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+         │ bench-results/oe-resume/raw/resume.txt │
+         │                 sec/op                 │
+Resume-4                              47.18µ ± 9%
+
+         │ bench-results/oe-resume/raw/resume.txt │
+         │                  B/s                   │
+Resume-4                             20.70Gi ± 8%
+
+         │ bench-results/oe-resume/raw/resume.txt │
+         │                  B/op                  │
+Resume-4                               352.0 ± 0%
+
+         │ bench-results/oe-resume/raw/resume.txt │
+         │               allocs/op                │
+Resume-4                               0.000 ± 0%

@@ -1,0 +1,60 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      4995 ns/op	     140 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      4795 ns/op	     139 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      4739 ns/op	     140 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      4813 ns/op	     139 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      5027 ns/op	     139 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      4416 ns/op	     139 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      4703 ns/op	     140 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      5201 ns/op	     139 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      5182 ns/op	     139 B/op	       0 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkOrders-4   	  200000	      5272 ns/op	     140 B/op	       0 allocs/op
+PASS

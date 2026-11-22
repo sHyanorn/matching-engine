@@ -116,7 +116,7 @@ A snapshot followed by its deltas reproduces the book's levels, order counts inc
 
 OE1 is a binary protocol for sending orders and cancels over a persistent TCP session in fixed-length frames ([D041](DECISIONS.md)). The engine serves it on a listener of its own when started with `-oe-addr`, for example `-oe-addr 127.0.0.1:9000`; without the flag there is none. Like the HTTP API it has no TLS and no authentication. Depth, order status and market data stay on REST and WebSocket.
 
-**What this version serves:** logging in to a new session, `NewOrder`, `Cancel`, `Ping`, `Heartbeat` and `Logout`. Resuming a session is not served yet: a session ends with its connection, so a `Login` that names an earlier session gets `LoginRejected` with `unknown_session`.
+**What this version serves:** logging in to a new session or resuming one, `NewOrder`, `Cancel`, `Ping`, `Heartbeat` and `Logout`. Only `too_many_sessions` is not sent.
 
 ### Frames
 
@@ -154,7 +154,7 @@ An event is `seq u64, ts i64, type u8, side u8, reason u8, level_side u8, level_
 
 ### Sessions
 
-The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, a random nonzero 64-bit value, so that a number from before an engine restart is not taken for a new session, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4. This version sends only bad_version and unknown_session, and has no limit on sessions.
+The first frame on a connection must be `Login`, with version 1 and session 0 to open a new session. The server answers `LoginAccepted` with the session's number, a random nonzero 64-bit value, so that a number from before an engine restart is not taken for a new session, next_server_seq 1 and last_client_seq 0, then one `Symbol` frame per configured symbol in index order; the index is the low byte of each of the symbol's order IDs. `LoginRejected` says why a login was refused, and the server then closes the connection: bad_version 1, unknown_session 2, replay_lost 3 (the output the client missed is no longer held), too_many_sessions 4. This version sends all but too_many_sessions, and has no limit on sessions: a session without a connection holds at most 1.5 MB for 60 s.
 
 `client_seq` starts at 1 in a session and rises by one with each `NewOrder`, `Cancel` and `Ping`. A frame whose number is not above the last one taken is a resend and is dropped; a number that skips one closes the connection. `server_seq` starts at 1 and numbers every `Event` and `Done` of the session. A `Ping` is answered with a `Pong` of the same client_seq without reaching the engine; a `Pong` has no server_seq.
 
@@ -183,7 +183,7 @@ A `NewOrder` is `POST /v1/orders` without `client_id`, naming its symbol by inde
 
 Orders stay on the book when a connection closes: there is no cancel on disconnect. An engine restart ends every session: as for a REST client whose connection broke before the reply, the outcome of a command whose `Done` never arrived is then unknown.
 
-**Not served yet:** a client that reconnects within 60 s can resume its session. It logs in with the session and the next server_seq it expects, gets `LoginAccepted` with the last client_seq the server took, then every `Event` and `Done` it missed, then live traffic, and sends again its own frames above that number. Each command is then applied once and answered once. The server holds the last 1 MB of a session's output for this; a client that comes back later, or has missed more, gets `LoginRejected` and can look up the order IDs it knows with `GET /v1/orders/{id}`.
+A session is kept for 60 s after its connection ends, whatever ended it other than `Logout` and shutdown. A client that reconnects within that time resumes it: it logs in with the session and the next server_seq it expects. The server answers `LoginAccepted` with that number as next_server_seq and the last client_seq it took, then sends every `Event` and `Done` the client missed, then live traffic. The `Symbol` frames are not sent again, and a `Pong` lost with a connection is not either. The client sends again its own frames above that client_seq; each command is then applied once and answered once. A `Login` for a session whose connection is still attached takes it over, and the server closes the earlier connection. The server holds the last 1 MB of a session's `Event` and `Done` frames. A `Login` that names no session held, or has a next_server_seq of 0 or above the last the session sent, gets `LoginRejected` with `unknown_session`. One below the oldest frame held gets `replay_lost`, and the client can look up the order IDs it knows with `GET /v1/orders/{id}`. A refused `Login` leaves the session as it was.
 
 ### Flow control
 

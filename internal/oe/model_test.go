@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
@@ -52,7 +53,10 @@ func (nullConn) Close() error { return nil }
 // are the commands the engine has not answered.
 type model struct {
 	t        *testing.T
+	srv      *Server
 	ss       *session
+	c        *conn // nil between two connections
+	lost     bool  // a resume was refused for replay_lost: replies were lost
 	fe       *fakeEngine
 	src      opSource
 	buf      []byte
@@ -78,14 +82,17 @@ func (m *model) send(f frame) error {
 	if err != nil {
 		m.fatalf("%v", err)
 	}
-	return m.ss.handle(typ, body)
+	return m.c.handle(typ, body)
 }
 
 // output returns the frames the session queued since the last call.
 func (m *model) output() []frame {
+	if m.c == nil {
+		return nil
+	}
 	m.ss.mu.Lock()
-	out := append([]byte(nil), m.ss.out...)
-	m.ss.out = m.ss.out[:0]
+	out := append([]byte(nil), m.c.out...)
+	m.c.out = m.c.out[:0]
 	m.ss.mu.Unlock()
 	var fs []frame
 	for len(out) > 0 {
@@ -126,6 +133,10 @@ func (m *model) check() []frame {
 				m.fatalf("Done %+v: the command was answered twice", f)
 			}
 			m.open = 0
+		case LoginAccepted:
+			if f.Session != m.ss.id || f.NextServerSeq != m.nextSeq || f.LastClientSeq != m.last {
+				m.fatalf("LoginAccepted %+v, want session %d, next_server_seq %d, last_client_seq %d", f, m.ss.id, m.nextSeq, m.last)
+			}
 		case Pong:
 			if m.kind[f.ClientSeq] != 'P' {
 				m.fatalf("Pong %+v for no Ping", f)
@@ -197,9 +208,11 @@ func runModel(t *testing.T, src opSource) {
 	t.Helper()
 	m := &model{t: t, src: src, fe: &fakeEngine{hold: true}, kind: map[uint64]byte{}, answered: map[uint64]int{},
 		seen: map[uint64]bool{}, refuse: map[uint64]string{}, nextSeq: 1}
-	srv := NewServer(ServerOptions{Engine: m.fe, Symbols: testSymbols})
-	m.ss = newSession(srv, nullConn{})
-	m.ss.id, m.ss.nextServerSeq = 1, 1
+	srv := NewServer(ServerOptions{Engine: m.fe, Symbols: testSymbols, Held: 700,
+		afterFunc: func(time.Duration, func()) func() bool { return func() bool { return true } }})
+	m.srv = srv
+	m.c = attached(t, srv)
+	m.ss = m.c.ss
 	m.fe.refuse = func(c fakeCall) error {
 		if _, ok := m.refuse[c.tag]; ok {
 			return engine.ErrBusy
@@ -208,20 +221,20 @@ func runModel(t *testing.T, src opSource) {
 	}
 
 	for m.step = 1; src.more(); m.step++ {
-		switch op := src.intn(10); {
-		case op < 3 && m.room():
+		switch op := src.intn(12); {
+		case op < 3 && m.c != nil && m.room():
 			sym := uint8(src.intn(len(testSymbols) + 1)) // the last is no symbol
 			if src.intn(8) == 0 {
 				m.refuse[m.last+1] = "busy"
 			}
 			m.command(false, sym, 0)
-		case op == 3 && m.room():
+		case op == 3 && m.c != nil && m.room():
 			id := book.OrderID(src.intn(3)) // 0 is never an ID; the rest may be unknown
 			if len(m.issued) > 0 && src.intn(2) == 0 {
 				id = m.issued[src.intn(len(m.issued))]
 			}
 			m.command(true, 0, id)
-		case op == 4:
+		case op == 4 && m.c != nil:
 			m.last++
 			m.kind[m.last] = 'P'
 			if err := m.send(Ping{ClientSeq: m.last}); err != nil {
@@ -241,7 +254,7 @@ func runModel(t *testing.T, src opSource) {
 				m.fe.answer(n)
 			}
 			m.check()
-		case op == 7 && m.last > 0: // a resend, whatever the frame
+		case op == 7 && m.c != nil && m.last > 0: // a resend, whatever the frame
 			seq := 1 + uint64(src.intn(int(m.last)))
 			before := m.fe.taken()
 			var f frame = NewOrder{ClientSeq: seq, Symbol: 0, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1}
@@ -257,11 +270,22 @@ func runModel(t *testing.T, src opSource) {
 			if fs := m.check(); len(fs) != 0 || m.fe.taken() != before {
 				m.fatalf("resend of %d: frames %+v, %d commands taken, want none", seq, fs, m.fe.taken()-before)
 			}
-		case op == 8: // fill every place
+		case op == 10 && m.c != nil: // the connection breaks, with or without what is queued read
+			if src.intn(2) == 0 {
+				m.check()
+			}
+			m.ss.mu.Lock()
+			m.c.out, m.c.state = nil, aborted
+			m.ss.mu.Unlock()
+			m.ss.detach(m.c)
+			m.c = nil
+		case op == 11 && m.c == nil:
+			m.resume()
+		case op == 8 && m.c != nil: // fill every place
 			for m.room() {
 				m.command(false, 0, 0)
 			}
-		case op == 9 && src.intn(16) == 0: // a number that skips one ends the connection
+		case op == 9 && m.c != nil && src.intn(16) == 0: // a number that skips one ends the connection
 			skip := NewOrder{ClientSeq: m.last + 2, Symbol: 0, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1}
 			if err := m.send(skip); err == nil {
 				m.fatalf("client_seq %d after %d was taken", skip.ClientSeq, m.last)
@@ -283,8 +307,11 @@ func (m *model) finish() {
 	n := len(m.fe.pending)
 	m.fe.mu.Unlock()
 	m.fe.answer(n)
+	if m.c == nil {
+		m.resume()
+	}
 	m.check()
-	for seq := uint64(1); seq <= m.last; seq++ {
+	for seq := uint64(1); seq <= m.last && m.c != nil && !m.lost; seq++ {
 		want := 1
 		if m.kind[seq] == 'P' {
 			want = 0
@@ -299,6 +326,43 @@ func (m *model) finish() {
 			m.fatalf("the engine took client_seq %d twice", c.tag)
 		}
 		calls[c.tag] = true
+	}
+}
+
+// resume logs in again, from the server_seq the client expects, or now and
+// then from one that no session can have sent, and checks the outcome
+// against what the session holds.
+func (m *model) resume() {
+	k := m.nextSeq
+	if m.src.intn(8) == 0 {
+		m.ss.mu.Lock()
+		next := m.ss.nextServerSeq
+		m.ss.mu.Unlock()
+		k = []uint64{0, next + 1 + uint64(m.src.intn(3))}[m.src.intn(2)]
+	}
+	c := &conn{srv: m.srv, nc: nullConn{}, wake: make(chan struct{}, 1), readerDone: make(chan struct{})}
+	m.ss.mu.Lock()
+	first, next := m.ss.heldFirstLocked(), m.ss.nextServerSeq
+	reason, _ := c.resumeLocked(m.ss, k)
+	m.ss.mu.Unlock()
+	want := RejectReason(0)
+	switch {
+	case k == 0 || k > next:
+		want = RejectUnknownSession
+	case k < first:
+		want = RejectReplayLost
+		m.lost = true
+	}
+	if reason != want {
+		m.fatalf("resume at %d (next %d, held from %d): refused with %v, want %v", k, next, first, reason, want)
+	}
+	if reason != 0 {
+		return
+	}
+	m.c = c
+	m.check()
+	if m.nextSeq != next {
+		m.fatalf("the replay ended at server_seq %d, want %d", m.nextSeq, next)
 	}
 }
 

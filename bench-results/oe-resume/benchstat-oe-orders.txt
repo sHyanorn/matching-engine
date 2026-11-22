@@ -1,0 +1,16 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+         │   before    │             after             │
+         │   sec/op    │   sec/op     vs base          │
+Orders-4   4.904µ ± 6%   4.957µ ± 5%  ~ (p=0.393 n=10)
+
+         │   before   │               after                │
+         │    B/op    │    B/op     vs base                │
+Orders-4   139.0 ± 1%   158.0 ± 1%  +13.67% (p=0.000 n=10)
+
+         │   before   │             after              │
+         │ allocs/op  │ allocs/op   vs base            │
+Orders-4   0.000 ± 0%   0.000 ± 0%  ~ (p=1.000 n=10) ¹
+¹ all samples are equal

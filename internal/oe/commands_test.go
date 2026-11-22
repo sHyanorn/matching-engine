@@ -14,6 +14,20 @@ import (
 	"github.com/sHyanorn/matching-engine/internal/engine"
 )
 
+// attached returns a connection with no socket and no goroutines that is
+// the connection of a new session on srv: tests drive its reader side and
+// read what it queues.
+func attached(t testing.TB, srv *Server) *conn {
+	t.Helper()
+	ss, err := srv.newSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &conn{srv: srv, nc: nullConn{}, wake: make(chan struct{}, 1), readerDone: make(chan struct{}), ss: ss}
+	ss.cur = c
+	return c
+}
+
 // waitFor polls cond until it holds or the test times out.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -517,14 +531,13 @@ func (e *echoEngine) SendCancel(s engine.Sink, tag uint64, id book.OrderID) erro
 // the engine and queueing its reply allocates nothing.
 func TestCommandsAllocateNothing(t *testing.T) {
 	srv := NewServer(ServerOptions{Engine: &echoEngine{}, Symbols: testSymbols})
-	ss := newSession(srv, nil)
-	ss.id, ss.nextServerSeq = 1, 1
-	ss.out = make([]byte, 0, 1024)
+	c := attached(t, srv)
+	c.out = make([]byte, 0, 1024)
 	buf := make([]byte, 0, 64)
 	for _, cancel := range []bool{false, true} {
 		allocs := testing.AllocsPerRun(1000, func() {
-			ss.out = ss.out[:0]
-			seq := ss.lastClientSeq + 1
+			c.out = c.out[:0]
+			seq := c.ss.lastClientSeq + 1
 			if cancel {
 				buf = Cancel{ClientSeq: seq, OrderID: 1}.Append(buf[:0])
 			} else {
@@ -532,7 +545,7 @@ func TestCommandsAllocateNothing(t *testing.T) {
 				buf = NewOrder{ClientSeq: seq, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1}.Append(buf)
 			}
 			typ, body, _, _ := Next(buf)
-			if err := ss.handle(typ, body); err != nil {
+			if err := c.handle(typ, body); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -540,7 +553,7 @@ func TestCommandsAllocateNothing(t *testing.T) {
 			t.Errorf("%v allocations to take a command (cancel %v) and queue its reply, want 0", allocs, cancel)
 		}
 	}
-	if ss.taken != 0 || ss.lastClientSeq < 2000 {
-		t.Fatalf("%d places in use, %d commands taken", ss.taken, ss.lastClientSeq)
+	if c.ss.taken != 0 || c.ss.lastClientSeq < 2000 {
+		t.Fatalf("%d places in use, %d commands taken", c.ss.taken, c.ss.lastClientSeq)
 	}
 }

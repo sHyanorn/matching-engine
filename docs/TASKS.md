@@ -72,7 +72,7 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Session server with Ping only, and loadgen's binary mode against it
 - [x] One pair of rented machines: deployment, results retrieval and the network floor
 - [x] Orders and cancels over a session
-- [ ] Session resume after a broken connection
+- [x] Session resume after a broken connection
 - [ ] loadgen sends the SPEC §9 flow over OE1
 - [ ] Pilot pair: every flow five times, and the tuning comparisons
 - [ ] Four more pairs with the configuration fixed

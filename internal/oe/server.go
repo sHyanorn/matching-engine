@@ -1,12 +1,12 @@
 package oe
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
@@ -24,6 +24,12 @@ type ServerOptions struct {
 	Idle         time.Duration // close a connection on which nothing arrived for this long; 15 s
 	MaxUnsent    int           // bytes of output a session may have waiting to be written; 1 MB
 	WriteTimeout time.Duration // longest a write may take; 10 s
+	Held         int           // bytes of a session's output kept for a resume; 1 MB
+	ResumeWindow time.Duration // how long a session is kept after its connection ends; 60 s
+
+	// afterFunc starts a timer, as time.AfterFunc does, and returns its stop
+	// function. Tests replace it.
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
 }
 
 // Commands is what a Server needs of the engine; *engine.Engine has it.
@@ -32,22 +38,23 @@ type Commands interface {
 	SendCancel(s engine.Sink, tag uint64, id book.OrderID) error
 }
 
-// Server serves OE1 sessions. This version takes a Login to a new session,
-// NewOrder, Cancel, Ping, Heartbeat and Logout; resuming a session is not
-// served yet.
+// Server serves OE1 sessions.
 //
-// Each connection has a reader, which decodes every whole frame it has,
-// passes commands to the engine and queues the answers it can give at once,
-// and a writer, which sends all that is queued with one write whenever
-// anything is. The engine's goroutine for a symbol queues the replies to
-// commands (session.go).
+// A session outlives its connection for ResumeWindow, and a Login that
+// names it takes over a connection that is still attached. Each connection
+// has a reader, which decodes every whole frame it has, passes commands to
+// the engine and queues the answers it can give at once, and a writer,
+// which sends all that is queued with one write whenever anything is. The
+// engine's goroutine for a symbol queues the replies to commands
+// (session.go).
 type Server struct {
 	opts ServerOptions
 
 	mu       sync.Mutex
 	ln       net.Listener
 	lnErr    error // of closing ln
-	sessions map[*session]struct{}
+	conns    map[*conn]struct{}
+	sessions map[uint64]*session
 	closed   bool // no new connections, and sessions are ending
 	wg       sync.WaitGroup
 }
@@ -66,10 +73,19 @@ func NewServer(opts ServerOptions) *Server {
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = 10 * time.Second
 	}
+	if opts.Held <= 0 {
+		opts.Held = 1 << 20
+	}
+	if opts.ResumeWindow <= 0 {
+		opts.ResumeWindow = time.Minute
+	}
+	if opts.afterFunc == nil {
+		opts.afterFunc = func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
+	}
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Server{opts: opts, sessions: map[*session]struct{}{}}
+	return &Server{opts: opts, conns: map[*conn]struct{}{}, sessions: map[uint64]*session{}}
 }
 
 // Serve accepts connections on ln until Close, and then returns nil.
@@ -82,7 +98,7 @@ func (s *Server) Serve(ln net.Listener) error {
 	s.ln = ln
 	s.mu.Unlock()
 	for {
-		c, err := ln.Accept()
+		nc, err := ln.Accept()
 		if err != nil {
 			s.mu.Lock()
 			closed := s.closed
@@ -92,24 +108,24 @@ func (s *Server) Serve(ln net.Listener) error {
 			}
 			return err
 		}
-		ss := newSession(s, c)
+		c := &conn{srv: s, nc: nc, wake: make(chan struct{}, 1), readerDone: make(chan struct{})}
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
-			_ = c.Close()
+			_ = nc.Close()
 			continue
 		}
-		s.sessions[ss] = struct{}{}
+		s.conns[c] = struct{}{}
 		s.wg.Add(1)
 		s.mu.Unlock()
-		go ss.serve()
+		go c.serve()
 	}
 }
 
 // BeginShutdown stops accepting connections and ends every session: a
-// command that arrives from now on is answered with shutting_down, and a
-// session that has answered every command it took gets EndOfSession and is
-// closed.
+// command that arrives from now on is answered with shutting_down, a
+// session that has answered every command it took gets EndOfSession and
+// its connection is closed, and a session without a connection is dropped.
 func (s *Server) BeginShutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,8 +137,20 @@ func (s *Server) BeginShutdown() {
 		s.lnErr = s.ln.Close()
 		s.ln = nil
 	}
-	for ss := range s.sessions {
-		ss.beginDrain(drainShutdown)
+	for c := range s.conns {
+		if !c.loggedIn.Load() {
+			_ = c.nc.Close() // nothing to say to a client that has not logged in
+		}
+	}
+	for id, ss := range s.sessions {
+		ss.mu.Lock()
+		if ss.cur == nil {
+			ss.dropLocked()
+			delete(s.sessions, id)
+		} else {
+			ss.beginDrainLocked(drainShutdown)
+		}
+		ss.mu.Unlock()
 	}
 }
 
@@ -137,17 +165,41 @@ func (s *Server) Close() error {
 	return s.lnErr
 }
 
-// errEnd ends a session after a refused Login.
-var errEnd = errors.New("oe: session ended")
+// remove takes ss out of the table of sessions.
+func (s *Server) remove(ss *session) {
+	s.mu.Lock()
+	delete(s.sessions, ss.id)
+	s.mu.Unlock()
+}
 
-// errLogout ends the reading of a session at the client's request. The
+// expire drops ss if it still has no connection when its time is up.
+func (s *Server) expire(ss *session) {
+	ss.mu.Lock()
+	if ss.cur != nil || ss.gone {
+		ss.mu.Unlock()
+		return
+	}
+	ss.dropLocked()
+	ss.mu.Unlock()
+	s.remove(ss)
+	s.opts.Logger.Info("oe session expired", "session", ss.id)
+}
+
+// errEnd ends a connection after a refused Login, or one that was not the
+// session's any more.
+var errEnd = errors.New("oe: connection ended")
+
+// errLogout ends the reading of a connection at the client's request. The
 // session then ends when every command it took has been answered.
 var errLogout = errors.New("oe: logout")
 
-// errSlowConsumer ends a session whose unsent output passed MaxUnsent.
+// errSlowConsumer ends a connection whose unsent output passed MaxUnsent.
 var errSlowConsumer = errors.New("oe: slow consumer")
 
-// state is how far a session's writer has got towards closing.
+// errTakenOver ends a connection that a Login for its session replaced.
+var errTakenOver = errors.New("oe: session taken over by a new connection")
+
+// state is how far a connection's writer has got towards closing.
 type state uint8
 
 const (
@@ -166,126 +218,77 @@ const (
 	drainShutdown       // the server is shutting down: EndOfSession follows
 )
 
-// session is one connection. The reader goroutine owns id and
-// lastClientSeq; mu guards the rest, which the engine's goroutines reach
-// through Reply.
-type session struct {
-	srv  *Server
-	conn net.Conn
+// conn is one connection. Its reader goroutine is the one that runs serve.
+// Once logged in, the fields below ss are guarded by ss.mu.
+type conn struct {
+	srv        *Server
+	nc         net.Conn
+	wake       chan struct{}
+	readerDone chan struct{} // closed when the reader has finished with the session
+	loggedIn   atomic.Bool
 
-	id            uint64 // 0 until logged in
-	lastClientSeq uint64
-	writerDone    chan struct{} // closed when the writer has exited; nil before login
-
-	mu            sync.Mutex
-	room          sync.Cond // on mu: taken fell below maxTaken, or the session is ending
-	out           []byte    // frames queued for the writer
-	inFlight      int       // bytes of the write in progress
-	state         state
-	drain         drain
-	abortErr      error  // why the session was aborted from Reply
-	nextServerSeq uint64 // of the next Event or Done
-	taken         int    // commands passed to the engine and not yet answered
-	wake          chan struct{}
+	ss         *session
+	writerDone chan struct{} // closed when the writer has exited; nil until it starts
+	out        []byte        // frames queued for the writer
+	inFlight   int           // bytes of the write in progress
+	state      state
+	abortErr   error // why the connection was aborted from elsewhere
 }
 
-func newSession(s *Server, c net.Conn) *session {
-	ss := &session{srv: s, conn: c, wake: make(chan struct{}, 1)}
-	ss.room.L = &ss.mu
-	return ss
-}
-
-func (ss *session) serve() {
-	err := ss.read()
-	ss.mu.Lock()
-	if ss.abortErr != nil {
-		err = ss.abortErr
-	}
-	if ss.state == running && !errors.Is(err, errLogout) {
-		// What is queued answers frames already taken, so it is sent
-		// before the connection closes, unless there is too much of it.
-		ss.state = ending
-		if errors.Is(err, errSlowConsumer) {
-			ss.state = aborted
+func (c *conn) serve() {
+	err := c.read()
+	ss := c.ss
+	if ss == nil { // not logged in: say why, if there is something to say
+		c.flush()
+	} else {
+		ss.mu.Lock()
+		if c.abortErr != nil {
+			err = c.abortErr
 		}
-	}
-	st, done := ss.state, ss.writerDone
-	ss.mu.Unlock()
-	if st == aborted {
-		_ = ss.conn.Close() // unblocks a write in progress
-	}
-	if done != nil {
-		ss.signal()
+		if c.state == running && !errors.Is(err, errLogout) {
+			// What is queued answers frames already taken, so it is sent
+			// before the connection closes, unless there is too much of it.
+			c.state = ending
+			if errors.Is(err, errSlowConsumer) {
+				c.state = aborted
+			}
+		}
+		st, done := c.state, c.writerDone
+		ss.mu.Unlock()
+		if st == aborted {
+			_ = c.nc.Close() // unblocks a write in progress
+		}
+		c.signal()
 		<-done
-	} else if st == ending { // not logged in: no writer yet
-		ss.flush()
 	}
-	_ = ss.conn.Close()
+	_ = c.nc.Close()
+	if ss != nil {
+		ss.detach(c)
+	}
+	close(c.readerDone)
 
-	s := ss.srv
+	s := c.srv
 	s.mu.Lock()
-	delete(s.sessions, ss)
+	delete(s.conns, c)
 	s.mu.Unlock()
-	s.opts.Logger.Info("oe session closed", "session", ss.id, "remote", ss.conn.RemoteAddr().String(), "reason", err.Error())
+	var id uint64
+	if ss != nil {
+		id = ss.id
+	}
+	s.opts.Logger.Info("oe connection closed", "session", id, "remote", c.nc.RemoteAddr().String(), "reason", err.Error())
 	s.wg.Done()
 }
 
-// beginDrain makes the session answer the commands it has taken and take
-// no more, and end when none is left: with EndOfSession if the server is
-// shutting down. A session that has not logged in has nothing to answer
-// and ends at once.
-func (ss *session) beginDrain(d drain) {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	if ss.state != running {
-		return
-	}
-	if ss.writerDone == nil {
-		ss.state = aborted
-		_ = ss.conn.Close()
-		return
-	}
-	if ss.drain == drainNone {
-		ss.drain = d
-	}
-	ss.room.Broadcast() // a reader waiting for room answers shutting_down
-	if ss.taken == 0 {
-		ss.endLocked()
-	}
-}
-
-// endLocked ends a session that has answered every command it took.
-func (ss *session) endLocked() {
-	if ss.state != running {
-		return
-	}
-	if ss.drain == drainShutdown {
-		ss.out = EndOfSession{}.Append(ss.out)
-	}
-	ss.state = ending
-	ss.signal()
-}
-
-// abortLocked closes the connection now, for the reason err.
-func (ss *session) abortLocked(err error) {
-	if ss.state == aborted {
-		return
-	}
-	ss.state, ss.abortErr = aborted, err
-	_ = ss.conn.Close() // unblocks the reader and a write in progress
-	ss.room.Broadcast()
-}
-
 // read decodes the frames that arrive, until an error or the end of the
-// session.
-func (ss *session) read() error {
+// connection.
+func (c *conn) read() error {
 	buf := make([]byte, 64<<10)
 	have := 0
 	for {
-		if err := ss.conn.SetReadDeadline(time.Now().Add(ss.srv.opts.Idle)); err != nil {
+		if err := c.nc.SetReadDeadline(time.Now().Add(c.srv.opts.Idle)); err != nil {
 			return err
 		}
-		n, rerr := ss.conn.Read(buf[have:])
+		n, rerr := c.nc.Read(buf[have:])
 		have += n
 		off := 0
 		for {
@@ -296,7 +299,7 @@ func (ss *session) read() error {
 			if size == 0 {
 				break
 			}
-			if err := ss.handle(t, body); err != nil {
+			if err := c.handle(t, body); err != nil {
 				return err
 			}
 			off += size
@@ -308,175 +311,221 @@ func (ss *session) read() error {
 	}
 }
 
-func (ss *session) handle(t Type, body []byte) error {
-	if ss.id == 0 {
+func (c *conn) handle(t Type, body []byte) error {
+	if c.ss == nil {
 		if t != TypeLogin {
 			return fmt.Errorf("oe: %q frame before Login", byte(t))
 		}
-		return ss.login(DecodeLogin(body))
+		return c.login(DecodeLogin(body))
 	}
 	switch t {
 	case TypeNewOrder:
-		return ss.newOrder(DecodeNewOrder(body))
+		return c.newOrder(DecodeNewOrder(body))
 	case TypeCancel:
-		return ss.cancel(DecodeCancel(body))
+		return c.cancel(DecodeCancel(body))
 	case TypePing:
 		p := DecodePing(body)
-		if ok, err := ss.next(p.ClientSeq); !ok {
+		if ok, err := c.admit(p.ClientSeq, 0, false); !ok {
 			return err
 		}
-		return queue(ss, Pong(p))
+		return queue(c, Pong(p))
 	case TypeHeartbeat:
 		return nil
 	case TypeLogout:
-		ss.beginDrain(drainLogout)
+		c.ss.mu.Lock()
+		if c.state == running {
+			c.ss.beginDrainLocked(drainLogout)
+		}
+		c.ss.mu.Unlock()
 		return errLogout
 	default:
 		return fmt.Errorf("oe: %q frame not served", byte(t))
 	}
 }
 
-// next takes a command's client_seq. It reports false for a resend, which
-// is dropped, and for a number that skips one, which is an error.
-func (ss *session) next(seq uint64) (bool, error) {
-	switch {
-	case seq <= ss.lastClientSeq:
-		return false, nil
-	case seq != ss.lastClientSeq+1:
-		return false, fmt.Errorf("oe: client_seq %d after %d, want %d", seq, ss.lastClientSeq, ss.lastClientSeq+1)
+// login opens a new session or resumes one, or queues why not.
+func (c *conn) login(m Login) error {
+	s := c.srv
+	refuse := func(reason RejectReason, detail string) error {
+		c.out = LoginRejected{Reason: reason}.Append(c.out)
+		return fmt.Errorf("%w: login refused: %v (%s)", errEnd, reason, detail)
 	}
-	ss.lastClientSeq = seq
-	return true, nil
-}
+	if m.Version != Version {
+		return refuse(RejectBadVersion, fmt.Sprintf("version %d, want %d", m.Version, Version))
+	}
+	if m.Session == 0 {
+		ss, err := s.newSession()
+		if err != nil {
+			return err
+		}
+		ss.mu.Lock()
+		c.out = LoginAccepted{Session: ss.id, NextServerSeq: 1}.Append(c.out)
+		for i, name := range s.opts.Symbols {
+			c.out = Symbol{Index: uint8(i), Name: name}.Append(c.out)
+		}
+		c.bindLocked(ss)
+		ss.mu.Unlock()
+		c.start()
+		return nil
+	}
 
-// login opens a new session, or queues why not.
-func (ss *session) login(m Login) error {
-	var reason RejectReason
-	switch {
-	case m.Version != Version:
-		reason = RejectBadVersion
-	case m.Session != 0:
-		reason = RejectUnknownSession // sessions end with their connection
+	s.mu.Lock()
+	ss := s.sessions[m.Session]
+	s.mu.Unlock()
+	if ss == nil {
+		return refuse(RejectUnknownSession, fmt.Sprintf("session %d is not held", m.Session))
 	}
-	if reason != 0 {
-		ss.out = LoginRejected{Reason: reason}.Append(ss.out)
-		return fmt.Errorf("%w: login refused: %v (version %d, want %d; session %d, want 0)", errEnd, reason, m.Version, Version, m.Session)
-	}
-	id, err := newSessionID()
-	if err != nil {
-		return err
-	}
-	s := ss.srv
-	ss.id = id
+	ss.attach.Lock() // one Login at a time takes the session over
+	defer ss.attach.Unlock()
 	ss.mu.Lock()
-	ss.nextServerSeq = 1
-	ss.out = LoginAccepted{Session: ss.id, NextServerSeq: 1}.Append(ss.out)
-	for i, name := range s.opts.Symbols {
-		ss.out = Symbol{Index: uint8(i), Name: name}.Append(ss.out)
+	old := ss.cur
+	if old != nil {
+		old.abortLocked(errTakenOver)
 	}
-	ss.writerDone = make(chan struct{})
-	go ss.write(ss.writerDone)
 	ss.mu.Unlock()
-	ss.signal()
+	if old != nil { // its reader and writer are done with the session when this closes
+		<-old.readerDone
+	}
+	ss.mu.Lock()
+	reason, detail := c.resumeLocked(ss, m.NextServerSeq)
+	ss.mu.Unlock()
+	if reason != 0 {
+		return refuse(reason, detail)
+	}
+	c.start()
+	s.opts.Logger.Info("oe session resumed", "session", ss.id, "next_server_seq", m.NextServerSeq)
 	return nil
 }
 
-// newSessionID returns a random session number other than 0. Numbers
-// counted from 1 would start again after a restart, and a client of the
-// earlier process could then resume another client's session.
-func newSessionID() (uint64, error) {
-	var b [8]byte
-	for {
-		if _, err := rand.Read(b[:]); err != nil {
-			return 0, fmt.Errorf("oe: session number: %w", err)
-		}
-		if id := le.Uint64(b[:]); id != 0 {
-			return id, nil
-		}
+// resumeLocked attaches c to ss for a Login that expects server_seq k next:
+// it queues LoginAccepted and the frames held from k on. If it cannot, it
+// returns why. The caller holds ss.mu and has seen the last connection of ss
+// end.
+func (c *conn) resumeLocked(ss *session, k uint64) (RejectReason, string) {
+	switch first := ss.heldFirstLocked(); {
+	case ss.gone || ss.drain != drainNone || k == 0 || k > ss.nextServerSeq:
+		return RejectUnknownSession, fmt.Sprintf("session %d is not held, or has not sent server_seq %d (next %d)", ss.id, k, ss.nextServerSeq)
+	case k < first:
+		return RejectReplayLost, fmt.Sprintf("session %d holds server_seq %d on, the client wants %d", ss.id, first, k)
+	}
+	c.out = LoginAccepted{Session: ss.id, NextServerSeq: k, LastClientSeq: ss.lastClientSeq}.Append(c.out)
+	c.out = append(c.out, ss.held.from(k)...)
+	c.bindLocked(ss)
+	return 0, ""
+}
+
+// bindLocked makes c the connection of ss.
+func (c *conn) bindLocked(ss *session) {
+	c.ss = ss
+	ss.cur = c
+	if ss.expiry != nil {
+		ss.expiry()
+		ss.expiry = nil
 	}
 }
 
-// queue appends f to the session's output and wakes the writer. A session
-// that is ending takes nothing more: EndOfSession is its last frame.
-func queue[F interface{ Append([]byte) []byte }](ss *session, f F) error {
+// start starts c's writer, once it has a session and its first output.
+func (c *conn) start() {
+	c.writerDone = make(chan struct{})
+	go c.write(c.writerDone)
+	c.loggedIn.Store(true)
+	c.signal()
+}
+
+// queue appends f to the connection's output and wakes the writer. A
+// connection that is ending takes nothing more: EndOfSession is its last
+// frame.
+func queue[F interface{ Append([]byte) []byte }](c *conn, f F) error {
+	ss := c.ss
 	ss.mu.Lock()
-	if ss.state != running {
+	if c.state != running {
 		ss.mu.Unlock()
 		return errEnd
 	}
-	ss.out = f.Append(ss.out)
-	over := len(ss.out)+ss.inFlight > ss.srv.opts.MaxUnsent
+	c.out = f.Append(c.out)
+	over := len(c.out)+c.inFlight > c.srv.opts.MaxUnsent
 	ss.mu.Unlock()
 	if over {
 		return errSlowConsumer
 	}
-	ss.signal()
+	c.signal()
 	return nil
 }
 
-func (ss *session) signal() {
+func (c *conn) signal() {
 	select {
-	case ss.wake <- struct{}{}:
+	case c.wake <- struct{}{}:
 	default: // the writer has a wake-up pending
 	}
 }
 
+// abortLocked closes the connection now, for the reason err. The caller
+// holds c.ss.mu.
+func (c *conn) abortLocked(err error) {
+	if c.state == aborted {
+		return
+	}
+	c.state, c.abortErr = aborted, err
+	_ = c.nc.Close() // unblocks the reader and a write in progress
+	c.ss.room.Broadcast()
+}
+
 // write sends what is queued, one write at a time, and a Heartbeat after
-// Heartbeat without sending, until the session ends.
-func (ss *session) write(done chan<- struct{}) {
+// Heartbeat without sending, until the connection ends.
+func (c *conn) write(done chan<- struct{}) {
 	defer close(done)
-	opts := &ss.srv.opts
+	ss, opts := c.ss, &c.srv.opts
 	hb := time.NewTimer(opts.Heartbeat)
 	defer hb.Stop()
 	var buf []byte
 	for {
 		select {
-		case <-ss.wake:
+		case <-c.wake:
 		case <-hb.C:
 			ss.mu.Lock()
-			ss.out = Heartbeat{}.Append(ss.out)
+			c.out = Heartbeat{}.Append(c.out)
 			ss.mu.Unlock()
 		}
 		ss.mu.Lock()
-		buf, ss.out = ss.out, buf[:0]
-		ss.inFlight = len(buf)
-		st := ss.state
+		buf, c.out = c.out, buf[:0]
+		c.inFlight = len(buf)
+		st := c.state
 		ss.mu.Unlock()
 		if st == aborted {
 			return
 		}
 		if len(buf) > 0 {
-			err := ss.writeNow(buf)
+			err := c.writeNow(buf)
 			ss.mu.Lock()
-			ss.inFlight = 0
+			c.inFlight = 0
 			if err != nil {
-				ss.abortLocked(err)
+				c.abortLocked(err)
 			}
 			ss.mu.Unlock()
 			if err != nil {
-				return // the reader sees the closed connection and ends the session
+				return // the reader sees the closed connection and ends
 			}
 			hb.Reset(opts.Heartbeat)
 		}
 		if st == ending {
-			_ = ss.conn.Close() // the reader may still be waiting for input
+			_ = c.nc.Close() // the reader may still be waiting for input
 			return
 		}
 	}
 }
 
-func (ss *session) writeNow(b []byte) error {
-	if err := ss.conn.SetWriteDeadline(time.Now().Add(ss.srv.opts.WriteTimeout)); err != nil {
+func (c *conn) writeNow(b []byte) error {
+	if err := c.nc.SetWriteDeadline(time.Now().Add(c.srv.opts.WriteTimeout)); err != nil {
 		return err
 	}
-	_, err := ss.conn.Write(b)
+	_, err := c.nc.Write(b)
 	return err
 }
 
 // flush writes what is queued from the reader's goroutine, before the
-// session has a writer.
-func (ss *session) flush() {
-	if len(ss.out) > 0 {
-		_ = ss.writeNow(ss.out) // the connection closes next either way
+// connection has a writer.
+func (c *conn) flush() {
+	if len(c.out) > 0 {
+		_ = c.writeNow(c.out) // the connection closes next either way
 	}
 }
