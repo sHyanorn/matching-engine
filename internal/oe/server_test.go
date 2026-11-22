@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 var testSymbols = []string{"BTC-USD", "ETH-USD"}
@@ -210,8 +212,11 @@ type rawFrame []byte
 
 func (r rawFrame) Append(dst []byte) []byte { return append(dst, r...) }
 
-func TestHeartbeatAndIdle(t *testing.T) {
-	_, addr := startServer(t, ServerOptions{Heartbeat: 20 * time.Millisecond, Idle: 200 * time.Millisecond})
+func TestHeartbeatAndIdle(t *testing.T) { heartbeatAndIdle(t, nil) }
+
+// heartbeatAndIdle serves the sessions with the cores of pool, if there is one.
+func heartbeatAndIdle(t *testing.T, pool *spin.Pool) {
+	_, addr := startServer(t, ServerOptions{Heartbeat: 20 * time.Millisecond, Idle: 200 * time.Millisecond, Spin: pool})
 
 	// A client that sends heartbeats keeps its session and gets them.
 	c := dial(t, addr)
@@ -323,8 +328,12 @@ func TestSlowConsumer(t *testing.T) {
 	})
 }
 
-func TestCloseEndsSessions(t *testing.T) {
-	s, addr := startServer(t, ServerOptions{})
+func TestCloseEndsSessions(t *testing.T) { closeEndsSessions(t, nil) }
+
+// closeEndsSessions serves the sessions with the cores of pool, if there is
+// one.
+func closeEndsSessions(t *testing.T, pool *spin.Pool) {
+	s, addr := startServer(t, ServerOptions{Spin: pool})
 	const clients, pings = 4, 2000
 	var wg sync.WaitGroup
 	errs := make(chan error, clients)

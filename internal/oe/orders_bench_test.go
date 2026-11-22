@@ -7,6 +7,8 @@ import (
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
 	"github.com/sHyanorn/matching-engine/internal/flow"
+	"github.com/sHyanorn/matching-engine/internal/spin"
+	"github.com/sHyanorn/matching-engine/internal/spin/spintest"
 )
 
 // BenchmarkOrders measures NewOrder and Cancel over one session on loopback
@@ -15,14 +17,23 @@ import (
 // order whose ID an earlier reply gave. The commands are counted in the
 // counters of an api.Server, as cmd/engine wires them. ns/op is one
 // command, and the allocations are those of the server and the engine.
-func BenchmarkOrders(b *testing.B) {
+func BenchmarkOrders(b *testing.B) { benchOrders(b, nil) }
+
+// BenchmarkOrdersSpin is BenchmarkOrders with the symbol's goroutine and
+// the session's reader and writer spinning.
+func BenchmarkOrdersSpin(b *testing.B) {
+	pool, _ := spintest.New(b, 3)
+	benchOrders(b, pool)
+}
+
+func benchOrders(b *testing.B, pool *spin.Pool) {
 	const batch = 256
-	e, err := engine.New(engine.Config{Symbols: []string{"BTC-USD"}, DataDir: b.TempDir()})
+	e, err := engine.New(engine.Config{Symbols: []string{"BTC-USD"}, DataDir: b.TempDir(), Spin: pool})
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = e.Close() }) // after the server, which benchLogin closes
-	bc := benchLogin(b, ServerOptions{Engine: e, Counts: api.New(e, api.Options{}), Symbols: e.Symbols()})
+	bc := benchLogin(b, ServerOptions{Engine: e, Counts: api.New(e, api.Options{}), Symbols: e.Symbols(), Spin: pool})
 	g := flow.New(1, 5)
 	var known []book.OrderID // the IDs of orders answered, by the flow's order number minus 1; 0 if not an order
 	var ids []book.OrderID   // IDs of the batch being answered

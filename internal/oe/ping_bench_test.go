@@ -3,6 +3,9 @@ package oe
 import (
 	"net"
 	"testing"
+
+	"github.com/sHyanorn/matching-engine/internal/spin"
+	"github.com/sHyanorn/matching-engine/internal/spin/spintest"
 )
 
 // benchConn is a client for benchmarks: it sends a batch of frames in one
@@ -77,9 +80,18 @@ func (bc *benchConn) read(n int, count func(Type, []byte) bool) {
 // BenchmarkPing measures Pings over one session on loopback, 256 sent in a
 // write and their Pongs read before the next write. ns/op is one Ping, and
 // the allocations are the server's.
-func BenchmarkPing(b *testing.B) {
+func BenchmarkPing(b *testing.B) { benchPing(b, nil) }
+
+// BenchmarkPingSpin is BenchmarkPing with the session's reader and writer
+// spinning.
+func BenchmarkPingSpin(b *testing.B) {
+	pool, _ := spintest.New(b, 2)
+	benchPing(b, pool)
+}
+
+func benchPing(b *testing.B, pool *spin.Pool) {
 	const batch = 256
-	bc := benchLogin(b, ServerOptions{})
+	bc := benchLogin(b, ServerOptions{Spin: pool})
 	isPong := func(t Type, _ []byte) bool { return t == TypePong }
 	var seq uint64
 	b.ReportAllocs()

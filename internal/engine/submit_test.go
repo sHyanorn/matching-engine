@@ -11,6 +11,7 @@ import (
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/flow"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 	"github.com/sHyanorn/matching-engine/internal/testclock"
 )
 
@@ -368,14 +369,19 @@ func TestSendLogFailed(t *testing.T) {
 // TestSendAllocatesNothing: once the book, the order history and the
 // tracker have grown to the size of the flow, a command allocates nothing on
 // its way through the queue, the book, the log and the sink.
-func TestSendAllocatesNothing(t *testing.T) {
-	e := newTestEngine(t, Config{Symbols: []string{"A"}, History: 1000})
-	tokens := make(chan struct{}, 1)
+func TestSendAllocatesNothing(t *testing.T) { sendAllocatesNothing(t, nil, testing.AllocsPerRun) }
+
+// sendAllocatesNothing runs the symbol on a core of pool, if there is one,
+// and counts allocations with allocsPerRun.
+func sendAllocatesNothing(t *testing.T, pool *spin.Pool, allocsPerRun func(int, func()) float64) {
+	e := newTestEngine(t, Config{Symbols: []string{"A"}, History: 1000, Spin: pool})
+	const batch = 250
+	tokens := make(chan struct{}, batch)
 	s := &tokenSink{tokens: tokens}
 	g := flow.New(3, 5)
 	var ids []book.OrderID
 	ids = append(ids, 0)
-	send := func() {
+	queue := func() {
 		op := g.Next()
 		var err error
 		if op.Cancel {
@@ -392,13 +398,23 @@ func TestSendAllocatesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	send := func() {
+		queue()
 		<-tokens
 	}
-	for range 50_000 {
-		send()
+	// The warm-up queues batches: the answer of a spinning symbol wakes the
+	// test through the scheduler, which takes long if done for each command.
+	for range 50_000 / batch {
+		for range batch {
+			queue()
+		}
+		for range batch {
+			<-tokens
+		}
 	}
 	ids = slices.Grow(ids, 10_000)
-	if n := testing.AllocsPerRun(5_000, send); n != 0 {
+	if n := allocsPerRun(5_000, send); n != 0 {
 		t.Errorf("%v allocations per command, want 0", n)
 	}
 }

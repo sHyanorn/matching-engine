@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 // Errors returned by the Engine. Callers compare with errors.Is.
@@ -98,6 +99,12 @@ type Config struct {
 	// failed ones included. It is called on the goroutine that ran the
 	// fsync, which waits for it, so it must be quick.
 	OnSync func(symbol string, took time.Duration)
+
+	// Spin, if not nil, has each symbol's goroutine spin while the pool has
+	// a core free for it, taking cores in the order of Symbols: it polls its
+	// queue instead of blocking. A goroutine that finds no core free runs as
+	// it would without a pool. The cores go back when the goroutines end.
+	Spin *spin.Pool
 
 	// onReplay, if set, receives the events of every command replayed
 	// from the logs by New. Tests use it to compare replays.
@@ -274,10 +281,11 @@ func New(cfg Config) (*Engine, error) {
 		return fail(err)
 	}
 	for _, m := range e.markets {
+		core := cfg.Spin.Reserve("symbol " + m.symbol) // here, so that the symbols take cores in order
 		e.wg.Add(1)
 		go func() {
 			defer e.wg.Done()
-			m.run()
+			m.run(core)
 		}()
 	}
 	return e, nil

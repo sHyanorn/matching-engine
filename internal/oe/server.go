@@ -11,6 +11,7 @@ import (
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 // ServerOptions configures a Server. A zero duration or size takes the
@@ -27,6 +28,12 @@ type ServerOptions struct {
 	WriteTimeout time.Duration // longest a write may take; 10 s
 	Held         int           // bytes of a session's output kept for a resume; 1 MB
 	ResumeWindow time.Duration // how long a session is kept after its connection ends; 60 s
+
+	// Spin, if not nil, has the reader and the writer of each connection
+	// spin once it has logged in: the reader takes the first free core of
+	// the pool and the writer the next. One that finds no core free runs as
+	// it would without a pool. The cores go back when the goroutines end.
+	Spin *spin.Pool
 
 	// afterFunc starts a timer, as time.AfterFunc does, and returns its stop
 	// function. Tests replace it.
@@ -122,7 +129,7 @@ func (s *Server) Serve(ln net.Listener) error {
 			}
 			return err
 		}
-		c := &conn{srv: s, nc: nc, wake: make(chan struct{}, 1), readerDone: make(chan struct{})}
+		c := &conn{srv: s, nc: s.opts.Spin.Wrap(nc), wake: make(chan struct{}, 1), readerDone: make(chan struct{})}
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
@@ -240,6 +247,7 @@ type conn struct {
 	wake       chan struct{}
 	readerDone chan struct{} // closed when the reader has finished with the session
 	loggedIn   atomic.Bool
+	lease      *spin.Lease // the core the reader spins on, if it does; the reader's alone
 
 	ss         *session
 	writerDone chan struct{} // closed when the writer has exited; nil until it starts
@@ -280,6 +288,7 @@ func (c *conn) serve() {
 	if ss != nil {
 		ss.detach(c)
 	}
+	c.lease.Release() // before readerDone: the Login that takes the session over reserves cores next
 	close(c.readerDone)
 
 	s := c.srv
@@ -444,12 +453,25 @@ func (c *conn) bindLocked(ss *session) {
 	}
 }
 
-// start starts c's writer, once it has a session and its first output.
+// start starts c's writer, once it has a session and its first output, and
+// has the reader and the writer spin if the server has cores for them. The
+// reader's core is reserved first, so the session's cores are handed out in
+// that order. It runs on the reader's goroutine.
 func (c *conn) start() {
+	pool := c.srv.opts.Spin
+	readerCore := pool.Reserve(fmt.Sprintf("session %d reader", c.ss.id))
+	writerCore := pool.Reserve(fmt.Sprintf("session %d writer", c.ss.id))
 	c.writerDone = make(chan struct{})
-	go c.write(c.writerDone)
+	go c.write(c.writerDone, writerCore)
 	c.loggedIn.Store(true)
 	c.signal()
+	// The reader has handled the Login, so from here it reads in spin mode.
+	if p, ok := c.nc.(spin.Poller); ok && readerCore.Pin() {
+		p.Spin()
+		c.lease = readerCore
+	} else {
+		readerCore.Release()
+	}
 }
 
 // queue appends f to the connection's output and wakes the writer. A
@@ -498,17 +520,18 @@ func (c *conn) abortLocked(err error) {
 }
 
 // write sends what is queued, one write at a time, and a Heartbeat after
-// Heartbeat without sending, until the connection ends.
-func (c *conn) write(done chan<- struct{}) {
+// Heartbeat without sending, until the connection ends. It spins if it can
+// pin itself to core, which it gives back when it ends.
+func (c *conn) write(done chan<- struct{}, core *spin.Lease) {
 	defer close(done)
+	defer core.Release() // before done is closed: the reader goes on to release its own core
+	spinning := core.Pin()
 	ss, opts := c.ss, &c.srv.opts
 	hb := time.NewTimer(opts.Heartbeat)
 	defer hb.Stop()
 	var buf []byte
 	for {
-		select {
-		case <-c.wake:
-		case <-hb.C:
+		if c.wait(hb, spinning) {
 			ss.mu.Lock()
 			c.out = Heartbeat{}.Append(c.out)
 			ss.mu.Unlock()
@@ -537,6 +560,32 @@ func (c *conn) write(done chan<- struct{}) {
 		if st == ending {
 			_ = c.nc.Close() // the reader may still be waiting for input
 			return
+		}
+	}
+}
+
+// wait waits until the writer has something to do: it returns false when it
+// is woken and true when the heartbeat timer fires. A spinning writer polls
+// for both instead of blocking.
+func (c *conn) wait(hb *time.Timer, spinning bool) (beat bool) {
+	if !spinning {
+		select {
+		case <-c.wake:
+			return false
+		case <-hb.C:
+			return true
+		}
+	}
+	for {
+		select {
+		case <-c.wake:
+			return false
+		default:
+		}
+		select {
+		case <-hb.C:
+			return true
+		default:
 		}
 	}
 }

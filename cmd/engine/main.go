@@ -21,6 +21,7 @@ import (
 	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/engine"
 	"github.com/sHyanorn/matching-engine/internal/oe"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 const defaultAddr = ":8080"
@@ -89,13 +90,26 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 	shutdownTimeout := fs.Duration("shutdown-timeout", 10*time.Second, "how long to wait for in-flight requests on shutdown")
 	pprofAddr := fs.String("pprof", "", "address to serve net/http/pprof on, apart from the API; off if empty")
 	oeAddr := fs.String("oe-addr", "", "address to serve OE1 binary order entry on (docs/API.md); off if empty")
+	oeSpin := fs.Bool("oe-spin", false, "spin, lock and pin the OE1 path, Linux only, needs -oe-addr: each symbol's goroutine and each session's reader and writer "+
+		"runs locked to an OS thread pinned to a CPU of its own, one per physical core, and polls instead of blocking. "+
+		"Cores go to the symbols in order at start, then to each session's reader and writer as it logs in, at most GOMAXPROCS-1 of them; "+
+		"a goroutine that finds none free runs as usual, and a session's cores are freed when its connection ends")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("engine: unexpected argument %q, want flags only (healthcheck only as the first argument)", fs.Arg(0))
 	}
+	if *oeSpin && *oeAddr == "" {
+		return errors.New("engine: -oe-spin needs -oe-addr: it spins the OE1 path, which is off without it")
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	var spinPool *spin.Pool // nil without -oe-spin
+	if *oeSpin {
+		if spinPool, err = spin.New(logger); err != nil {
+			return fmt.Errorf("engine: -oe-spin: %w", err)
+		}
+	}
 
 	fsyncTimes := api.NewFsyncTimes()
 	eng, err := engine.New(engine.Config{
@@ -105,6 +119,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 		QueueSize:    *queueSize,
 		Logger:       logger,
 		OnSync:       fsyncTimes.Observe,
+		Spin:         spinPool,
 	})
 	if err != nil {
 		return err
@@ -150,7 +165,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 		if oeLn, err = net.Listen("tcp", *oeAddr); err != nil {
 			return errors.Join(err, ln.Close())
 		}
-		oeSrv = oe.NewServer(oe.ServerOptions{Engine: eng, Counts: srv, Symbols: eng.Symbols(), Logger: logger})
+		oeSrv = oe.NewServer(oe.ServerOptions{Engine: eng, Counts: srv, Symbols: eng.Symbols(), Logger: logger, Spin: spinPool})
 		go func() {
 			if err := oeSrv.Serve(oeLn); err != nil {
 				logger.Error("oe listener failed", "err", err)

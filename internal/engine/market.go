@@ -3,8 +3,10 @@ package engine
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 type reqKind uint8
@@ -107,25 +109,55 @@ func openMarket(path, symbol string, index int, cfg Config) (*market, uint64, er
 // run is the market's event loop. It takes the next request, then up to
 // maxBatch-1 more that are already queued, and processes the batch in
 // arrival order. While idle it lets the log fsync pending writes when they
-// are due. It returns once the queue is closed and drained.
-func (m *market) run() {
+// are due. It returns once the queue is closed and drained. If it can pin
+// itself to core it spins, polling for requests instead of blocking, and it
+// gives the core back when it returns.
+func (m *market) run(core *spin.Lease) {
+	defer core.Release()
 	defer m.shutdown()
-	syncDue := m.log.start()
+	syncDue := m.log.start() // before the pin: the log's helper starts from a thread that is not pinned
+	spinning := core.Pin()
+	for {
+		r, open, tick := m.next(syncDue, spinning)
+		if tick {
+			m.log.tick()
+			continue
+		}
+		if !open {
+			return
+		}
+		m.batch = append(m.batch[:0], r)
+		open = m.drain()
+		m.process(m.batch)
+		clear(m.batch) // drop references to finished requests
+		if !open {
+			return
+		}
+	}
+}
+
+// next waits for the next request. It reports a tick instead when syncDue
+// fires first, and open false when the queue is closed and empty. A spinning
+// market polls for both instead of blocking.
+func (m *market) next(syncDue <-chan time.Time, spinning bool) (r request, open, tick bool) {
+	if !spinning {
+		select {
+		case r, open = <-m.in:
+			return r, open, false
+		case <-syncDue:
+			return r, true, true
+		}
+	}
 	for {
 		select {
-		case r, ok := <-m.in:
-			if !ok {
-				return
-			}
-			m.batch = append(m.batch[:0], r)
-			open := m.drain()
-			m.process(m.batch)
-			clear(m.batch) // drop references to finished requests
-			if !open {
-				return
-			}
+		case r, open = <-m.in:
+			return r, open, false
+		default:
+		}
+		select {
 		case <-syncDue:
-			m.log.tick()
+			return r, true, true
+		default:
 		}
 	}
 }

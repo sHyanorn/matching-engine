@@ -169,8 +169,20 @@ func (c *conn) admit(seq uint64, kind book.CommandKind, symbol uint8, id book.Or
 			}
 			return true, nil
 		}
-		ss.room.Wait()
+		c.waitRoom()
 	}
+}
+
+// waitRoom waits, with ss.mu held, until a place is free or the connection
+// is ending. A spinning reader does not block: it lets the lock go and takes
+// it again.
+func (c *conn) waitRoom() {
+	if c.lease == nil {
+		c.ss.room.Wait()
+		return
+	}
+	c.ss.mu.Unlock()
+	c.ss.mu.Lock()
 }
 
 // newOrder passes a NewOrder to the engine, or answers it at once.

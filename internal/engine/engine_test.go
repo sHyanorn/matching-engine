@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 // newTestEngine starts an engine with a fixed clock that counts up from 1,
@@ -247,9 +248,12 @@ func TestContextAlreadyDone(t *testing.T) {
 // TestConcurrentClients places orders on several symbols from many
 // goroutines at once. Each book still sees a gap-free Seq and every ID is
 // unique.
-func TestConcurrentClients(t *testing.T) {
+func TestConcurrentClients(t *testing.T) { concurrentClients(t, nil) }
+
+// concurrentClients runs the symbols on the cores of pool, if there is one.
+func concurrentClients(t *testing.T, pool *spin.Pool) {
 	syms := []string{"A", "B", "C", "D"}
-	e := newTestEngine(t, Config{Symbols: syms, QueueSize: 16, MaxBatch: 4})
+	e := newTestEngine(t, Config{Symbols: syms, QueueSize: 16, MaxBatch: 4, Spin: pool})
 	const clients, perClient = 8, 200
 	var mu sync.Mutex
 	results := map[string][]Result{}
@@ -299,12 +303,13 @@ func TestConcurrentClients(t *testing.T) {
 // times: every order is either applied or refused with ErrClosed.
 func TestCloseDrainsAndRefuses(t *testing.T) {
 	for range 20 {
-		closeDuringTraffic(t)
+		closeDuringTraffic(t, nil)
 	}
 }
 
-func closeDuringTraffic(t *testing.T) {
-	e, err := New(Config{Symbols: []string{"A"}, QueueSize: 64, DataDir: t.TempDir()})
+// closeDuringTraffic runs the symbol on a core of pool, if there is one.
+func closeDuringTraffic(t *testing.T, pool *spin.Pool) {
+	e, err := New(Config{Symbols: []string{"A"}, QueueSize: 64, DataDir: t.TempDir(), Spin: pool})
 	if err != nil {
 		t.Fatal(err)
 	}

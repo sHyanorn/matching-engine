@@ -13,6 +13,7 @@ import (
 	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 )
 
 // attached returns a connection with no socket and no goroutines that is
@@ -288,9 +289,12 @@ func TestResendsAndGapsOfCommands(t *testing.T) {
 // TestAtMostMaxTakenCommandsAreOutstanding: a session whose commands are
 // not answered stops being read at maxTaken, and one answer lets one more
 // in.
-func TestAtMostMaxTakenCommandsAreOutstanding(t *testing.T) {
+func TestAtMostMaxTakenCommandsAreOutstanding(t *testing.T) { atMostMaxTaken(t, nil) }
+
+// atMostMaxTaken serves the session with the cores of pool, if there is one.
+func atMostMaxTaken(t *testing.T, pool *spin.Pool) {
 	fe := &fakeEngine{hold: true}
-	_, addr := startServer(t, ServerOptions{Engine: fe})
+	_, addr := startServer(t, ServerOptions{Engine: fe, Spin: pool})
 	c := dial(t, addr)
 	c.login()
 	const sent = maxTaken + 76
