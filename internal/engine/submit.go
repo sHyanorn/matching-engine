@@ -32,8 +32,10 @@ type Sink interface {
 	Flush()
 }
 
-// prepareOrder checks o and takes its ID. cmd.OrderID is that ID, also when
-// err is not nil, and 0 if none was taken.
+// prepareOrder takes o's ID before it validates the order, so an order that
+// fails validation uses up an ID. An order with an unknown symbol or a client
+// ID that is too long, or whose ctx is done, fails before any ID is taken.
+// cmd.OrderID is the ID, also when err is not nil, and 0 if none was taken.
 func (e *Engine) prepareOrder(ctx context.Context, o NewOrder) (m *market, cmd book.Command, err error) {
 	m, ok := e.bySymbol[o.Symbol]
 	if !ok {
@@ -72,11 +74,11 @@ func (e *Engine) prepareCancel(id book.OrderID) (*market, book.Command, error) {
 	return m, cmd, nil
 }
 
-// SendOrder is PlaceOrder without the wait: it validates the order, takes
-// its ID and queues it, and returns the ID. The reply, with tag, goes to s
-// once the order has been applied. An error returned here means nothing was
-// queued and s gets no reply; the ID is the one taken, 0 if none was (see
-// PlaceOrder for the errors).
+// SendOrder is PlaceOrder without the wait: it assigns the order's ID,
+// validates the order and queues it, and returns the ID. The reply, with
+// tag, goes to s once the order has been applied. An error returned here
+// means nothing was queued and s gets no reply; the ID is the one taken, 0
+// if none was (see PlaceOrder for the errors).
 func (e *Engine) SendOrder(s Sink, tag uint64, o NewOrder) (book.OrderID, error) {
 	m, cmd, err := e.prepareOrder(context.Background(), o)
 	if err != nil {
