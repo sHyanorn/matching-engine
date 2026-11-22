@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/engine"
 	"github.com/sHyanorn/matching-engine/internal/oe"
 )
@@ -52,8 +56,9 @@ func TestOEAgainstServer(t *testing.T) {
 }
 
 // serveEngine starts an engine with one symbol and an OE1 server for it,
-// and returns the engine and the server's address.
-func serveEngine(t *testing.T, opts oe.ServerOptions) (*engine.Engine, string) {
+// and returns the engine, the api.Server that counts the server's commands
+// and the server's address.
+func serveEngine(t *testing.T, opts oe.ServerOptions) (*engine.Engine, *api.Server, string) {
 	t.Helper()
 	eng, err := engine.New(engine.Config{Symbols: []string{"BTC-USD"}, DataDir: t.TempDir(), SyncInterval: time.Hour})
 	if err != nil {
@@ -63,7 +68,8 @@ func serveEngine(t *testing.T, opts oe.ServerOptions) (*engine.Engine, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts.Engine, opts.Symbols = eng, eng.Symbols()
+	counts := api.New(eng, api.Options{})
+	opts.Engine, opts.Counts, opts.Symbols = eng, counts, eng.Symbols()
 	srv := oe.NewServer(opts)
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() {
@@ -72,16 +78,17 @@ func serveEngine(t *testing.T, opts oe.ServerOptions) (*engine.Engine, string) {
 			t.Error(err)
 		}
 	})
-	return eng, ln.Addr().String()
+	return eng, counts, ln.Addr().String()
 }
 
 // TestOEOrdersAgainstEngine sends the order flow to the engine over its
-// session server and checks what loadgen counted against the book.
+// session server and checks what loadgen counted against the book and
+// against the engine's counters.
 func TestOEOrdersAgainstEngine(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs a load in real time")
 	}
-	eng, addr := serveEngine(t, oe.ServerOptions{})
+	eng, counts, addr := serveEngine(t, oe.ServerOptions{})
 	cfg := config{oeAddr: addr, orders: true, symbol: "BTC-USD", seed: 1, sd: 5,
 		rate: 2000, warmup: 200 * time.Millisecond, duration: time.Second, spin: true, maxSendLag: time.Hour}
 	run, err := runOE(context.Background(), cfg)
@@ -115,7 +122,9 @@ func TestOEOrdersAgainstEngine(t *testing.T) {
 	}
 
 	dones, bare := 0, 0 // of the whole run
+	tally := map[outcome]int{}
 	for _, out := range run.res[:run.nsent] {
+		tally[out]++
 		if out != noDone {
 			dones++
 		}
@@ -134,12 +143,27 @@ func TestOEOrdersAgainstEngine(t *testing.T) {
 		t.Errorf("%d Events and %d cancels answered without one, for %d of %d commands; the book is at event %d",
 			events, bare, dones, run.nsent, depth.LastSeq)
 	}
+
+	// Every Done is in, so every command of the run is counted.
+	w := httptest.NewRecorder()
+	counts.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for series, want := range map[string]int{
+		`matching_engine_orders_total{result="accepted",symbol="BTC-USD"}`:  tally[orderRested] + tally[orderTraded],
+		`matching_engine_cancels_total{result="canceled",symbol="BTC-USD"}`: tally[cancelCanceled],
+		`matching_engine_cancels_total{result="finished",symbol="BTC-USD"}`: tally[cancelFinished],
+		`matching_engine_cancels_total{result="unknown",symbol="BTC-USD"}`:  tally[cancelUnknown],
+		`matching_engine_trades_total{symbol="BTC-USD"}`:                    run.trades,
+	} {
+		if sample := fmt.Sprintf("%s %d\n", series, want); !strings.Contains(w.Body.String(), sample) {
+			t.Errorf("/metrics lacks %q, loadgen's own count of the run", strings.TrimSpace(sample))
+		}
+	}
 }
 
 // An engine without the symbol is found out at the login, before any load.
 func TestOEOrdersUnknownSymbol(t *testing.T) {
 	// The server's Heartbeat is the first frame after its Symbol frames.
-	_, addr := serveEngine(t, oe.ServerOptions{Heartbeat: 10 * time.Millisecond})
+	_, _, addr := serveEngine(t, oe.ServerOptions{Heartbeat: 10 * time.Millisecond})
 	cfg := config{oeAddr: addr, orders: true, symbol: "ETH-USD", rate: 1000, duration: time.Second}
 	_, err := measureOE(context.Background(), cfg)
 	if err == nil || !strings.Contains(err.Error(), `the engine has no symbol "ETH-USD"`) {

@@ -150,7 +150,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) (err error) {
 		if oeLn, err = net.Listen("tcp", *oeAddr); err != nil {
 			return errors.Join(err, ln.Close())
 		}
-		oeSrv = oe.NewServer(oe.ServerOptions{Engine: eng, Symbols: eng.Symbols(), Logger: logger})
+		oeSrv = oe.NewServer(oe.ServerOptions{Engine: eng, Counts: srv, Symbols: eng.Symbols(), Logger: logger})
 		go func() {
 			if err := oeSrv.Serve(oeLn); err != nil {
 				logger.Error("oe listener failed", "err", err)

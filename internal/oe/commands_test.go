@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sHyanorn/matching-engine/internal/api"
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
 )
@@ -57,6 +58,7 @@ type fakeEngine struct {
 	calls   []fakeCall // every command taken, in order
 	pending []fakeCall // taken and not answered
 	nextID  uint64
+	symbols []string // of the orders given an ID, by the ID minus 1
 	hold    bool
 	refuse  func(c fakeCall) error // not nil: may refuse a command
 }
@@ -66,6 +68,7 @@ func (f *fakeEngine) take(c fakeCall) (book.OrderID, error) {
 	if !c.cancel {
 		f.nextID++
 		c.id = book.OrderID(f.nextID)
+		f.symbols = append(f.symbols, c.order.Symbol)
 	}
 	if f.refuse != nil {
 		if err := f.refuse(c); err != nil {
@@ -93,6 +96,15 @@ func (f *fakeEngine) SendOrder(s engine.Sink, tag uint64, o engine.NewOrder) (bo
 func (f *fakeEngine) SendCancel(s engine.Sink, tag uint64, id book.OrderID) error {
 	_, err := f.take(fakeCall{sink: s, tag: tag, cancel: true, id: id})
 	return err
+}
+
+func (f *fakeEngine) SymbolOf(id book.OrderID) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == 0 || uint64(id) > f.nextID {
+		return "", false
+	}
+	return f.symbols[id-1], true
 }
 
 // answer answers the first n commands taken and not yet answered, then
@@ -531,10 +543,24 @@ func (e *echoEngine) SendCancel(s engine.Sink, tag uint64, id book.OrderID) erro
 	return nil
 }
 
+func (e *echoEngine) SymbolOf(book.OrderID) (string, bool) { return testSymbols[0], true }
+
 // TestCommandsAllocateNothing: taking a NewOrder or a Cancel, passing it to
-// the engine and queueing its reply allocates nothing.
+// the engine, counting it in the counters /metrics serves and queueing its
+// reply allocates nothing.
 func TestCommandsAllocateNothing(t *testing.T) {
-	srv := NewServer(ServerOptions{Engine: &echoEngine{}, Symbols: testSymbols})
+	eng, err := engine.New(engine.Config{Symbols: testSymbols, DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = eng.Close() })
+	// The cancels name an ID the engine has issued: no other is counted.
+	issued, err := eng.PlaceOrder(context.Background(), engine.NewOrder{Symbol: testSymbols[0], Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := api.New(eng, api.Options{})
+	srv := NewServer(ServerOptions{Engine: &echoEngine{}, Counts: counts, Symbols: testSymbols})
 	c := attached(t, srv)
 	c.out = make([]byte, 0, 1024)
 	buf := make([]byte, 0, 64)
@@ -543,7 +569,7 @@ func TestCommandsAllocateNothing(t *testing.T) {
 			c.out = c.out[:0]
 			seq := c.ss.lastClientSeq + 1
 			if cancel {
-				buf = Cancel{ClientSeq: seq, OrderID: 1}.Append(buf[:0])
+				buf = Cancel{ClientSeq: seq, OrderID: issued.OrderID}.Append(buf[:0])
 			} else {
 				buf = buf[:0]
 				buf = NewOrder{ClientSeq: seq, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 100, Qty: 1}.Append(buf)
@@ -559,5 +585,11 @@ func TestCommandsAllocateNothing(t *testing.T) {
 	}
 	if c.ss.taken != 0 || c.ss.lastClientSeq < 2000 {
 		t.Fatalf("%d places in use, %d commands taken", c.ss.taken, c.ss.lastClientSeq)
+	}
+	// AllocsPerRun makes 1,001 calls for each kind.
+	got := counters(t, counts.Handler())
+	orders, cancels := got[`matching_engine_orders_total{result="accepted",symbol="BTC-USD"}`], got[`matching_engine_cancels_total{result="canceled",symbol="BTC-USD"}`]
+	if orders != "1001" || cancels != "1001" {
+		t.Errorf("%s orders and %s cancels counted, want 1001 of each", orders, cancels)
 	}
 }

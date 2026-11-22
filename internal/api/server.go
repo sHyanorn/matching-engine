@@ -40,7 +40,6 @@ type Server struct {
 	opts     Options
 	mux      *http.ServeMux
 	metrics  *metrics
-	symbols  map[string]bool // configured symbols: the only metric labels
 	stopping atomic.Bool
 
 	mu      sync.Mutex
@@ -63,11 +62,7 @@ func New(eng *engine.Engine, opts Options) *Server {
 		opts:    opts,
 		mux:     http.NewServeMux(),
 		metrics: newMetrics(eng, opts.FsyncTimes),
-		symbols: make(map[string]bool),
 		streams: make(map[*stream]struct{}),
-	}
-	for _, sym := range eng.Symbols() {
-		s.symbols[sym] = true
 	}
 	s.handle("POST /v1/orders", s.placeOrder)
 	s.handle("DELETE /v1/orders/{id}", s.cancelOrder)

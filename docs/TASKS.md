@@ -77,4 +77,4 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [ ] Pilot pair: every flow five times, and the tuning comparisons
 - [ ] Four more pairs with the configuration fixed
 - [ ] Publish every run, each latency with its pair's floor and as a range over pairs
-- [ ] Count OE1 commands in the orders, cancels and trades metrics
+- [x] Count OE1 commands in the orders, cancels and trades metrics

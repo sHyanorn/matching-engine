@@ -1,0 +1,15 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/api
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+             │ bench-results/oe-metrics/raw/count.txt │
+             │                 sec/op                 │
+CountOrder-4                             25.47n ± 11%
+
+             │ bench-results/oe-metrics/raw/count.txt │
+             │                  B/op                  │
+CountOrder-4                               0.000 ± 0%
+
+             │ bench-results/oe-metrics/raw/count.txt │
+             │               allocs/op                │
+CountOrder-4                               0.000 ± 0%

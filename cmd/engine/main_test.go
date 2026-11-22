@@ -649,6 +649,35 @@ func TestOEOrdersReachTheBook(t *testing.T) {
 	}
 }
 
+// TestOECommandsAreCounted: orders and a cancel sent over OE1 are in the
+// counters /metrics serves as soon as their Dones are read.
+func TestOECommandsAreCounted(t *testing.T) {
+	in := start(t, t.TempDir(), "-oe-addr", "127.0.0.1:0")
+	conn, err := net.Dial("tcp", in.oe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	var buf []byte
+	sell := oeDone(t, conn, &buf, 1, oe.Login{Version: oe.Version}.Append(nil),
+		oe.NewOrder{ClientSeq: 1, Side: book.Sell, Type: book.Limit, TIF: book.GTC, Price: 1000, Qty: 5}.Append(nil))
+	buy := oeDone(t, conn, &buf, 2, oe.NewOrder{ClientSeq: 2, Side: book.Buy, Type: book.Limit, TIF: book.GTC, Price: 1000, Qty: 2}.Append(nil))
+	cancel := oeDone(t, conn, &buf, 3, oe.Cancel{ClientSeq: 3, OrderID: sell.OrderID}.Append(nil))
+	if sell.State != engine.StateOpen || buy.State != engine.StateFilled || cancel.State != engine.StateCanceled {
+		t.Fatalf("answers %+v, %+v and %+v; want an open order, a filled one and a cancel", sell, buy, cancel)
+	}
+	metrics := string(get(t, newClient(t, true), in.base+"/metrics").body)
+	for _, want := range []string{
+		`matching_engine_orders_total{result="accepted",symbol="BTC-USD"} 2`,
+		`matching_engine_trades_total{symbol="BTC-USD"} 1`,
+		`matching_engine_cancels_total{result="canceled",symbol="BTC-USD"} 1`,
+	} {
+		if !strings.Contains(metrics, want+"\n") {
+			t.Errorf("/metrics lacks %q", want)
+		}
+	}
+}
+
 func TestPprofServedApart(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

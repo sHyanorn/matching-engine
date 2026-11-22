@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -73,6 +75,9 @@ func parityCommands(n int) []parityCommand {
 		bad(base, func(c *parityCommand) { c.symbol, c.symIdx = "NOPE", 9 }),
 		cancelOf(0), cancelOf(0), // the second finds it canceled
 		cancelOf(3), // the order that was filled
+		// The first order's counter with the other symbol's index: that
+		// book rejects it.
+		cancelID(1<<8|1),
 		cancelID(book.OrderID(1<<40)<<8),
 		cancelID(book.OrderID(1<<20)<<8|5), // a symbol index that is not configured
 		cancelID(0),
@@ -159,9 +164,31 @@ func restDo(t *testing.T, h http.Handler, method, path string, body any) restRep
 	return r
 }
 
+// counters returns the samples of the orders, cancels and trades counters
+// that h serves on /metrics: each value as it is written, by its series.
+func counters(t *testing.T, h http.Handler) map[string]string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /metrics: status %d", w.Code)
+	}
+	samples := map[string]string{}
+	for line := range strings.SplitSeq(w.Body.String(), "\n") {
+		series, value, _ := strings.Cut(line, " ")
+		for _, name := range []string{"matching_engine_orders_total", "matching_engine_cancels_total", "matching_engine_trades_total"} {
+			if strings.HasPrefix(series, name+"{") {
+				samples[series] = value
+			}
+		}
+	}
+	return samples
+}
+
 // TestMatchesREST sends the same commands to two engines, one over REST
 // and one over OE1, and checks that every reply says the same, event for
-// event, and that the two command logs are the same bytes.
+// event, that the two command logs are the same bytes, and that the orders,
+// cancels and trades counters of the two end the same.
 func TestMatchesREST(t *testing.T) {
 	n := 4_000
 	if testing.Short() {
@@ -181,7 +208,8 @@ func TestMatchesREST(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := api.New(a, api.Options{}).Handler()
-	srv, addr := startServer(t, ServerOptions{Engine: b, Symbols: b.Symbols()})
+	counts := api.New(b, api.Options{})
+	srv, addr := startServer(t, ServerOptions{Engine: b, Counts: counts, Symbols: b.Symbols()})
 	c := dial(t, addr)
 	c.login()
 
@@ -231,6 +259,23 @@ func TestMatchesREST(t *testing.T) {
 			}
 		} else {
 			ids = append(ids, 0)
+		}
+	}
+	rest, oe1 := counters(t, h), counters(t, counts.Handler())
+	if !maps.Equal(rest, oe1) {
+		t.Errorf("the counters differ:\nREST %v\nOE1  %v", rest, oe1)
+	}
+	for _, series := range []string{
+		`matching_engine_orders_total{result="accepted",symbol="BTC-USD"}`,
+		`matching_engine_orders_total{result="rejected",symbol="BTC-USD"}`,
+		`matching_engine_orders_total{result="invalid",symbol="BTC-USD"}`,
+		`matching_engine_cancels_total{result="canceled",symbol="BTC-USD"}`,
+		`matching_engine_cancels_total{result="finished",symbol="BTC-USD"}`,
+		`matching_engine_cancels_total{result="unknown",symbol="ETH-USD"}`,
+		`matching_engine_trades_total{symbol="BTC-USD"}`,
+	} {
+		if v := rest[series]; v == "" || v == "0" {
+			t.Errorf("%s is %q over REST: the commands do not reach it", series, v)
 		}
 	}
 	srv.BeginShutdown()

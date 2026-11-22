@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -49,8 +50,9 @@ func (nullConn) Close() error { return nil }
 // model drives a session without a connection, as a client would, and
 // checks what the session does against what the protocol says: replies are
 // numbered without gaps, every command is passed to the engine at most
-// once and answered exactly once, a resend is dropped, and the places in use
-// are the commands the engine has not answered.
+// once and answered exactly once, a resend is dropped, the places in use
+// are the commands the engine has not answered, and Counts is told of each
+// answer once, when it is made.
 type model struct {
 	t        *testing.T
 	srv      *Server
@@ -58,6 +60,8 @@ type model struct {
 	c        *conn // nil between two connections
 	lost     bool  // a resume was refused for replay_lost: replies were lost
 	fe       *fakeEngine
+	rec      *recorder
+	counts   []counted // what the session should have counted since the last check
 	src      opSource
 	buf      []byte
 	last     uint64            // the last client_seq sent and taken
@@ -157,7 +161,21 @@ func (m *model) check() []frame {
 	if m.ss.lastClientSeq != m.last {
 		m.fatalf("lastClientSeq %d, want %d", m.ss.lastClientSeq, m.last)
 	}
+	if got := m.rec.take(); !slices.Equal(got, m.counts) {
+		m.fatalf("counted %+v, want %+v", got, m.counts)
+	}
+	m.counts = m.counts[:0]
 	return fs
+}
+
+// answer has the engine answer the first n commands it holds.
+func (m *model) answer(n int) {
+	m.fe.mu.Lock()
+	for _, c := range m.fe.pending[:n] {
+		m.counts = append(m.counts, countedReply(c.order.Symbol, fakeReply(c)))
+	}
+	m.fe.mu.Unlock()
+	m.fe.answer(n)
 }
 
 // command sends a NewOrder or Cancel with the next client_seq and checks
@@ -171,6 +189,13 @@ func (m *model) command(cancel bool, symbol uint8, id book.OrderID) {
 		f, m.kind[seq] = Cancel{ClientSeq: seq, OrderID: id}, 'C'
 	}
 	_, refused := m.refuse[seq]
+	if refused && (cancel || int(symbol) < len(testSymbols)) { // an unknown symbol is answered first, and not counted
+		c := counted{cancel: cancel, id: id, err: engine.ErrBusy}
+		if !cancel {
+			c.symbol = testSymbols[symbol]
+		}
+		m.counts = append(m.counts, c)
+	}
 	if err := m.send(f); err != nil {
 		m.fatalf("command %d: %v", seq, err)
 	}
@@ -206,9 +231,9 @@ func (m *model) room() bool {
 // runModel runs the model on the choices src gives.
 func runModel(t *testing.T, src opSource) {
 	t.Helper()
-	m := &model{t: t, src: src, fe: &fakeEngine{hold: true}, kind: map[uint64]byte{}, answered: map[uint64]int{},
+	m := &model{t: t, src: src, fe: &fakeEngine{hold: true}, rec: &recorder{}, kind: map[uint64]byte{}, answered: map[uint64]int{},
 		seen: map[uint64]bool{}, refuse: map[uint64]string{}, nextSeq: 1}
-	srv := NewServer(ServerOptions{Engine: m.fe, Symbols: testSymbols, Held: 700,
+	srv := NewServer(ServerOptions{Engine: m.fe, Counts: m.rec, Symbols: testSymbols, Held: 700,
 		afterFunc: func(time.Duration, func()) func() bool { return func() bool { return true } }})
 	m.srv = srv
 	m.c = attached(t, srv)
@@ -251,7 +276,7 @@ func runModel(t *testing.T, src opSource) {
 				if op == 6 {
 					n = 1 + src.intn(n)
 				}
-				m.fe.answer(n)
+				m.answer(n)
 			}
 			m.check()
 		case op == 7 && m.c != nil && m.last > 0: // a resend, whatever the frame
@@ -306,7 +331,7 @@ func (m *model) finish() {
 	m.fe.mu.Lock()
 	n := len(m.fe.pending)
 	m.fe.mu.Unlock()
-	m.fe.answer(n)
+	m.answer(n)
 	if m.c == nil {
 		m.resume()
 	}

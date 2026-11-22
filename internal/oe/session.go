@@ -138,11 +138,13 @@ func (ss *session) endLocked() {
 // admit takes the frame with client_seq seq. It reports false if the frame
 // is to go no further: it is a resend, which is dropped; it was answered
 // with shutting_down; or the connection is over. A number that skips one
-// is an error. A command waits for one of the session's maxTaken places
-// first, and id is the order it is about, if it names one. The number is
-// taken in the same step as the place, so that a command is either passed
-// to the engine or left for the client to send again.
-func (c *conn) admit(seq uint64, id book.OrderID, command bool) (bool, error) {
+// is an error. A command, of kind kind, waits for one of the session's
+// maxTaken places first; symbol is the index a NewOrder names and id the
+// order a Cancel names. kind is 0 for a frame that is not a command. The
+// number is taken in the same step as the place, so that a command is
+// either passed to the engine or left for the client to send again.
+func (c *conn) admit(seq uint64, kind book.CommandKind, symbol uint8, id book.OrderID) (bool, error) {
+	command := kind != 0
 	ss := c.ss
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -157,6 +159,7 @@ func (c *conn) admit(seq uint64, id book.OrderID, command bool) (bool, error) {
 		case !command || ss.drain != drainNone || ss.taken < maxTaken:
 			ss.lastClientSeq = seq
 			if command && ss.drain != drainNone {
+				c.srv.countRefused(kind, symbol, id, engine.ErrClosed) // the error REST counts at shutdown
 				ss.emitDoneLocked(seq, Done{Status: StatusShuttingDown, OrderID: id})
 				c.signal()
 				return false, nil
@@ -176,17 +179,17 @@ func (c *conn) newOrder(m NewOrder) error {
 	if opts.Engine == nil {
 		return errNoEngine
 	}
-	if ok, err := c.admit(m.ClientSeq, 0, true); !ok {
+	if ok, err := c.admit(m.ClientSeq, book.CommandNewOrder, m.Symbol, 0); !ok {
 		return err
 	}
 	if int(m.Symbol) >= len(opts.Symbols) {
-		return c.refuse(m.ClientSeq, book.CommandNewOrder, 0, engine.ErrUnknownSymbol)
+		return c.refuse(m.ClientSeq, book.CommandNewOrder, m.Symbol, 0, engine.ErrUnknownSymbol)
 	}
 	id, err := opts.Engine.SendOrder(c.ss, m.ClientSeq, engine.NewOrder{
 		Symbol: opts.Symbols[m.Symbol], Side: m.Side, Type: m.Type, TIF: m.TIF, Price: m.Price, Qty: m.Qty,
 	})
 	if err != nil {
-		return c.refuse(m.ClientSeq, book.CommandNewOrder, id, err)
+		return c.refuse(m.ClientSeq, book.CommandNewOrder, m.Symbol, id, err)
 	}
 	return nil
 }
@@ -197,18 +200,19 @@ func (c *conn) cancel(m Cancel) error {
 	if opts.Engine == nil {
 		return errNoEngine
 	}
-	if ok, err := c.admit(m.ClientSeq, m.OrderID, true); !ok {
+	if ok, err := c.admit(m.ClientSeq, book.CommandCancel, 0, m.OrderID); !ok {
 		return err
 	}
 	if err := opts.Engine.SendCancel(c.ss, m.ClientSeq, m.OrderID); err != nil {
-		return c.refuse(m.ClientSeq, book.CommandCancel, m.OrderID, err)
+		return c.refuse(m.ClientSeq, book.CommandCancel, 0, m.OrderID, err)
 	}
 	return nil
 }
 
-// refuse answers a command that was not queued, for the reason err, and
-// gives back its place.
-func (c *conn) refuse(seq uint64, kind book.CommandKind, id book.OrderID, err error) error {
+// refuse counts and answers a command that was not queued, for the reason
+// err, and gives back its place. symbol is the index a NewOrder names.
+func (c *conn) refuse(seq uint64, kind book.CommandKind, symbol uint8, id book.OrderID, err error) error {
+	c.srv.countRefused(kind, symbol, id, err)
 	d := refusalDone(kind, id, err)
 	ss := c.ss
 	ss.mu.Lock()
@@ -217,6 +221,35 @@ func (c *conn) refuse(seq uint64, kind book.CommandKind, id book.OrderID, err er
 	ss.mu.Unlock()
 	ss.Flush()
 	return nil
+}
+
+// countRefused reports a command that is answered without reaching the
+// engine's queue, for the reason err. A NewOrder for a symbol that does not
+// exist is not counted, as over REST.
+func (s *Server) countRefused(kind book.CommandKind, symbol uint8, id book.OrderID, err error) {
+	n := s.opts.Counts
+	switch {
+	case n == nil:
+	case kind == book.CommandCancel:
+		n.CountCancel(id, nil, engine.OrderStatus{}, err)
+	case int(symbol) < len(s.opts.Symbols):
+		n.CountOrder(s.opts.Symbols[symbol], nil, err)
+	}
+}
+
+// countReply reports a command the engine has answered, whether or not its
+// session still has a connection or still exists.
+func (s *Server) countReply(r engine.Reply) {
+	n := s.opts.Counts
+	switch {
+	case n == nil:
+	case r.Kind == book.CommandCancel:
+		n.CountCancel(r.OrderID, r.Events, r.Status, r.Err)
+	default:
+		if symbol, ok := s.opts.Engine.SymbolOf(r.OrderID); ok {
+			n.CountOrder(symbol, r.Events, r.Err)
+		}
+	}
 }
 
 // answeredLocked gives back the place of a command that has been answered.
@@ -257,6 +290,7 @@ func (ss *session) emitLocked(fr []byte) {
 // on the goroutine of the command's symbol and does not wait for the
 // writer or the client; a connection that falls too far behind is closed.
 func (ss *session) Reply(seq uint64, r engine.Reply) {
+	ss.srv.countReply(r)
 	d, withEvents := replyDone(r)
 	ss.mu.Lock()
 	if withEvents {

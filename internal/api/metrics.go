@@ -13,12 +13,18 @@ import (
 // their own. Labels take only configured symbols, never client input.
 type metrics struct {
 	reg      *prometheus.Registry
-	orders   *prometheus.CounterVec
-	cancels  *prometheus.CounterVec
-	trades   *prometheus.CounterVec
+	symbols  map[string]*symbolCounters // of the configured symbols
 	latency  *prometheus.HistogramVec
 	streams  prometheus.Gauge
 	wsClosed *prometheus.CounterVec
+}
+
+// symbolCounters are one symbol's series of the orders, cancels and trades
+// counters, resolved once so that counting a command looks up no labels.
+// orders and cancels are indexed by outcome.
+type symbolCounters struct {
+	orders, cancels [failed + 1]prometheus.Counter
+	trades          prometheus.Counter
 }
 
 // durationBuckets are the buckets of every duration histogram: 50µs to
@@ -26,17 +32,18 @@ type metrics struct {
 var durationBuckets = prometheus.ExponentialBuckets(0.00005, 2, 16)
 
 func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
+	orders := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "matching_engine_orders_total", Help: "New orders by outcome.",
+	}, []string{"symbol", "result"})
+	cancels := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "matching_engine_cancels_total", Help: "Cancel requests by outcome.",
+	}, []string{"symbol", "result"})
+	trades := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "matching_engine_trades_total", Help: "Executions.",
+	}, []string{"symbol"})
 	m := &metrics{
-		reg: prometheus.NewRegistry(),
-		orders: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "matching_engine_orders_total", Help: "New orders by outcome.",
-		}, []string{"symbol", "result"}),
-		cancels: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "matching_engine_cancels_total", Help: "Cancel requests by outcome.",
-		}, []string{"symbol", "result"}),
-		trades: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "matching_engine_trades_total", Help: "Executions.",
-		}, []string{"symbol"}),
+		reg:     prometheus.NewRegistry(),
+		symbols: make(map[string]*symbolCounters),
 		latency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "matching_engine_http_request_duration_seconds", Help: "HTTP request handling time.",
 			Buckets: durationBuckets,
@@ -48,7 +55,7 @@ func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 			Name: "matching_engine_ws_disconnects_total", Help: "Closed WebSocket connections by cause.",
 		}, []string{"reason"}),
 	}
-	m.reg.MustRegister(m.orders, m.cancels, m.trades, m.latency, m.streams, m.wsClosed,
+	m.reg.MustRegister(orders, cancels, trades, m.latency, m.streams, m.wsClosed,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m.reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "matching_engine_order_ids_failed", Help: "1 while reserving order IDs fails; new orders then fail.",
@@ -69,13 +76,14 @@ func newMetrics(eng *engine.Engine, fsync *FsyncTimes) *metrics {
 	}
 	for _, s := range eng.Symbols() {
 		// Every series exists from the start, at 0.
-		for _, r := range orderLabels {
-			m.orders.WithLabelValues(s, r)
+		c := &symbolCounters{trades: trades.WithLabelValues(s)}
+		for out, r := range orderLabels {
+			c.orders[out] = orders.WithLabelValues(s, r)
 		}
-		for _, r := range cancelLabels {
-			m.cancels.WithLabelValues(s, r)
+		for out, r := range cancelLabels {
+			c.cancels[out] = cancels.WithLabelValues(s, r)
 		}
-		m.trades.WithLabelValues(s)
+		m.symbols[s] = c
 		m.reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "matching_engine_queue_length", Help: "Requests waiting in a symbol's queue.",
 			ConstLabels: prometheus.Labels{"symbol": s},

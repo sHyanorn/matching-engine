@@ -17,6 +17,7 @@ import (
 // value docs/API.md gives.
 type ServerOptions struct {
 	Engine  Commands     // takes the sessions' orders and cancels; nil: none are served
+	Counts  Counts       // is told of the orders and cancels answered; nil: none are counted
 	Symbols []string     // the engine's symbols, in index order
 	Logger  *slog.Logger // nil: no logging
 
@@ -36,6 +37,19 @@ type ServerOptions struct {
 type Commands interface {
 	SendOrder(s engine.Sink, tag uint64, o engine.NewOrder) (book.OrderID, error)
 	SendCancel(s engine.Sink, tag uint64, id book.OrderID) error
+	SymbolOf(id book.OrderID) (string, bool)
+}
+
+// Counts is told of each NewOrder and Cancel the sessions answer, but for
+// a NewOrder for a symbol that does not exist, with the events and the
+// error the answer came from: once, when the answer is made and before its
+// Done is queued, so a client that has read a Done finds its command
+// counted. *api.Server has it, and counts a command as it counts a REST
+// request. The methods may not block: the goroutine of a symbol calls them,
+// and a session's reader, at times with the session locked.
+type Counts interface {
+	CountOrder(symbol string, events []book.Event, err error)
+	CountCancel(id book.OrderID, events []book.Event, status engine.OrderStatus, err error)
 }
 
 // Server serves OE1 sessions.
@@ -326,7 +340,7 @@ func (c *conn) handle(t Type, body []byte) error {
 		return c.cancel(DecodeCancel(body))
 	case TypePing:
 		p := DecodePing(body)
-		if ok, err := c.admit(p.ClientSeq, 0, false); !ok {
+		if ok, err := c.admit(p.ClientSeq, 0, 0, 0); !ok {
 			return err
 		}
 		return queue(c, Pong(p))

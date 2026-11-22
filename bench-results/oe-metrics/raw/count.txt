@@ -1,0 +1,16 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/api
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkCountOrder-4   	46494325	        25.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	52888234	        25.56 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	45239516	        25.94 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	38533086	        27.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	39222475	        31.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	51162270	        23.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	42145722	        25.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	48768188	        20.92 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	42411878	        27.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCountOrder-4   	53871043	        22.76 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/sHyanorn/matching-engine/internal/api	11.811s

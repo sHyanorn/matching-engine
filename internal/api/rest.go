@@ -50,10 +50,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		})
 		extendWriteDeadline(w, r)
 	}
-	if s.symbols[req.Symbol] {
-		s.metrics.orders.WithLabelValues(req.Symbol, orderLabels[orderOutcome(res, err)]).Inc()
-		s.countTrades(req.Symbol, res.Events)
-	}
+	s.CountOrder(req.Symbol, res.Events, err)
 	s.writeResult(w, res, err)
 }
 
@@ -69,9 +66,7 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 		extendWriteDeadline(w, r)
 	}
 	out := cancelOutcome(res, err)
-	if symbol, issued := s.eng.SymbolOf(id); issued {
-		s.metrics.cancels.WithLabelValues(symbol, cancelLabels[out]).Inc()
-	}
+	s.countCancel(id, out)
 	switch {
 	case err == nil && out == finished:
 		writeError(w, http.StatusConflict, "order_finished", fmt.Sprintf("order %d is %v", id, res.Status.State))
@@ -130,19 +125,20 @@ var (
 // orderOutcome classifies a new order. A command with events reached the
 // book, even if its log failed afterwards.
 func orderOutcome(res engine.Result, err error) outcome {
-	status, _ := engineStatus(err)
 	switch {
 	case len(res.Events) > 0 && res.Events[0].Kind == book.EventRejected:
 		return rejected
 	case len(res.Events) > 0:
 		return applied
-	case status == http.StatusBadRequest:
-		return invalid
 	case errors.Is(err, engine.ErrBusy):
 		return busy
-	default:
-		return failed
 	}
+	// engineStatus allocates, so it is asked only here: an order with
+	// events is counted on its symbol's goroutine (CountOrder).
+	if status, _ := engineStatus(err); status == http.StatusBadRequest {
+		return invalid
+	}
+	return failed
 }
 
 // cancelOutcome classifies a cancel. A cancel of an order that is not
@@ -162,15 +158,38 @@ func cancelOutcome(res engine.Result, err error) outcome {
 	}
 }
 
-func (s *Server) countTrades(symbol string, evs []book.Event) {
-	n := 0
-	for _, e := range evs {
+// CountOrder counts a new order for symbol that ended with events and err,
+// and the trades among the events. REST requests and OE1 commands are both
+// counted here, so a result means the same over either. An order for a
+// symbol that is not configured is not counted. CountOrder does not block,
+// and allocates nothing for an order with events.
+func (s *Server) CountOrder(symbol string, events []book.Event, err error) {
+	c := s.metrics.symbols[symbol]
+	if c == nil {
+		return
+	}
+	c.orders[orderOutcome(engine.Result{Events: events}, err)].Inc()
+	trades := 0
+	for _, e := range events {
 		if e.Kind == book.EventTrade {
-			n++
+			trades++
 		}
 	}
-	if n > 0 {
-		s.metrics.trades.WithLabelValues(symbol).Add(float64(n))
+	if trades > 0 {
+		c.trades.Add(float64(trades))
+	}
+}
+
+// CountCancel counts a cancel of order id that ended with events, the
+// order's status and err, as CountOrder counts an order. A cancel of an ID
+// the engine has not issued is not counted (D019).
+func (s *Server) CountCancel(id book.OrderID, events []book.Event, status engine.OrderStatus, err error) {
+	s.countCancel(id, cancelOutcome(engine.Result{Events: events, Status: status}, err))
+}
+
+func (s *Server) countCancel(id book.OrderID, out outcome) {
+	if symbol, issued := s.eng.SymbolOf(id); issued {
+		s.metrics.symbols[symbol].cancels[out].Inc()
 	}
 }
 
