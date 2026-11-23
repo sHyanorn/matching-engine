@@ -59,6 +59,8 @@ func newSupervisorTest(t *testing.T, mutate ...func(*superviseOptions)) *supervi
 		httpAddr: freeAddr(t),
 		oeAddr:   freeAddr(t),
 		src:      fakeSources(fakeProc(t, fakeHostFiles("0-7"))),
+		// A measurement takes a tenth of a second or more.
+		clockRead: func() float64 { return 25 },
 	}
 	for _, m := range mutate {
 		m(&o)
@@ -279,6 +281,7 @@ func TestSupervisorRoutes(t *testing.T) {
 		{"POST", "/host"}, {"HEAD", "/host"}, {"DELETE", "/host"}, {"GET", "/host/"}, {"GET", "/host/x"}, {"GET", "//host"},
 		{"GET", "/start"}, {"PUT", "/start"}, {"POST", "/start/"}, {"GET", "/stop"}, {"POST", "/stop/x"},
 		{"GET", "/loopback"}, {"GET", "/loopback.json/"}, {"POST", "/loopback.json"}, {"HEAD", "/loopback.txt"}, {"GET", "/Host"},
+		{"GET", "/engine-env"}, {"GET", "/engine-env.txt/"}, {"POST", "/engine-env.txt"}, {"HEAD", "/engine-env.txt"},
 		{"POST", "/exec?cmd=id"}, {"OPTIONS", "/host"},
 	} {
 		if code, body := st.request(t, c.method, c.path); code != http.StatusNotFound {
@@ -329,10 +332,10 @@ func TestSupervisorHostRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := hostRecord{
-		Ready: true, MemLimitBytes: fakeMemLimit, GoMemLimitBytes: fakeMemLimit / 2,
+		Ready: true, MemLimitBytes: fakeMemLimit, GoMemLimitBytes: fakeMemLimit / 2, ClockReadNS: 25,
 		machine: machine{CPUModel: "Test CPU @ 3GHz", NProc: 8, Loadavg: [3]float64{0.5, 1.25, 2}, BootID: "boot-1", Time: "2026-11-22T08:30:00Z"},
 	}
-	if h != want {
+	if !reflect.DeepEqual(h, want) {
 		t.Errorf("host record %+v, want %+v", h, want)
 	}
 
@@ -394,6 +397,97 @@ func TestSupervisorServesLoopbackFiles(t *testing.T) {
 		if code, body := st.request(t, http.MethodGet, "/"+name); code != http.StatusOK || body != content {
 			t.Errorf("/%s answered %d %q, want %q", name, code, body, content)
 		}
+	}
+}
+
+func TestSupervisorServesTheEnvText(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "envtxt")
+	st := newSupervisorTest(t, func(o *superviseOptions) { o.EnvFile = envFile })
+	st.ready = true
+	if code, _ := st.request(t, http.MethodGet, "/engine-env.txt"); code != http.StatusNotFound {
+		t.Errorf("/engine-env.txt before its file exists answered %d, want 404", code)
+	}
+	for _, text := range []string{"clock source: tsc\nthread siblings: cpu0=0,4\n", "clock source: hpet\n"} {
+		if err := os.WriteFile(envFile, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, body := st.request(t, http.MethodGet, "/engine-env.txt"); code != http.StatusOK || body != text {
+			t.Errorf("/engine-env.txt answered %d %q, want the file's text %q, read at the request", code, body, text)
+		}
+	}
+}
+
+func TestSupervisorWithoutAnEnvFileServesNoEnvText(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	if code, body := st.request(t, http.MethodGet, "/engine-env.txt"); code != http.StatusNotFound {
+		t.Errorf("/engine-env.txt without -env answered %d %q, want 404", code, body)
+	}
+}
+
+func TestSupervisorReportsItsOverrides(t *testing.T) {
+	want := map[string]string{"PILOT_DURATION": "5s", "PILOT_ROUNDS": "2"}
+	st := newSupervisorTest(t, func(o *superviseOptions) { o.Overrides = want })
+	st.ready = true
+	_, body := st.request(t, http.MethodGet, "/host")
+	var h hostRecord
+	if err := json.Unmarshal([]byte(body), &h); err != nil || !reflect.DeepEqual(h.Overrides, want) {
+		t.Errorf("/host reports overrides %v, %v, want %v", h.Overrides, err, want)
+	}
+	if got := st.start(t, "default"); !reflect.DeepEqual(got.Overrides, want) {
+		t.Errorf("/start reports overrides %v, want %v", got.Overrides, want)
+	}
+}
+
+func TestSupervisorWithoutOverridesReportsNone(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	if _, body := st.request(t, http.MethodGet, "/host"); strings.Contains(body, "overrides") {
+		t.Errorf("/host of a supervisor with no overrides: %s", body)
+	}
+}
+
+// The supervisor reads its PILOT_* variables where it reads its flags.
+func TestSuperviseOptionsHoldTheEnvironmentsOverrides(t *testing.T) {
+	flags := []string{"-engine", "e", "-loadgen", "l", "-work", "w", "-env", "envtxt"}
+	t.Setenv("PILOT_DURATION", "5s")
+	t.Setenv("PILOT_ROUNDS", "5") // the default: no override
+	o, err := superviseOptionsFromArgs(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"PILOT_DURATION": "5s"}; !reflect.DeepEqual(o.Overrides, want) || o.Params.Duration != 5*time.Second {
+		t.Errorf("overrides %v and duration %v, want %v and 5s", o.Overrides, o.Params.Duration, want)
+	}
+	if o.EnvFile != "envtxt" || o.Engine != "e" || o.Loadgen != "l" || o.Work != "w" || o.Listen != ":9100" {
+		t.Errorf("options %+v", o)
+	}
+	t.Setenv("PILOT_DURATION", "")
+	if o, err := superviseOptionsFromArgs(flags); err != nil || len(o.Overrides) != 0 {
+		t.Errorf("with no variable set: overrides %v, %v", o.Overrides, err)
+	}
+	t.Setenv("PILOT_DURATION", "soon")
+	if _, err := superviseOptionsFromArgs(flags); err == nil || !strings.Contains(err.Error(), "PILOT_DURATION") {
+		t.Errorf("a bad override: %v", err)
+	}
+}
+
+func TestSupervisorMeasuresTheClockAtStart(t *testing.T) {
+	read := func(t *testing.T, mutate func(*superviseOptions)) float64 {
+		st := newSupervisorTest(t, mutate)
+		st.ready = true
+		_, body := st.request(t, http.MethodGet, "/host")
+		var h hostRecord
+		if err := json.Unmarshal([]byte(body), &h); err != nil {
+			t.Fatal(err)
+		}
+		return h.ClockReadNS
+	}
+	if got := read(t, func(o *superviseOptions) { o.clockRead = func() float64 { return 42.5 } }); got != 42.5 {
+		t.Errorf("the host record gives a clock cost of %v ns, want the 42.5 that was measured", got)
+	}
+	if got := read(t, func(o *superviseOptions) { o.clockRead = nil }); !(got > 0) {
+		t.Errorf("a supervisor that measures its own clock reports %v ns, want a positive cost", got)
 	}
 }
 

@@ -45,15 +45,32 @@ type machine struct {
 }
 
 // hostRecord is the supervisor's answer to /host and /start. It holds
-// nothing of the environment.
+// nothing of the environment but the PILOT_* overrides that differ from the
+// defaults.
 type hostRecord struct {
-	Ready           bool   `json:"ready"`
-	Starts          int    `json:"starts"`
-	Config          string `json:"config"` // of the running engine, "" if none
-	EnginePID       int    `json:"engine_pid"`
-	machine                // flattened into the record
-	MemLimitBytes   int64  `json:"mem_limit_bytes"`
-	GoMemLimitBytes int64  `json:"gomemlimit_bytes"` // what the gogc-off configuration sets
+	Ready           bool              `json:"ready"`
+	Starts          int               `json:"starts"`
+	Config          string            `json:"config"` // of the running engine, "" if none
+	EnginePID       int               `json:"engine_pid"`
+	machine                           // flattened into the record
+	MemLimitBytes   int64             `json:"mem_limit_bytes"`
+	GoMemLimitBytes int64             `json:"gomemlimit_bytes"`    // what the gogc-off configuration sets
+	ClockReadNS     float64           `json:"clock_read_ns"`       // mean cost of reading the clock, measured when the supervisor started
+	Overrides       map[string]string `json:"overrides,omitempty"` // the supervisor's PILOT_* overrides, which change its loopback run
+}
+
+// clockReadSamples is how many clock reads measureClockRead times.
+const clockReadSamples = 3_000_000
+
+// measureClockRead returns the mean cost in nanoseconds of one time.Now, the
+// standard clock read. A slow time.Now means a slow clock source, which slows
+// every timing in the study.
+func measureClockRead() float64 {
+	start := time.Now()
+	for range clockReadSamples {
+		_ = time.Now() // the read is what is timed
+	}
+	return float64(time.Since(start)) / clockReadSamples
 }
 
 // readMachine describes the host at time now.

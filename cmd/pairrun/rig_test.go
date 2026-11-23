@@ -32,17 +32,22 @@ type fakeSupervisor struct {
 	started    []string     // the configuration of each /start, in order
 	bump       map[int]bool // after the nth /start, another start happens before /host is read again
 	bumped     map[int]bool
-	failStart  int          // the nth /start answers 500
-	hostFails  map[int]bool // after the nth /start, /host answers 500
-	onStart    func(n int)  // called at each /start, with its number
+	failStarts map[int]bool   // the nth /start answers 500
+	wrongStart map[int]string // the nth /start answers with a record of this other configuration
+	hostFails  map[int]bool   // after the nth /start, /host answers 500
+	onStart    func(n int)    // called at each /start, with its number
 	loopback   map[string]string
+	envText    string            // served as /engine-env.txt, if not empty
+	clockNS    float64           // the record's clock_read_ns
+	overrides  map[string]string // the record's overrides
 }
 
 func newFakeSupervisor(t *testing.T) *fakeSupervisor {
 	t.Helper()
 	f := &fakeSupervisor{
-		bump: map[int]bool{}, bumped: map[int]bool{}, hostFails: map[int]bool{},
+		bump: map[int]bool{}, bumped: map[int]bool{}, hostFails: map[int]bool{}, failStarts: map[int]bool{}, wrongStart: map[int]string{},
 		loopback: map[string]string{"loopback.json": `{"valid": true, "mode": "oe_ioc"}`, "loopback.txt": "loopback table\n"},
+		envText:  "clock source: tsc\nthread siblings: cpu0=0,4\n", clockNS: 30,
 	}
 	f.srv = httptest.NewServer(f)
 	t.Cleanup(f.srv.Close)
@@ -55,7 +60,7 @@ func (f *fakeSupervisor) record(ready bool) hostRecord {
 	return hostRecord{
 		Ready: ready, Starts: f.starts, Config: f.config, EnginePID: 4242,
 		machine:       machine{CPUModel: "Engine CPU", NProc: 8, Loadavg: [3]float64{0.1, 0.2, 0.3}, BootID: "engine-boot", Time: "2026-11-22T09:00:00Z"},
-		MemLimitBytes: 8 << 30, GoMemLimitBytes: 4 << 30,
+		MemLimitBytes: 8 << 30, GoMemLimitBytes: 4 << 30, ClockReadNS: f.clockNS, Overrides: f.overrides,
 	}
 }
 
@@ -83,11 +88,15 @@ func (f *fakeSupervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.onStart != nil {
 			f.onStart(n)
 		}
-		if n == f.failStart {
+		if f.failStarts[n] {
 			http.Error(w, "engine did not listen", http.StatusInternalServerError)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(f.record(true))
+		h := f.record(true)
+		if other, ok := f.wrongStart[n]; ok {
+			h.Config = other
+		}
+		_ = json.NewEncoder(w).Encode(h)
 	case "GET /loopback.json", "GET /loopback.txt":
 		content, ok := f.loopback[strings.TrimPrefix(r.URL.Path, "/")]
 		if !ok {
@@ -95,6 +104,12 @@ func (f *fakeSupervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = fmt.Fprint(w, content)
+	case "GET /engine-env.txt":
+		if f.envText == "" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = fmt.Fprint(w, f.envText)
 	default:
 		http.NotFound(w, r)
 	}
@@ -224,6 +239,7 @@ func newRig(t *testing.T, p params, overrides map[string]string) *rig {
 	r.c.now = r.clock.Now
 	r.c.pollEvery = time.Millisecond
 	r.c.readyTimeout = 10 * time.Second
+	r.c.clockRead = func() float64 { return 25 }
 	r.c.src = fakeSources(fakeProc(t, fakeHostFiles("0-3")))
 	return r
 }

@@ -172,7 +172,8 @@ func validValues(records []runRecord, config, rowName string, pick func(latencyR
 	return v
 }
 
-// median is the middle value, or the mean of the two middle ones.
+// median is the middle value. Of an even number of values it is the mean of
+// the two middle ones, so it may be the number of no run.
 func median(v []float64) float64 {
 	s := slices.Sorted(slices.Values(v))
 	n := len(s)

@@ -189,13 +189,21 @@ func TestReadMachine(t *testing.T) {
 
 func TestHostRecordHoldsNothingOfTheEnvironment(t *testing.T) {
 	// The record has these keys and no others: a field added to it would show here.
-	got, err := jsonKeys(hostRecord{})
+	got, err := jsonKeys(hostRecord{Overrides: map[string]string{"PILOT_ROUNDS": "2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"boot_id", "config", "cpu_model", "engine_pid", "gomemlimit_bytes", "loadavg", "mem_limit_bytes", "nproc", "ready", "starts", "time"}
+	want := []string{"boot_id", "clock_read_ns", "config", "cpu_model", "engine_pid", "gomemlimit_bytes", "loadavg", "mem_limit_bytes", "nproc", "overrides", "ready", "starts", "time"}
 	slices.Sort(got)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("host record keys %v, want %v", got, want)
+	}
+}
+
+func TestMeasureClockReadIsTheCostOfOneRead(t *testing.T) {
+	// A read takes tens of nanoseconds: the bounds only tell a mean per call
+	// from a total, or from seconds.
+	if got := measureClockRead(); !(got > 1 && got < 1e6) {
+		t.Errorf("measureClockRead() = %v ns", got)
 	}
 }

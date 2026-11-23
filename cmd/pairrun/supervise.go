@@ -29,14 +29,17 @@ const (
 
 // superviseOptions are what `pairrun supervise` is given.
 type superviseOptions struct {
-	Engine   string // the engine binary
-	Loadgen  string // the loadgen binary, for the loopback run
-	Listen   string // the control address
-	Work     string // engine data, engine logs and the loopback files
-	Params   params
-	httpAddr string  // tests: the engine's HTTP address, instead of engineHTTPAddr
-	oeAddr   string  // tests: the engine's OE1 address, instead of engineOEAddr
-	src      sources // tests: the files the host is read from, instead of procSources
+	Engine    string // the engine binary
+	Loadgen   string // the loadgen binary, for the loopback run
+	Listen    string // the control address
+	Work      string // engine data, engine logs and the loopback files
+	EnvFile   string // text that describes this machine, served to the client; "" for none
+	Params    params
+	Overrides map[string]string // the environment overrides that differ from the defaults
+	httpAddr  string            // tests: the engine's HTTP address, instead of engineHTTPAddr
+	oeAddr    string            // tests: the engine's OE1 address, instead of engineOEAddr
+	src       sources           // tests: the files the host is read from, instead of procSources
+	clockRead func() float64    // tests: the cost of a clock read, instead of measureClockRead
 }
 
 // engineConfig is what a configuration adds to an engine's start, to its
@@ -59,8 +62,9 @@ func engineConfigs(goMemLimit int64) map[string]engineConfig {
 
 // supervisor runs the engine on this machine for the client on the other,
 // through a control port that has no authentication. It therefore serves
-// five routes and nothing else, runs only the binaries it was started with in
-// the configurations of its table, and never returns the environment.
+// six routes and nothing else, and runs only the binaries it was started with
+// in the configurations of its table. One route serves the text of the -env
+// file as it is, so that file must hold nothing that is secret.
 type supervisor struct {
 	ctx        context.Context // ends with the process
 	out        io.Writer
@@ -77,6 +81,9 @@ type supervisor struct {
 	readyWait  time.Duration
 	memLimit   int64
 	goMemLimit int64
+	clockNS    float64
+	envFile    string
+	overrides  map[string]string
 	configs    map[string]engineConfig
 	op         sync.Mutex // one start, stop or loopback run at a time
 	mu         sync.Mutex // guards the fields below
@@ -114,6 +121,17 @@ func newSupervisor(ctx context.Context, o superviseOptions, out io.Writer) (*sup
 	}
 	s.goMemLimit = s.memLimit / 2
 	s.configs = engineConfigs(s.goMemLimit)
+	s.overrides = o.Overrides
+	if o.EnvFile != "" {
+		if s.envFile, err = filepath.Abs(o.EnvFile); err != nil {
+			return nil, err
+		}
+	}
+	read := o.clockRead
+	if read == nil {
+		read = measureClockRead
+	}
+	s.clockNS = read()
 	return s, nil
 }
 
@@ -193,9 +211,22 @@ func (s *supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(s.work, "loopback.json"))
 	case "GET /loopback.txt":
 		http.ServeFile(w, r, filepath.Join(s.work, "loopback.txt"))
+	case "GET /engine-env.txt":
+		s.serveEnvText(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// serveEnvText serves the text of the file named by -env as it is, read at
+// each request, on the unauthenticated control port: the file must hold
+// nothing that is secret.
+func (s *supervisor) serveEnvText(w http.ResponseWriter, r *http.Request) {
+	if s.envFile == "" {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, s.envFile)
 }
 
 func (s *supervisor) serveRecord(w http.ResponseWriter) {
@@ -258,7 +289,10 @@ func (s *supervisor) record() (hostRecord, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	h := hostRecord{Ready: s.ready, Starts: s.starts, machine: m, MemLimitBytes: s.memLimit, GoMemLimitBytes: s.goMemLimit}
+	h := hostRecord{
+		Ready: s.ready, Starts: s.starts, machine: m, MemLimitBytes: s.memLimit, GoMemLimitBytes: s.goMemLimit,
+		ClockReadNS: s.clockNS, Overrides: s.overrides,
+	}
 	if s.cmd != nil {
 		select {
 		case <-s.exited:

@@ -185,6 +185,12 @@ func validRule(rep *loadgenReport, repErr error) ruleResult {
 	return ruleResult{Rule: "loadgen_valid", Value: value, Want: "valid", Verdict: verdictOf(rep.Valid)}
 }
 
+// startRule is the only rule of a run whose engine could not be started: no
+// loadgen ran, so no other rule has anything to decide. err says why.
+func startRule(engineConfig string, err error) ruleResult {
+	return ruleResult{Rule: "engine_start", Value: err.Error(), Want: "engine started in config " + engineConfig, Verdict: verdictFail}
+}
+
 // stableRule is the study's last rule: the supervisor started no engine
 // during the run, which it counts in starts. after is the engine's host
 // record read after the run, or nil with err saying why it was not read.

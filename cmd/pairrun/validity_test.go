@@ -54,6 +54,7 @@ func TestEvaluate(t *testing.T) {
 		{"T skips 0.1% fail", flowT, cannedReport{Valid: true, Target: 1, Achieved: 1, Outcomes: skips(100, 100000)}, "cancel_skip", verdictFail},
 		{"T skips 0.099% pass", flowT, cannedReport{Valid: true, Target: 1, Achieved: 1, Outcomes: skips(99, 100000)}, "cancel_skip", verdictPass},
 		{"REST skips 0.1% fail", flowREST, cannedReport{Valid: true, Target: 1, Achieved: 1, Outcomes: map[string]int{"cancel_canceled": 99900, "cancel_skipped": 100}}, "cancel_skip", verdictFail},
+		{"R3 counts cancel_unknown among the cancels", flowR3, cannedReport{Valid: true, Target: 1, Achieved: 1, Outcomes: map[string]int{"cancel_canceled": 50000, "cancel_unknown": 50000, "cancel_skipped": 100}}, "cancel_skip", verdictPass},
 		{"R3 without skips passes", flowR3, cannedReport{Valid: true, Target: 1, Achieved: 1, Outcomes: map[string]int{"cancel_canceled": 5}}, "cancel_skip", verdictPass},
 		{"R3 without cancels passes", flowR3, cannedReport{Valid: true, Target: 1, Achieved: 1}, "cancel_skip", verdictPass},
 		{"F is not gated on skips", flowF, cannedReport{Valid: true, Target: 1, Achieved: 1, Outcomes: skips(5000, 100000)}, "cancel_skip", verdictNA},

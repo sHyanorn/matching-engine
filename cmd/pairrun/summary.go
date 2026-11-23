@@ -16,6 +16,8 @@ type triple struct {
 	Max    float64 `json:"max"`
 }
 
+// spread is the minimum, median and maximum of v. The median is median's: of
+// an even number of values, the mean of the two middle ones.
 func spread(v []float64) triple {
 	return triple{Min: slices.Min(v), Median: median(v), Max: slices.Max(v)}
 }
@@ -50,18 +52,27 @@ type engineMemory struct {
 
 // summaryFile is summary.json.
 type summaryFile struct {
-	Rehearsal   bool              `json:"rehearsal"`
-	Publishable bool              `json:"publishable"`
-	Overrides   map[string]string `json:"overrides,omitempty"`
-	Params      summaryParams     `json:"params"`
-	Stopped     string            `json:"stopped"` // "", "deadline", "g2" or "error"
-	StopReason  string            `json:"stop_reason,omitempty"`
-	Runs        int               `json:"runs"`
-	Engine      engineMemory      `json:"engine"`
-	Configs     []configSummary   `json:"configs"`
-	Tuning      []tuning          `json:"tuning"`
-	G2          g2Result          `json:"g2"`
+	Rehearsal           bool              `json:"rehearsal"`
+	Publishable         bool              `json:"publishable"`
+	Overrides           map[string]string `json:"overrides,omitempty"`            // of the client
+	SupervisorOverrides map[string]string `json:"supervisor_overrides,omitempty"` // of the supervisor
+	Params              summaryParams     `json:"params"`
+	Stopped             string            `json:"stopped"` // "", "deadline", "g2", "g2_failed" or "error"
+	StopReason          string            `json:"stop_reason,omitempty"`
+	Runs                int               `json:"runs"`
+	Engine              engineMemory      `json:"engine"`
+	EngineClockReadNS   float64           `json:"engine_clock_read_ns"` // mean cost of reading the clock on each machine
+	ClientClockReadNS   float64           `json:"client_clock_read_ns"`
+	ClockUnfit          bool              `json:"clock_unfit"` // a read costs more than maxClockReadNS on either machine; G2 does not depend on it
+	Configs             []configSummary   `json:"configs"`
+	Tuning              []tuning          `json:"tuning"`
+	G2                  g2Result          `json:"g2"`
 }
+
+// maxClockReadNS is the cost of a clock read, in ns, above which a pair is
+// recorded as unfit: the latencies it measures are of the order of
+// microseconds.
+const maxClockReadNS = 100
 
 type summaryParams struct {
 	Rate         float64 `json:"rate"`
@@ -75,14 +86,18 @@ type summaryParams struct {
 
 // summaryInput is what buildSummary needs of a finished or stopped matrix.
 type summaryInput struct {
-	Params     params
-	Overrides  map[string]string
-	Configs    []config // in the order they are listed, the long run last
-	Records    []runRecord
-	G2         g2Result
-	Memory     engineMemory
-	Stopped    string
-	StopReason string
+	Params              params
+	Overrides           map[string]string // of the client
+	SupervisorOverrides map[string]string
+	SupervisorSilent    bool     // it never answered, so its overrides are unknown
+	Configs             []config // in the order they are listed, the long run last
+	Records             []runRecord
+	G2                  g2Result
+	Memory              engineMemory
+	EngineClockReadNS   float64
+	ClientClockReadNS   float64
+	Stopped             string
+	StopReason          string
 }
 
 // buildSummary describes the runs without recomputing anything of them: each
@@ -90,20 +105,25 @@ type summaryInput struct {
 // of such numbers.
 func buildSummary(in summaryInput) summaryFile {
 	p := in.Params
+	rehearsal := len(in.Overrides) > 0 || len(in.SupervisorOverrides) > 0
 	s := summaryFile{
-		Rehearsal:   len(in.Overrides) > 0,
-		Publishable: len(in.Overrides) == 0,
-		Overrides:   in.Overrides,
+		Rehearsal:           rehearsal,
+		Publishable:         !rehearsal && !in.SupervisorSilent,
+		Overrides:           in.Overrides,
+		SupervisorOverrides: in.SupervisorOverrides,
 		Params: summaryParams{
 			Rate: p.Rate, RateHigh: p.RateHigh, WarmupS: p.Warmup.Seconds(), DurationS: p.Duration.Seconds(),
 			LongS: p.Long.Seconds(), MaxSendLagUS: float64(p.MaxSendLag.Microseconds()), Rounds: p.Rounds,
 		},
-		Stopped:    in.Stopped,
-		StopReason: in.StopReason,
-		Runs:       len(in.Records),
-		Engine:     in.Memory,
-		Tuning:     compareVariants(in.Records, p.Rounds, "R1-gogc-off", "R1-spin-pin"),
-		G2:         in.G2,
+		Stopped:           in.Stopped,
+		StopReason:        in.StopReason,
+		Runs:              len(in.Records),
+		Engine:            in.Memory,
+		EngineClockReadNS: in.EngineClockReadNS,
+		ClientClockReadNS: in.ClientClockReadNS,
+		ClockUnfit:        in.EngineClockReadNS > maxClockReadNS || in.ClientClockReadNS > maxClockReadNS,
+		Tuning:            compareVariants(in.Records, p.Rounds, "R1-gogc-off", "R1-spin-pin"),
+		G2:                in.G2,
 	}
 	var floor *rowStats
 	if st, ok := statsOf(in.Records, floorConfig, "pong"); ok {
@@ -188,10 +208,22 @@ func (s summaryFile) text() string {
 	for _, k := range slices.Sorted(maps.Keys(s.Overrides)) {
 		fmt.Fprintf(&b, "Override: %s=%s\n", k, s.Overrides[k])
 	}
+	for _, k := range slices.Sorted(maps.Keys(s.SupervisorOverrides)) {
+		fmt.Fprintf(&b, "Supervisor override: %s=%s\n", k, s.SupervisorOverrides[k])
+	}
 	if s.Stopped != "" {
 		fmt.Fprintf(&b, "Stopped: %s: %s\n", s.Stopped, s.StopReason)
 	}
-	fmt.Fprintf(&b, "Runs: %d. Engine memory limit %d bytes, GOMEMLIMIT of gogc-off %d bytes\n\n", s.Runs, s.Engine.LimitBytes, s.Engine.GoMemLimitBytes)
+	fmt.Fprintf(&b, "Runs: %d. Engine memory limit %d bytes, GOMEMLIMIT of gogc-off %d bytes\n", s.Runs, s.Engine.LimitBytes, s.Engine.GoMemLimitBytes)
+	clock := "fit"
+	switch {
+	case s.EngineClockReadNS == 0 || s.ClientClockReadNS == 0:
+		clock = "unknown"
+	case s.ClockUnfit:
+		clock = "UNFIT"
+	}
+	fmt.Fprintf(&b, "Clock read, mean per call: engine %s, client %s, unfit above %d ns: %s\n\n",
+		clockText(s.EngineClockReadNS), clockText(s.ClientClockReadNS), maxClockReadNS, clock)
 
 	g := s.G2
 	verdict := "not passed"
@@ -225,6 +257,7 @@ func (s summaryFile) text() string {
 	}
 
 	b.WriteString("\nLatency in us, min/median/max over the valid runs; every configuration with its pair's floor\n")
+	b.WriteString("The median of an even number of valid runs is the mean of the two middle ones, so it may be the number of no run.\n")
 	for _, c := range s.Configs {
 		fmt.Fprintf(&b, "\n%s: %s, engine %s, %g/s, %d of %d runs valid\n", c.Name, c.Flow, c.Engine, c.Rate, c.Valid, c.Runs)
 		if c.Floor != nil {
@@ -237,6 +270,15 @@ func (s summaryFile) text() string {
 		}
 	}
 	return b.String()
+}
+
+// clockText writes a cost of a clock read, or says that it was not read: a
+// supervisor that never answered has no number.
+func clockText(ns float64) string {
+	if ns == 0 {
+		return "not read"
+	}
+	return fmt.Sprintf("%.1f ns", ns)
 }
 
 // number formats v with format, or gives "" if v is nil.

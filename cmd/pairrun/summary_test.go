@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func allConfigs() []config {
@@ -197,6 +198,124 @@ func TestBuildSummaryHeader(t *testing.T) {
 	data, err := json.Marshal(rehearsal)
 	if err != nil || !strings.Contains(string(data), `"rehearsal":true,"publishable":false`) {
 		t.Errorf("summary.json %s, %v", data, err)
+	}
+}
+
+func TestBuildSummaryMaxSendLagIsInMicroseconds(t *testing.T) {
+	for _, lag := range []time.Duration{10 * time.Microsecond, 2500 * time.Microsecond} {
+		p := defaultParams
+		p.MaxSendLag = lag
+		s := buildSummary(summaryInput{Params: p, Configs: allConfigs()})
+		if want := float64(lag / time.Microsecond); s.Params.MaxSendLagUS != want {
+			t.Errorf("max send lag of %v is %v us in the summary, want %v", lag, s.Params.MaxSendLagUS, want)
+		}
+	}
+}
+
+// A result is a rehearsal if either machine ran with an override.
+func TestBuildSummaryRehearsalFromEitherMachine(t *testing.T) {
+	client, supervisor := map[string]string{"PILOT_ROUNDS": "2"}, map[string]string{"PILOT_DURATION": "5s"}
+	for _, c := range []struct {
+		name                string
+		overrides, onSuper  map[string]string
+		rehearsal           bool
+		supervisorLineCount int
+	}{
+		{"none", nil, nil, false, 0},
+		{"the client's", client, nil, true, 0},
+		{"the supervisor's", nil, supervisor, true, 1},
+		{"both", client, supervisor, true, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := buildSummary(summaryInput{
+				Params: defaultParams, Configs: allConfigs(), G2: g2Of(nil, 5, true), Overrides: c.overrides, SupervisorOverrides: c.onSuper,
+			})
+			if s.Rehearsal != c.rehearsal || s.Publishable == c.rehearsal {
+				t.Errorf("rehearsal %v, publishable %v, want rehearsal %v", s.Rehearsal, s.Publishable, c.rehearsal)
+			}
+			text := s.text()
+			if marked := strings.HasPrefix(text, "REHEARSAL: not publishable\n"); marked != c.rehearsal {
+				t.Errorf("summary.txt marked %v, want %v:\n%s", marked, c.rehearsal, text)
+			}
+			if n := strings.Count(text, "Supervisor override: PILOT_DURATION=5s\n"); n != c.supervisorLineCount {
+				t.Errorf("summary.txt lists the supervisor's override %d times, want %d", n, c.supervisorLineCount)
+			}
+		})
+	}
+}
+
+// The unfit mark follows the clock of either machine and leaves G2 as it is.
+// The text gives the verdict fit or UNFIT only if both clocks were read.
+func TestBuildSummaryClockFit(t *testing.T) {
+	records := matrix(5, good)
+	base := summaryOf(records, nil)
+	for _, c := range []struct {
+		name           string
+		engine, client float64
+		unfit          bool
+		verdict        string
+	}{
+		{"both at the limit", 100, 100, false, "fit"},
+		{"engine above", 100.01, 20, true, "UNFIT"},
+		{"client above", 20, 100.01, true, "UNFIT"},
+		{"both above", 400, 250, true, "UNFIT"},
+		{"neither read", 0, 0, false, "unknown"},
+		{"engine read, client not", 20, 0, false, "unknown"},
+		{"client read, engine not", 0, 20, false, "unknown"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := buildSummary(summaryInput{
+				Params: defaultParams, Configs: allConfigs(), Records: records, G2: base.G2,
+				EngineClockReadNS: c.engine, ClientClockReadNS: c.client,
+			})
+			if s.ClockUnfit != c.unfit || s.EngineClockReadNS != c.engine || s.ClientClockReadNS != c.client {
+				t.Errorf("unfit %v, clocks %v and %v, want %v, %v and %v", s.ClockUnfit, s.EngineClockReadNS, s.ClientClockReadNS, c.unfit, c.engine, c.client)
+			}
+			if !reflect.DeepEqual(s.G2, base.G2) || !s.G2.Passed {
+				t.Errorf("G2 changed with the clock: %+v", s.G2)
+			}
+			if want := "unfit above 100 ns: " + c.verdict + "\n"; !strings.Contains(s.text(), want) {
+				t.Errorf("summary.txt lacks %q:\n%s", want, s.text())
+			}
+		})
+	}
+	s := buildSummary(summaryInput{Params: defaultParams, Configs: allConfigs(), G2: base.G2, EngineClockReadNS: 31.25, ClientClockReadNS: 22.5})
+	if want := "Clock read, mean per call: engine 31.2 ns, client 22.5 ns, unfit above 100 ns: fit\n"; !strings.Contains(s.text(), want) {
+		t.Errorf("summary.txt lacks %q:\n%s", want, s.text())
+	}
+	if !strings.Contains(buildSummary(summaryInput{Params: defaultParams, Configs: allConfigs(), G2: base.G2}).text(), "engine not read, client not read") {
+		t.Error("summary.txt shows a clock that was never measured as a number")
+	}
+}
+
+// A result whose supervisor never answered has unknown overrides: it is no
+// rehearsal, and it is not publishable.
+func TestBuildSummaryOfASupervisorThatNeverAnswered(t *testing.T) {
+	s := buildSummary(summaryInput{Params: defaultParams, Configs: allConfigs(), G2: g2Of(nil, 5, true), SupervisorSilent: true})
+	if s.Rehearsal || s.Publishable || strings.HasPrefix(s.text(), "REHEARSAL") {
+		t.Errorf("rehearsal %v, publishable %v, want false and false", s.Rehearsal, s.Publishable)
+	}
+}
+
+// A median of four runs is the mean of the two in the middle, which no run
+// has, and the text says so.
+func TestSummaryTextExplainsTheMedianOfAnEvenCount(t *testing.T) {
+	f := func(c string, round int) result {
+		if c == "R1" {
+			return result{round != 5, 50 + float64(round)*10, 100}
+		}
+		return good(c, round)
+	}
+	s := summaryOf(matrix(5, f), nil)
+	if p50 := summaryConfig(t, s, "R1").Rows["reply"].P50; p50 != (triple{60, 75, 90}) {
+		t.Fatalf("R1 reply p50 of four valid runs %+v, want 60/75/90", p50)
+	}
+	text := s.text()
+	if !strings.Contains(text, "The median of an even number of valid runs is the mean of the two middle ones, so it may be the number of no run.\n") {
+		t.Errorf("summary.txt does not explain the median of an even count:\n%s", text)
+	}
+	if n := strings.Count(text, "The median of an even number"); n != 1 {
+		t.Errorf("summary.txt explains the median %d times, want once", n)
 	}
 }
 

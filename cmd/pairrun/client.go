@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,7 +21,7 @@ import (
 
 const (
 	// The supervisor is polled every readyPoll for up to readyWait, as its
-	// loopback run takes a few minutes.
+	// loopback run takes about 70 s at the defaults.
 	readyPoll = 2 * time.Second
 	readyWait = 15 * time.Minute
 	// loadgenSlack is how long past its window a loadgen may take for its
@@ -29,6 +30,9 @@ const (
 	// startWait bounds /start: the supervisor takes up to 15 s to stop the
 	// last engine and 30 s to start the next.
 	startWait = 3 * time.Minute
+	// startAttempts is how often a run asks for its engine. A start request
+	// is safe to repeat: each makes a fresh engine.
+	startAttempts = 3
 )
 
 // clientOptions are what `pairrun client` is given.
@@ -51,8 +55,9 @@ type client struct {
 	now          func() time.Time
 	pollEvery    time.Duration
 	readyTimeout time.Duration
-	slack        time.Duration // how long past its window a loadgen may run before it is killed
-	src          sources       // this machine's description
+	slack        time.Duration  // how long past its window a loadgen may run before it is killed
+	src          sources        // this machine's description
+	clockRead    func() float64 // this machine's mean cost of a clock read, in ns
 	http         *http.Client
 
 	configs []config // of a round
@@ -60,6 +65,9 @@ type client struct {
 	records []runRecord
 	lines   []byte     // runs.jsonl so far
 	engine  hostRecord // the last record read from the supervisor
+
+	clockNS             float64           // this machine's mean cost of a clock read
+	supervisorOverrides map[string]string // from the first record read, nil before it
 }
 
 func newClient(o clientOptions, stdout io.Writer) *client {
@@ -71,6 +79,7 @@ func newClient(o clientOptions, stdout io.Writer) *client {
 		readyTimeout:  readyWait,
 		slack:         loadgenSlack,
 		src:           procSources,
+		clockRead:     measureClockRead,
 		http:          &http.Client{},
 		configs:       planConfigs(o.Params, o.OE, o.HTTP),
 		long:          longRun(o.Params, o.OE, o.HTTP),
@@ -92,10 +101,10 @@ type runRecord struct {
 	Flow            string                `json:"flow"`
 	EngineConfig    string                `json:"engine_config"`
 	Args            []string              `json:"args"`
-	Started         string                `json:"started"` // before the engine was started
-	Ended           string                `json:"ended"`   // after the engine's metrics were read
-	Report          string                `json:"report"`  // loadgen's JSON, relative to the results directory
-	LoadgenExit     int                   `json:"loadgen_exit"`
+	Started         string                `json:"started"`      // before the engine was started
+	Ended           string                `json:"ended"`        // after the engine's metrics were read
+	Report          string                `json:"report"`       // loadgen's JSON, relative to the results directory; "" if no engine was started
+	LoadgenExit     int                   `json:"loadgen_exit"` // -1 if loadgen did not run or did not exit by itself
 	LoadgenValid    bool                  `json:"loadgen_valid"`
 	LoadgenProblems []string              `json:"loadgen_problems"`
 	Study           []ruleResult          `json:"study"`
@@ -103,7 +112,7 @@ type runRecord struct {
 	ClientHost      machinePair           `json:"client_host"`
 	EngineHost      enginePair            `json:"engine_host"`
 	EngineMetrics   *engineMetrics        `json:"engine_metrics"`
-	Notes           []string              `json:"notes,omitempty"` // what could not be read
+	Notes           []string              `json:"notes,omitempty"` // what could not be read, and the failed attempts to start the engine
 	Outcomes        map[string]int        `json:"outcomes"`
 	Trades          tradeCounts           `json:"trades"`
 	Latency         map[string]latencyRow `json:"latency_us"`
@@ -127,11 +136,12 @@ type engineMetrics struct {
 
 // planFile is plan.json.
 type planFile struct {
-	Rehearsal bool              `json:"rehearsal"`
-	Overrides map[string]string `json:"overrides"`
-	Rounds    int               `json:"rounds"`
-	Configs   []config          `json:"configs"`  // run in this order in each round
-	LongRun   config            `json:"long_run"` // run once after the last round, if G2 passed
+	Rehearsal           bool              `json:"rehearsal"`
+	Overrides           map[string]string `json:"overrides"`            // of the client
+	SupervisorOverrides map[string]string `json:"supervisor_overrides"` // of the supervisor; null until it has answered
+	Rounds              int               `json:"rounds"`
+	Configs             []config          `json:"configs"`  // run in this order in each round
+	LongRun             config            `json:"long_run"` // run once after the last round, if G2 passed
 }
 
 // run waits for the supervisor, makes the rounds and writes the summary,
@@ -140,25 +150,45 @@ func (c *client) run(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Join(c.Out, "runs"), 0o755); err != nil {
 		return err
 	}
-	overrides := c.Overrides
-	if overrides == nil {
-		overrides = map[string]string{}
-	}
-	err := writeJSON(filepath.Join(c.Out, "plan.json"), planFile{
-		Rehearsal: len(overrides) > 0, Overrides: overrides, Rounds: c.Params.Rounds, Configs: c.configs, LongRun: c.long,
-	})
-	if err != nil {
+	c.clockNS = c.clockRead()
+	if err := c.writePlan(); err != nil {
 		return err
 	}
-	if err := c.waitReady(ctx); err != nil {
-		return err
+	var stopped, reason string
+	err := c.waitReady(ctx)
+	if err == nil {
+		// Only now are the supervisor's overrides known.
+		c.supervisorOverrides = maps.Clone(c.engine.Overrides)
+		if c.supervisorOverrides == nil {
+			c.supervisorOverrides = map[string]string{}
+		}
+		err = c.writePlan()
 	}
-	c.fetchLoopback(ctx)
-	stopped, reason, err := c.matrix(ctx)
+	if err == nil {
+		c.fetchSupervisorFiles(ctx)
+		stopped, reason, err = c.matrix(ctx)
+	}
 	if err != nil {
 		stopped, reason = "error", err.Error()
 	}
 	return errors.Join(err, c.writeSummary(stopped, reason))
+}
+
+// writePlan writes plan.json. A run with an override on either machine is a
+// rehearsal.
+func (c *client) writePlan() error {
+	overrides := c.Overrides
+	if overrides == nil {
+		overrides = map[string]string{}
+	}
+	return writeJSON(filepath.Join(c.Out, "plan.json"), planFile{
+		Rehearsal:           len(overrides) > 0 || len(c.supervisorOverrides) > 0,
+		Overrides:           overrides,
+		SupervisorOverrides: c.supervisorOverrides,
+		Rounds:              c.Params.Rounds,
+		Configs:             c.configs,
+		LongRun:             c.long,
+	})
 }
 
 // waitReady polls the supervisor until its loopback run is over.
@@ -184,11 +214,11 @@ func (c *client) waitReady(ctx context.Context) error {
 	}
 }
 
-// fetchLoopback saves the supervisor's loopback run next to the results. The
-// matrix does not depend on it, so a file that cannot be had is reported and
-// the matrix goes on.
-func (c *client) fetchLoopback(ctx context.Context) {
-	for _, name := range []string{"loopback.json", "loopback.txt"} {
+// fetchSupervisorFiles saves the supervisor's loopback run and the text that
+// describes its machine next to the results. The matrix does not depend on
+// them, so a file that cannot be had is reported and the matrix goes on.
+func (c *client) fetchSupervisorFiles(ctx context.Context) {
+	for _, name := range []string{"loopback.json", "loopback.txt", "engine-env.txt"} {
 		data, err := c.fetch(ctx, http.MethodGet, "http://"+c.Ctl+"/"+name, 30*time.Second)
 		if err == nil {
 			err = writeFileAtomic(filepath.Join(c.Out, name), data)
@@ -221,8 +251,11 @@ func (c *client) matrix(ctx context.Context) (stopped, reason string, err error)
 		}
 	}
 	g, err := c.updateG2(true)
-	if err != nil || !g.Passed {
+	if err != nil {
 		return "", "", err
+	}
+	if !g.Passed {
+		return "g2_failed", "G2 did not pass after the last round, so the " + c.long.Name + " run was not made", nil
 	}
 	if why, late := c.noTimeFor(c.long); late {
 		return "deadline", why, nil
@@ -258,14 +291,18 @@ func (c *client) writeSummary(stopped, reason string) error {
 		return err
 	}
 	s := buildSummary(summaryInput{
-		Params:     c.Params,
-		Overrides:  c.Overrides,
-		Configs:    append(append([]config(nil), c.configs...), c.long),
-		Records:    c.records,
-		G2:         g,
-		Memory:     engineMemory{LimitBytes: c.engine.MemLimitBytes, GoMemLimitBytes: c.engine.GoMemLimitBytes},
-		Stopped:    stopped,
-		StopReason: reason,
+		Params:              c.Params,
+		Overrides:           c.Overrides,
+		SupervisorOverrides: c.supervisorOverrides,
+		SupervisorSilent:    c.supervisorOverrides == nil,
+		Configs:             append(append([]config(nil), c.configs...), c.long),
+		Records:             c.records,
+		G2:                  g,
+		Memory:              engineMemory{LimitBytes: c.engine.MemLimitBytes, GoMemLimitBytes: c.engine.GoMemLimitBytes},
+		EngineClockReadNS:   c.engine.ClockReadNS,
+		ClientClockReadNS:   c.clockNS,
+		Stopped:             stopped,
+		StopReason:          reason,
 	})
 	if err := writeJSON(filepath.Join(c.Out, "summary.json"), s); err != nil {
 		return err
@@ -275,22 +312,30 @@ func (c *client) writeSummary(stopped, reason string) error {
 
 // runOne starts a fresh engine in the configuration of cfg, runs loadgen
 // against it and records the run. A run that comes out invalid is recorded
-// and is not an error: only a failure to run at all is.
+// and is not an error. A run whose engine could not be started is recorded as
+// invalid too, without a report, so that the rules of G2 decide what follows.
+// Only a context that ended, or a record that cannot be kept, is an error.
 func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 	p := c.Params
 	rec := runRecord{
 		Seq: len(c.records) + 1, Round: round, Config: cfg.Name, Flow: cfg.Flow, EngineConfig: cfg.Engine,
-		Started: c.stamp(), LoadgenProblems: []string{},
+		Started: c.stamp(), Args: []string{}, LoadgenExit: -1, LoadgenProblems: []string{},
+		Outcomes: map[string]int{}, Latency: map[string]latencyRow{},
 	}
 	base := fmt.Sprintf("%02d-%s-r%d", rec.Seq, cfg.Name, round)
-	rec.Report = path.Join("runs", base+".json")
 	reportFile := filepath.Join(c.Out, "runs", base+".json")
-	rec.Args = loadgenArgs(cfg, reportFile)
 
-	before, err := c.startEngine(ctx, cfg.Engine)
+	before, err := c.startEngine(ctx, cfg, &rec)
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return err
+		}
+		rec.Study = []ruleResult{startRule(cfg.Engine, err)}
+		rec.Ended = c.stamp()
+		return c.keep(rec)
 	}
+	rec.Report = path.Join("runs", base+".json")
+	rec.Args = loadgenArgs(cfg, reportFile)
 	c.engine = before
 	rec.EngineHost.Before = before
 	rec.ClientHost.Before = c.machine(&rec)
@@ -319,7 +364,6 @@ func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 
 	rec.Study = append(evaluate(cfg, rep, repErr, p.MaxSendLag), stableRule(before.Starts, afterPtr, afterErr))
 	rec.Valid = allMet(rec.Study)
-	rec.Outcomes, rec.Latency = map[string]int{}, map[string]latencyRow{}
 	if rep != nil {
 		rec.LoadgenValid, rec.Outcomes, rec.Trades, rec.Latency = rep.Valid, rep.Outcomes, rep.Trades, rep.Latency
 		rec.LoadgenProblems = append(rec.LoadgenProblems, rep.Problems...)
@@ -331,7 +375,11 @@ func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 		}
 	}
 	rec.Ended = c.stamp()
+	return c.keep(rec)
+}
 
+// keep adds a run to the records and writes runs.jsonl.
+func (c *client) keep(rec runRecord) error {
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -410,9 +458,31 @@ func (c *client) progress(r runRecord) {
 	c.logf("%s", line)
 }
 
-// startEngine asks the supervisor for a fresh engine in the named
+// startEngine asks the supervisor for the engine of cfg and, if that fails,
+// asks again, up to startAttempts times in all, for as long as a run would
+// still end before the deadline. Each failed attempt is noted in rec. It
+// returns the host record that the supervisor answers with, or the error of
+// the last attempt.
+func (c *client) startEngine(ctx context.Context, cfg config, rec *runRecord) (hostRecord, error) {
+	var h hostRecord
+	var err error
+	for attempt := 1; attempt <= startAttempts; attempt++ {
+		if attempt > 1 {
+			if _, late := c.noTimeFor(cfg); late {
+				break
+			}
+		}
+		if h, err = c.requestStart(ctx, cfg.Engine); err == nil {
+			return h, nil
+		}
+		rec.Notes = append(rec.Notes, fmt.Sprintf("engine start, attempt %d of %d: %v", attempt, startAttempts, err))
+	}
+	return h, err
+}
+
+// requestStart makes one request for a fresh engine in the named
 // configuration and returns the host record it answers with.
-func (c *client) startEngine(ctx context.Context, name string) (hostRecord, error) {
+func (c *client) requestStart(ctx context.Context, name string) (hostRecord, error) {
 	var h hostRecord
 	data, err := c.fetch(ctx, http.MethodPost, "http://"+c.Ctl+"/start?config="+url.QueryEscape(name), startWait)
 	if err == nil {

@@ -11,7 +11,7 @@
 // loadgen's numbers as they came, to its results directory (plan.go,
 // validity.go, g2.go, summary.go).
 //
-// The control port has no authentication: the supervisor serves five routes,
+// The control port has no authentication: the supervisor serves six routes,
 // runs nothing the client names but a configuration of its own table, and
 // holds no credential. It runs on Linux.
 package main
@@ -29,7 +29,7 @@ import (
 )
 
 const usage = `usage:
-  pairrun supervise -engine BIN -loadgen BIN -work DIR [-listen :9100]
+  pairrun supervise -engine BIN -loadgen BIN -work DIR [-listen :9100] [-env FILE]
   pairrun client -loadgen BIN -oe HOST:PORT -http HOST:PORT -ctl HOST:PORT -out DIR [-deadline UNIXSECONDS] [-deadline-margin 10m]`
 
 func main() {
@@ -56,26 +56,35 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func runSupervise(ctx context.Context, args []string, stdout io.Writer) error {
+	o, err := superviseOptionsFromArgs(args)
+	if err != nil {
+		return err
+	}
+	return supervise(ctx, o, stdout)
+}
+
+// superviseOptionsFromArgs reads the flags of `pairrun supervise` and the
+// PILOT_* overrides of the environment.
+func superviseOptionsFromArgs(args []string) (superviseOptions, error) {
 	fs := flag.NewFlagSet("supervise", flag.ContinueOnError)
 	var o superviseOptions
 	fs.StringVar(&o.Engine, "engine", "", "the engine binary")
 	fs.StringVar(&o.Loadgen, "loadgen", "", "the loadgen binary, for the loopback run")
 	fs.StringVar(&o.Listen, "listen", ":9100", "control address")
 	fs.StringVar(&o.Work, "work", "", "directory for engine data, engine logs and the loopback files")
+	fs.StringVar(&o.EnvFile, "env", "", "file of text that describes this machine, served to the client for its results")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return o, err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("pairrun supervise: unexpected argument %q, want flags only", fs.Arg(0))
+		return o, fmt.Errorf("pairrun supervise: unexpected argument %q, want flags only", fs.Arg(0))
 	}
 	if o.Engine == "" || o.Loadgen == "" || o.Work == "" {
-		return fmt.Errorf("pairrun supervise: -engine, -loadgen and -work are required\n%s", usage)
+		return o, fmt.Errorf("pairrun supervise: -engine, -loadgen and -work are required\n%s", usage)
 	}
 	var err error
-	if o.Params, _, err = paramsFromEnv(os.Getenv); err != nil {
-		return err
-	}
-	return supervise(ctx, o, stdout)
+	o.Params, o.Overrides, err = paramsFromEnv(os.Getenv)
+	return o, err
 }
 
 func runClient(ctx context.Context, args []string, stdout io.Writer) error {

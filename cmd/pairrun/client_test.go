@@ -5,9 +5,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,7 +160,7 @@ func TestClientFullMatrix(t *testing.T) {
 	}
 
 	// Results directory: every file in its place, none half written.
-	for _, name := range []string{"plan.json", "runs.jsonl", "g2.json", "summary.json", "summary.txt", "loopback.json", "loopback.txt"} {
+	for _, name := range []string{"plan.json", "runs.jsonl", "g2.json", "summary.json", "summary.txt", "loopback.json", "loopback.txt", "engine-env.txt"} {
 		if _, err := os.Stat(filepath.Join(r.out, name)); err != nil {
 			t.Errorf("no %s: %v", name, err)
 		}
@@ -168,6 +170,9 @@ func TestClientFullMatrix(t *testing.T) {
 	}
 	if got := string(r.file("loopback.txt")); got != r.sup.loopback["loopback.txt"] {
 		t.Errorf("loopback.txt is %q", got)
+	}
+	if got := string(r.file("engine-env.txt")); got != r.sup.envText {
+		t.Errorf("engine-env.txt is %q, want the supervisor's text %q", got, r.sup.envText)
 	}
 	entries, err := os.ReadDir(filepath.Join(r.out, "runs"))
 	if err != nil || len(entries) != 92 {
@@ -183,10 +188,11 @@ func TestClientFullMatrix(t *testing.T) {
 	}
 
 	var plan struct {
-		Rehearsal bool
-		Overrides map[string]string
-		Rounds    int
-		Configs   []struct {
+		Rehearsal           bool
+		Overrides           map[string]string
+		SupervisorOverrides map[string]string `json:"supervisor_overrides"`
+		Rounds              int
+		Configs             []struct {
 			Name, Flow string
 			Engine     string  `json:"engine_config"`
 			Rate       float64 `json:"rate"`
@@ -199,7 +205,8 @@ func TestClientFullMatrix(t *testing.T) {
 	if err := json.Unmarshal(r.file("plan.json"), &plan); err != nil {
 		t.Fatal(err)
 	}
-	if plan.Rehearsal || plan.Overrides == nil || len(plan.Overrides) != 0 || plan.Rounds != 5 || len(plan.Configs) != 9 || plan.LongRun.Name != "R1-15min" {
+	if plan.Rehearsal || plan.Overrides == nil || len(plan.Overrides) != 0 || plan.SupervisorOverrides == nil || len(plan.SupervisorOverrides) != 0 ||
+		plan.Rounds != 5 || len(plan.Configs) != 9 || plan.LongRun.Name != "R1-15min" {
 		t.Errorf("plan.json: %+v", plan)
 	}
 	for i, c := range planConfigs(p, "engine.test:9000", r.http) {
@@ -411,9 +418,15 @@ func TestClientGoesOnWhenAnotherConfigurationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := r.summary()
-	// All 45 runs are made, G2 does not pass, and so the 15-minute run is not made.
-	if got := len(r.sup.startedConfigs()); got != 45 || s.Stopped != "" || s.G2.Passed || s.G2.Cond1.Status != statusFail || !s.G2.Complete {
-		t.Errorf("%d starts, stopped %q, g2 %+v", got, s.Stopped, s.G2)
+	// All 45 runs are made, G2 does not pass, and so the 15-minute run is not made, which the summary says.
+	if got := len(r.sup.startedConfigs()); got != 45 || s.G2.Passed || s.G2.Cond1.Status != statusFail || !s.G2.Complete {
+		t.Errorf("%d starts, g2 %+v", got, s.G2)
+	}
+	if s.Stopped != "g2_failed" || !strings.Contains(s.StopReason, "G2 did not pass") || !strings.Contains(s.StopReason, "R1-15min run was not made") {
+		t.Errorf("stopped %q (%s), want g2_failed and a reason that says the long run was not made", s.Stopped, s.StopReason)
+	}
+	if !strings.Contains(string(r.file("summary.txt")), "Stopped: g2_failed: G2 did not pass") {
+		t.Error("summary.txt does not say that G2 failed and the long run was not made")
 	}
 	if long := summaryConfig(t, s, "R1-15min"); long.Runs != 0 {
 		t.Errorf("the long run was made: %+v", long)
@@ -535,6 +548,25 @@ func TestClientWaitsUntilTheSupervisorIsReady(t *testing.T) {
 			t.Errorf("no plan.json: %v", err)
 		}
 	})
+	t.Run("leaves a summary that says why", func(t *testing.T) {
+		r := newRig(t, p, nil)
+		r.sup.readyAfter = 1 << 30
+		r.c.readyTimeout = 50 * time.Millisecond
+		if err := r.run(); err == nil {
+			t.Fatal("a supervisor that never was ready gave no error")
+		}
+		s := r.summary()
+		if s.Stopped != "error" || !strings.Contains(s.StopReason, "not ready after 50ms") || s.Runs != 0 {
+			t.Errorf("summary.json: stopped %q (%s), %d runs", s.Stopped, s.StopReason, s.Runs)
+		}
+		// Its overrides are unknown, so the result is no rehearsal and cannot be published.
+		if s.Rehearsal || s.Publishable {
+			t.Errorf("summary.json of a supervisor that never answered: rehearsal %v, publishable %v, want false and false", s.Rehearsal, s.Publishable)
+		}
+		if !strings.Contains(string(r.file("summary.txt")), "Stopped: error: supervisor at "+r.c.Ctl+" not ready after 50ms") {
+			t.Errorf("summary.txt does not say that the supervisor was not ready:\n%s", r.file("summary.txt"))
+		}
+	})
 	t.Run("supervisor that is not there", func(t *testing.T) {
 		r := newRig(t, p, nil)
 		r.c.Ctl = freeAddr(t)
@@ -599,20 +631,330 @@ func TestClientRehearsal(t *testing.T) {
 	}
 }
 
+// plan reads the fields of plan.json that mark a rehearsal.
+func (r *rig) plan() (rehearsal bool, overrides, supervisorOverrides map[string]string) {
+	r.t.Helper()
+	var plan struct {
+		Rehearsal           bool
+		Overrides           map[string]string
+		SupervisorOverrides map[string]string `json:"supervisor_overrides"`
+	}
+	if err := json.Unmarshal(r.file("plan.json"), &plan); err != nil {
+		r.t.Fatal(err)
+	}
+	return plan.Rehearsal, plan.Overrides, plan.SupervisorOverrides
+}
+
+// The client reads its PILOT_* variables in run: a result made with one is
+// marked a rehearsal in plan.json and summary.json.
+func TestRunMarksARehearsalFromTheClientsEnvironment(t *testing.T) {
+	sup := newFakeSupervisor(t)
+	t.Setenv("PILOT_ROUNDS", "1")
+	writeMatrixScript(t, rounds(1), nil)
+	r := &rig{t: t, out: filepath.Join(t.TempDir(), "results")}
+	args := []string{"client", "-loadgen", fakeBinary(t, "fake-loadgen"), "-oe", "engine.test:9000", "-http", metricsServer(t, http.StatusOK),
+		"-ctl", sup.addr(), "-out", r.out}
+	if err := run(context.Background(), args, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"PILOT_ROUNDS": "1"}
+	if rehearsal, overrides, _ := r.plan(); !rehearsal || !reflect.DeepEqual(overrides, want) {
+		t.Errorf("plan.json: rehearsal %v, overrides %v, want true and %v", rehearsal, overrides, want)
+	}
+	s := r.summary()
+	if !s.Rehearsal || s.Publishable || !reflect.DeepEqual(s.Overrides, want) {
+		t.Errorf("summary.json: rehearsal %v, publishable %v, overrides %v", s.Rehearsal, s.Publishable, s.Overrides)
+	}
+	if first, _, _ := strings.Cut(string(r.file("summary.txt")), "\n"); first != "REHEARSAL: not publishable" {
+		t.Errorf("first line of summary.txt is %q", first)
+	}
+}
+
+// A supervisor with overrides made a loopback run that is not the study's, so
+// the result is a rehearsal although the client has none.
+func TestClientMarksARehearsalFromTheSupervisorsOverrides(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	want := map[string]string{"PILOT_DURATION": "5s"}
+	r.sup.overrides = want
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	rehearsal, overrides, supervisorOverrides := r.plan()
+	if !rehearsal || overrides == nil || len(overrides) != 0 || !reflect.DeepEqual(supervisorOverrides, want) {
+		t.Errorf("plan.json: rehearsal %v, overrides %v, supervisor overrides %v", rehearsal, overrides, supervisorOverrides)
+	}
+	s := r.summary()
+	if !s.Rehearsal || s.Publishable || len(s.Overrides) != 0 || !reflect.DeepEqual(s.SupervisorOverrides, want) {
+		t.Errorf("summary.json: rehearsal %v, publishable %v, overrides %v, supervisor overrides %v", s.Rehearsal, s.Publishable, s.Overrides, s.SupervisorOverrides)
+	}
+	text := string(r.file("summary.txt"))
+	if first, _, _ := strings.Cut(text, "\n"); first != "REHEARSAL: not publishable" || !strings.Contains(text, "Supervisor override: PILOT_DURATION=5s\n") {
+		t.Errorf("summary.txt:\n%s", text)
+	}
+}
+
+func TestClientRecordsTheClockOfEachMachine(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	s := r.summary()
+	if s.EngineClockReadNS != 30 || s.ClientClockReadNS != 25 || s.ClockUnfit {
+		t.Errorf("summary.json: engine clock %v ns, client clock %v ns, unfit %v, want 30, 25 and false", s.EngineClockReadNS, s.ClientClockReadNS, s.ClockUnfit)
+	}
+	if text := string(r.file("summary.txt")); !strings.Contains(text, "Clock read, mean per call: engine 30.0 ns, client 25.0 ns, unfit above 100 ns: fit\n") {
+		t.Errorf("summary.txt does not give both clock costs and the verdict:\n%s", text)
+	}
+}
+
+// A pair with a clock read above 100 ns on either machine is recorded as
+// unfit, and the gate decides as it does for any other pair.
+func TestClientClockUnfit(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		engine, client float64
+		unfit          bool
+	}{
+		{"engine above the limit", 100.5, 25, true},
+		{"client above the limit", 30, 100.5, true},
+		{"both at the limit", 100, 100, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := rounds(1)
+			r := newRig(t, p, nil)
+			writeMatrixScript(t, p, nil)
+			r.sup.clockNS = c.engine
+			r.c.clockRead = func() float64 { return c.client }
+			if err := r.run(); err != nil {
+				t.Fatal(err)
+			}
+			s := r.summary()
+			if s.ClockUnfit != c.unfit || s.EngineClockReadNS != c.engine || s.ClientClockReadNS != c.client {
+				t.Errorf("unfit %v with clocks %v and %v ns, want %v with %v and %v", s.ClockUnfit, s.EngineClockReadNS, s.ClientClockReadNS, c.unfit, c.engine, c.client)
+			}
+			if text := string(r.file("summary.txt")); strings.Contains(text, ": UNFIT\n") != c.unfit {
+				t.Errorf("summary.txt verdict, want unfit %v:\n%s", c.unfit, text)
+			}
+			if g := r.g2(); !g.Passed || !g.Complete || g.EarlyStop || s.Stopped != "" || !s.Publishable || s.Runs != 10 {
+				t.Errorf("the gate changed with the clock: g2 passed %v, complete %v, early stop %v; stopped %q, publishable %v, %d runs",
+					g.Passed, g.Complete, g.EarlyStop, s.Stopped, s.Publishable, s.Runs)
+			}
+		})
+	}
+}
+
+func TestClientWithoutEngineEnvText(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	r.sup.envText = ""
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.stdout.String(), "warning: no engine-env.txt") {
+		t.Error("the missing engine-env.txt is not mentioned")
+	}
+	if _, err := os.Stat(filepath.Join(r.out, "engine-env.txt")); err == nil {
+		t.Error("an engine-env.txt was written")
+	}
+	if len(r.records()) != 10 {
+		t.Errorf("%d runs", len(r.records()))
+	}
+}
+
+// failingStarts lists the /start requests that fail when the runs numbered
+// runs, counted from 1, fail all their attempts: every other run asks once.
+func failingStarts(runs ...int) map[int]bool {
+	fails := map[int]bool{}
+	n := 0
+	for run := 1; run <= 50; run++ {
+		if !slices.Contains(runs, run) {
+			n++
+			continue
+		}
+		for range startAttempts {
+			n++
+			fails[n] = true
+		}
+	}
+	return fails
+}
+
+// A run whose engine cannot be started on any attempt is recorded as invalid,
+// with no report, and the matrix goes on.
 func TestClientStartFailure(t *testing.T) {
 	p := rounds(2)
 	r := newRig(t, p, nil)
+	log := writeMatrixScript(t, p, nil)
+	r.sup.failStarts = failingStarts(4)
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	records := r.records()
+	if len(records) != 19 || len(loggedArgs(t, log)) != 18 {
+		t.Fatalf("%d runs recorded and %d loadgen runs, want 19 and 18: the matrix goes on and no loadgen runs for run 4", len(records), len(loggedArgs(t, log)))
+	}
+	if got := r.sup.startedConfigs(); len(got) != 21 || !slices.Equal(got[3:6], []string{"spin-pin", "spin-pin", "spin-pin"}) {
+		t.Errorf("%d starts asked for, %v around run 4, want 21 and three of spin-pin", len(got), got[3:6])
+	}
+	rec := records[3]
+	if rec.Seq != 4 || rec.Round != 1 || rec.Config != "R1-spin-pin" || rec.Flow != flowR1 || rec.EngineConfig != "spin-pin" || rec.Valid || rec.Report != "" || rec.LoadgenExit != -1 {
+		t.Errorf("run 4 is recorded as %+v", rec)
+	}
+	if len(rec.Study) != 1 || rec.Study[0].Rule != "engine_start" || rec.Study[0].Verdict != verdictFail ||
+		!strings.Contains(rec.Study[0].Value, `starting engine "spin-pin"`) || !strings.Contains(rec.Study[0].Value, "engine did not listen") {
+		t.Errorf("run 4 study %+v, want a failed engine_start with the error", rec.Study)
+	}
+	if len(rec.Notes) != startAttempts || !strings.Contains(rec.Notes[0], "attempt 1 of 3") || !strings.Contains(rec.Notes[2], "attempt 3 of 3") {
+		t.Errorf("run 4 notes %v, want one for each attempt", rec.Notes)
+	}
+	if _, err := os.Stat(filepath.Join(r.out, "runs", "04-R1-spin-pin-r1.json")); err == nil {
+		t.Error("a report file was made for a run that never started")
+	}
+	if next := records[4]; next.Seq != 5 || next.Config != "R2" || !next.Valid {
+		t.Errorf("the run after the failed one is %d %s, valid %v", next.Seq, next.Config, next.Valid)
+	}
+
+	// Everything that reads the records copes with the one that has no report.
+	progress := strings.Split(strings.TrimSpace(r.stdout.String()), "\n")
+	if len(progress) != 19 || !strings.Contains(progress[3], "valid=false") || !strings.HasSuffix(progress[3], "failed=engine_start") {
+		t.Errorf("progress line of run 4: %q", progress[3])
+	}
+	s := r.summary()
+	spin := summaryConfig(t, s, "R1-spin-pin")
+	if s.Stopped != "" || s.Runs != 19 || spin.Runs != 2 || spin.Valid != 1 || len(spin.Rows) == 0 {
+		t.Errorf("summary: stopped %q, %d runs, R1-spin-pin %d runs, %d valid", s.Stopped, s.Runs, spin.Runs, spin.Valid)
+	}
+	if n := configStatus(t, r.g2(), "R1-spin-pin"); n.Runs != 2 || n.Valid != 1 || n.Invalid != 1 {
+		t.Errorf("G2 counts R1-spin-pin as %+v", n)
+	}
+	if !s.G2.Passed || !strings.Contains(string(r.file("summary.txt")), "R1-spin-pin: R1, engine spin-pin, 10000/s, 1 of 2 runs valid") {
+		t.Errorf("G2 passed %v, or summary.txt does not count the failed run", s.G2.Passed)
+	}
+}
+
+// The rules of G2 decide what a failed start means: two runs of F or of R1
+// that never started end the matrix, as two invalid ones do.
+func TestClientStartFailuresStopTheMatrixAsInvalidRunsDo(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		runs   []int
+		reason string
+	}{
+		{"F fails in two rounds", []int{1, 10}, "condition 1 can no longer be met for F"},
+		{"R1 fails in two rounds", []int{2, 11}, "condition 1 can no longer be met for R1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := rounds(5)
+			r := newRig(t, p, nil)
+			writeMatrixScript(t, p, nil)
+			r.sup.failStarts = failingStarts(c.runs...)
+			if err := r.run(); err != nil {
+				t.Fatal(err)
+			}
+			s := r.summary()
+			if s.Stopped != "g2" || !strings.Contains(s.StopReason, c.reason) || s.Runs != 18 || s.G2.Passed {
+				t.Errorf("stopped %q (%s) after %d runs, g2 passed %v", s.Stopped, s.StopReason, s.Runs, s.G2.Passed)
+			}
+		})
+	}
+}
+
+func TestClientRetriesAStartThatFailsOnce(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	log := writeMatrixScript(t, p, nil)
+	r.sup.failStarts[4] = true
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	started := r.sup.startedConfigs()
+	if len(started) != 11 || started[3] != "spin-pin" || started[4] != "spin-pin" {
+		t.Errorf("starts asked for %v, want the fourth repeated", started)
+	}
+	records := r.records()
+	if len(records) != 10 || len(loggedArgs(t, log)) != 10 {
+		t.Fatalf("%d runs recorded and %d loadgen runs, want 10 each", len(records), len(loggedArgs(t, log)))
+	}
+	for _, rec := range records {
+		if !rec.Valid {
+			t.Errorf("run %d %s is invalid: %+v", rec.Seq, rec.Config, rec.Study)
+		}
+	}
+	rec := records[3]
+	if rec.Report == "" || rec.EngineHost.Before.Starts != 5 || len(rec.Notes) != 1 ||
+		!strings.Contains(rec.Notes[0], "attempt 1 of 3") || !strings.Contains(rec.Notes[0], "engine did not listen") {
+		t.Errorf("run 4: report %q, engine started %d times, notes %v, want the failed attempt noted", rec.Report, rec.EngineHost.Before.Starts, rec.Notes)
+	}
+}
+
+func TestClientDoesNotRetryAStartPastTheDeadline(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	r.clock.step = 0
 	writeMatrixScript(t, p, nil)
-	r.sup.failStart = 4
-	err := r.run()
-	if err == nil || !strings.Contains(err.Error(), `starting engine "spin-pin"`) || !strings.Contains(err.Error(), "engine did not listen") {
-		t.Fatalf("error %v, want the failed start and the supervisor's reason", err)
+	r.sup.failStarts[1] = true
+	r.sup.onStart = func(int) { r.clock.advance(100 * time.Second) } // a request that takes 100 s
+	r.c.Margin = time.Minute
+	// A run needs 130 s with the margin: it fits at the start and no longer after the failed request.
+	r.c.Deadline = clockStart.Add(200 * time.Second)
+	if err := r.run(); err != nil {
+		t.Fatal(err)
 	}
-	if got := len(r.records()); got != 3 {
-		t.Errorf("%d runs recorded, want the 3 before the failure", got)
+	if got := r.sup.startedConfigs(); len(got) != 1 {
+		t.Errorf("%d starts asked for, want 1: no retry once the run does not fit", len(got))
 	}
-	if s := r.summary(); s.Stopped != "error" || !strings.Contains(s.StopReason, "engine did not listen") || s.Runs != 3 {
-		t.Errorf("summary after the failure: stopped %q (%s), %d runs", s.Stopped, s.StopReason, s.Runs)
+	records := r.records()
+	if len(records) != 1 || records[0].Valid || records[0].Report != "" {
+		t.Errorf("records %+v, want the failed run alone", records)
+	}
+	if s := r.summary(); s.Stopped != "deadline" {
+		t.Errorf("stopped %q, want deadline", s.Stopped)
+	}
+}
+
+// A client whose context ended during a start returns that error and records
+// no run, though the start failed.
+func TestClientReturnsTheErrorOfAContextThatEndedDuringAStart(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.sup.failStarts[1] = true
+	r.sup.onStart = func(int) { cancel() }
+	if err := r.c.run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a client whose context ended returned %v, want that error", err)
+	}
+	if _, err := os.Stat(filepath.Join(r.out, "runs.jsonl")); err == nil {
+		t.Error("a run that was cut short was recorded")
+	}
+	if s := r.summary(); s.Stopped != "error" || s.Runs != 0 {
+		t.Errorf("summary after the signal: stopped %q, %d runs", s.Stopped, s.Runs)
+	}
+}
+
+// A supervisor that starts another configuration than the one asked for has
+// not made the run's engine.
+func TestClientRecordsAStartOfAnotherConfiguration(t *testing.T) {
+	p := rounds(2)
+	r := newRig(t, p, nil)
+	log := writeMatrixScript(t, p, nil)
+	r.sup.wrongStart = map[int]string{4: "default", 5: "default", 6: "default"}
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	rec := r.records()[3]
+	if rec.Config != "R1-spin-pin" || rec.Valid || rec.Report != "" || len(rec.Study) != 1 || rec.Study[0].Rule != "engine_start" ||
+		!strings.Contains(rec.Study[0].Value, `"spin-pin"`) || !strings.Contains(rec.Study[0].Value, `"default"`) {
+		t.Errorf("run 4 is recorded as %+v, want an invalid run whose error names spin-pin and default", rec)
+	}
+	if got := len(loggedArgs(t, log)); got != 18 {
+		t.Errorf("%d loadgen runs, want 18: none for run 4", got)
 	}
 }
 
@@ -722,6 +1064,12 @@ func TestClientKilledInTheMiddleLeavesWholeFiles(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil { // the test failed before it killed the client
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // the client and its hung loadgen
+			_ = cmd.Wait()
+		}
+	})
 	eventually(t, "the sixth run to start", func() bool { return len(sup.startedConfigs()) == 6 })
 	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
