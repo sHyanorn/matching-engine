@@ -1,0 +1,30 @@
+reply row of each run, in us (loadgen's report, 10000/s, 60 s after a 10 s warmup)
+run  meter    valid        p50        p99      p99.9     p99.99          max loadgen hiccup p99 / send lag p99.9 / achieved rate
+1    without  False       57.8     1220.8     8533.0    22956.5      28956.5 48.4 / 7364.1 / 10000.0
+2    with     False       52.6      687.2    13175.9    64203.3      70203.3 39.3 / 10513.3 / 10000.0
+3    without  False       46.6      344.7     3549.1    14911.2      20911.2 34.8 / 3028.1 / 10000.0
+4    with     False       50.0     1154.3     4797.7    13758.9      17575.8 35.8 / 2778.2 / 10000.0
+5    without  False       45.6     1144.4     4539.1     6923.5      11434.2 40.1 / 2308.9 / 10000.0
+6    with     False       48.3     1491.2     6323.4    24398.1      30398.1 44.8 / 4167.0 / 9999.9
+7    without  False       47.3      943.7     4034.6     6080.3      11537.2 40.9 / 1903.0 / 10000.0
+8    with     False       50.7     1455.7     4913.6    12037.6      15458.4 37.8 / 2111.9 / 10000.0
+9    without  False       51.9     1055.6     8945.8    19992.0      24565.9 45.6 / 4817.3 / 10000.0
+10   with     False       46.1      674.1     3752.0    10881.4      14624.6 37.7 / 2032.2 / 10000.0
+11   without  False       47.0      678.2     4156.1    11653.7      16253.7 37.9 / 2737.0 / 10000.0
+12   with     False       49.1      396.8     2970.5     6450.7       9148.1 36.3 / 2167.3 / 10000.0
+
+groups (all runs, valid or not): n without 6, n with 6
+stat   | without: median (spread = max-min) | with: median (spread)              | |diff|     | drop?
+p50    |         47.1 (      12.2)             |         49.6 (       6.4)             |        2.4 | keep (diff <= without's spread 12.2)
+p99    |        999.7 (     876.1)             |        920.8 (    1094.4)             |       78.9 | keep (diff <= without's spread 876.1)
+p99.9  |       4347.6 (    5396.8)             |       4855.6 (   10205.4)             |      508.1 | keep (diff <= without's spread 5396.8)
+
+verdict by the rule (drop if, for any of p50, p99, p99.9, the difference of the two medians exceeds the without-meter group's spread): KEEP THE METER (no statistic's difference exceeds the without group's spread)
+
+what the meter saw in the runs with it (its rows over the whole run, warmup and the seconds around it included):
+run 2: 71 seconds, 62587 wakes, 882 wakes/s, median of per-second p99 250 us, worst max 13000 us, pinned True on cpu 1
+run 4: 70 seconds, 62185 wakes, 888 wakes/s, median of per-second p99 250 us, worst max 6700 us, pinned True on cpu 1
+run 6: 70 seconds, 62234 wakes, 889 wakes/s, median of per-second p99 250 us, worst max 16000 us, pinned True on cpu 1
+run 8: 70 seconds, 62315 wakes, 890 wakes/s, median of per-second p99 250 us, worst max 10000 us, pinned True on cpu 1
+run 10: 70 seconds, 62617 wakes, 895 wakes/s, median of per-second p99 240 us, worst max 16000 us, pinned True on cpu 1
+run 12: 70 seconds, 62713 wakes, 896 wakes/s, median of per-second p99 230 us, worst max 7200 us, pinned True on cpu 1

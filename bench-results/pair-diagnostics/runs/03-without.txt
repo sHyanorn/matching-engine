@@ -1,0 +1,10 @@
+OE1 IOC orders on BTC-USD: target 10000/s, achieved 10000/s over 60s after 10s warmup, one session, spin true, reader spins true, pinned to CPUs [3 2]
+order_canceled 600000
+trades: 0 in replies
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+request to reply        600000     46.6     93.3    344.7   3549.1  14911.2  20911.2
+service time            600000     46.1     91.8    202.4   1725.5   3959.3  10537.6
+send lag                600000      0.2      0.2     30.7   3028.1  14076.6  20076.6
+loadgen hiccup          596387      0.2     14.8     34.8     97.5    950.1  20104.8
+invalid: send lag p99.9 3028.1 µs, over 10µs
+loadgen: invalid run: send lag p99.9 3028.1 µs, over 10µs

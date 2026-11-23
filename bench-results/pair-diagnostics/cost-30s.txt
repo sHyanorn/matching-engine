@@ -1,0 +1,10 @@
+=== RUN   TestB2MeterCost
+placement: {CPU:3 Siblings:[3] Cores:4 TopologyReadable:true Pinned:false Note:}
+baseline, no meter, 30 s: process run time 41.9 us/s over 6..6 threads
+placement after the run: {CPU:3 Siblings:[3] Cores:4 TopologyReadable:true Pinned:true Note:}
+meter thread (tid 16641) over 30.0 s: run 13410.3 us/s, runqueue delay 1371.2 us/s, 859.3 timeslices/s
+whole process over the same time: run 62350.8 us/s (threads 6..7); baseline without the meter 41.9 us/s
+meter's rows: 32 seconds served, 26836 wakes (838.6 wakes/s), median of the per-second p99 400.0 us, worst max 4400.0 us
+--- PASS: TestB2MeterCost (62.05s)
+PASS
+ok  	github.com/sHyanorn/matching-engine/cmd/pairrun	62.049s

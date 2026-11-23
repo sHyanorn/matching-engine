@@ -1,0 +1,169 @@
+//go:build linux
+
+package main
+
+// The tests of this file measure the cost of the wake meter (D051) and run it
+// beside a process on the same machine. They are kept as text in
+// bench-results/pair-diagnostics so that they are not part of the build. To run
+// them, copy the file to cmd/pairrun/b2_meter_cost_test.go and run
+//
+//	B2_SECONDS=30 go test -run TestB2MeterCost -count=1 -v ./cmd/pairrun/
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+// b2Schedstat reads the run time, the run-queue delay (both in ns) and the
+// timeslices of one thread from its schedstat file.
+func b2Schedstat(t *testing.T, path string) (run, delay, slices int64) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Sscanf(string(data), "%d %d %d", &run, &delay, &slices); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+// b2ProcessRun sums the run time in ns of the threads of this process and
+// counts them.
+func b2ProcessRun(t *testing.T) (run int64, threads int) {
+	files, _ := filepath.Glob("/proc/self/task/*/schedstat")
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var r, d, s int64
+		if _, err := fmt.Sscanf(string(data), "%d %d %d", &r, &d, &s); err == nil {
+			run += r
+			threads++
+		}
+	}
+	return
+}
+
+// TestB2MeterCost measures what the wake meter costs: its thread's CPU time and
+// its wakes a second, and the CPU time of the whole process with and without it,
+// with the real clock, the real sleep and the real placement and pin. B2_SECONDS
+// sets the length of each of the two phases (30 s); B2_NOBASE skips the baseline
+// phase; B2_SLEEP=nano sleeps with a raw nanosleep instead of the runtime's
+// timer; B2_OUT names a file for the meter's rows.
+func TestB2MeterCost(t *testing.T) {
+	secs := 30
+	if v, err := strconv.Atoi(os.Getenv("B2_SECONDS")); err == nil {
+		secs = v
+	}
+	allowed, err := allowedCPUs(procSources.status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	place := placeWake(procSources.sysfs, allowed)
+	fmt.Printf("placement: %+v\n", place)
+
+	// Baseline: this process with no meter.
+	r0, th0 := b2ProcessRun(t)
+	if os.Getenv("B2_NOBASE") == "" {
+		time.Sleep(time.Duration(secs) * time.Second)
+	}
+	r1, th1 := b2ProcessRun(t)
+	baseUS := float64(r1-r0) / 1e3 / float64(secs)
+	fmt.Printf("baseline, no meter, %d s: process run time %.1f us/s over %d..%d threads\n", secs, baseUS, th0, th1)
+
+	m := newWakeMeter(place)
+	if os.Getenv("B2_SLEEP") == "nano" {
+		m.sleep = func(d time.Duration) {
+			ts := unix.NsecToTimespec(int64(d))
+			for unix.Nanosleep(&ts, &ts) == unix.EINTR {
+			}
+		}
+	}
+	var tid atomic.Int64
+	m.pin = func(cpu int) (func() error, error) { tid.Store(int64(unix.Gettid())); return pinThread(cpu) }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := m.start(ctx)
+	eventually(t, "the meter to pin", func() bool { return m.placement().Pinned })
+	time.Sleep(2 * time.Second)
+	path := fmt.Sprintf("/proc/self/task/%d/schedstat", tid.Load())
+	tr0, td0, ts0 := b2Schedstat(t, path)
+	p0, pth0 := b2ProcessRun(t)
+	begin := time.Now()
+	time.Sleep(time.Duration(secs) * time.Second)
+	tr1, td1, ts1 := b2Schedstat(t, path)
+	p1, pth1 := b2ProcessRun(t)
+	el := time.Since(begin).Seconds()
+	cancel()
+	<-done
+
+	a := m.answer(0, math.MaxInt64)
+	var wakes int
+	var p99s []float64
+	var worst float64
+	for i, n := range a.N {
+		wakes += n
+		if n > 0 {
+			p99s = append(p99s, a.P99[i])
+		}
+		worst = max(worst, a.Max[i])
+	}
+	slices.Sort(p99s)
+	fmt.Printf("placement after the run: %+v\n", m.placement())
+	fmt.Printf("meter thread (tid %d) over %.1f s: run %.1f us/s, runqueue delay %.1f us/s, %.1f timeslices/s\n",
+		tid.Load(), el, float64(tr1-tr0)/1e3/el, float64(td1-td0)/1e3/el, float64(ts1-ts0)/el)
+	fmt.Printf("whole process over the same time: run %.1f us/s (threads %d..%d); baseline without the meter %.1f us/s\n",
+		float64(p1-p0)/1e3/el, pth0, pth1, baseUS)
+	fmt.Printf("meter's rows: %d seconds served, %d wakes (%.1f wakes/s), median of the per-second p99 %.1f us, worst max %.1f us\n",
+		len(a.N), wakes, float64(wakes)/float64(len(a.N)), p99s[len(p99s)/2], worst)
+	out, _ := json.Marshal(a)
+	if f := os.Getenv("B2_OUT"); f != "" {
+		_ = os.WriteFile(f, out, 0o644)
+	}
+}
+
+// TestB2HoldMeter holds a meter, started with the real clock and the real
+// placement code, while another process runs, until the file B2_STOP exists. It
+// writes the placement to B2_READY once the meter is pinned and the meter's rows
+// to B2_OUT at the end. It is skipped unless the three variables are set.
+func TestB2HoldMeter(t *testing.T) {
+	stop, ready, out := os.Getenv("B2_STOP"), os.Getenv("B2_READY"), os.Getenv("B2_OUT")
+	if stop == "" || ready == "" || out == "" {
+		t.Skip("not a hold run")
+	}
+	allowed, err := allowedCPUs(procSources.status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newWakeMeter(placeWake(procSources.sysfs, allowed))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := m.start(ctx)
+	eventually(t, "the meter to pin", func() bool { return m.placement().Pinned })
+	p, _ := json.Marshal(m.placement())
+	if err := os.WriteFile(ready, p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(stop); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	data, _ := json.Marshal(m.answer(0, math.MaxInt64))
+	if err := os.WriteFile(out, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
