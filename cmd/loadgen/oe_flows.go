@@ -112,13 +112,15 @@ func (r *oeRun) found(c command, d oe.Done) string {
 // The commands are the orders due in the window and their Cancels, which
 // are timed from their own sends: reply is an order's due time to its Done,
 // cancel a Cancel's send to its Done, and order_to_cancel the whole way.
-// Only orders have a send lag.
+// Only orders have a send lag, and the series, which has the reply row, is of
+// the orders.
 func (r *oeRun) ackCancels(rep *report) (sent int, lag []int64, problems []string) {
 	cfg := r.cfg
 	rep.Mode, rep.Symbol = "oe_ack_cancel", cfg.symbol
 	rep.Trades.Replies = r.trades
 	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
 	var reply, cancel, orderToCancel []int64
+	ser := newSeries("reply", r.t0, cfg.warmup, cfg.duration)
 	missing, failed, warmupFailed, resting := 0, 0, 0, 0
 	// Which orders had a Cancel sent, by request, from the commands: a send
 	// time of 0 does not mean none, as a coarse clock reads 0 at the start of
@@ -162,6 +164,7 @@ func (r *oeRun) ackCancels(rep *report) (sent int, lag []int64, problems []strin
 			orderToCancel = append(orderToCancel, r.cancelAt[j]+r.rtt[seq]-r.due(j))
 		default:
 			reply, lag = append(reply, r.rtt[seq]), append(lag, r.lag[j])
+			ser.add(r.due(j), r.rtt[seq], r.lag[j])
 		}
 	}
 	problems = r.commandProblems(failed, warmupFailed, missing)
@@ -169,5 +172,6 @@ func (r *oeRun) ackCancels(rep *report) (sent int, lag []int64, problems []strin
 		problems = append(problems, fmt.Sprintf("orders that rested and were not canceled: %d", resting))
 	}
 	rep.Latency["reply"], rep.Latency["cancel"], rep.Latency["order_to_cancel"] = summarize(reply), summarize(cancel), summarize(orderToCancel)
+	rep.Series, problems = ser.finish(problems)
 	return sent, lag, problems
 }

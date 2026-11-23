@@ -545,6 +545,7 @@ func TestOEOrdersSendTheFlow(t *testing.T) {
 	if rep.Mode != "oe_orders" || orders < r.total/2 || len(frames) == orders {
 		t.Errorf("mode %q, %d orders and %d cancels in %d requests", rep.Mode, orders, len(frames)-orders, r.total)
 	}
+	checkSeries(t, rep, "reply", 1)
 }
 
 // A cancel whose order has no Done yet when it is due is not sent, and
@@ -855,6 +856,7 @@ func TestRunOEWritesReport(t *testing.T) {
 	if r.Mode != "oe" || r.Outcomes["ping"] != 500 || r.Latency["pong"].Count != 500 || r.Latency["send_lag"].Count != 500 {
 		t.Errorf("report %+v", r)
 	}
+	checkSeries(t, r, "pong", 1)
 }
 
 // With -orders the same flags send the flow of -seed and -sd on -symbol,
@@ -877,6 +879,7 @@ func TestRunOEOrdersWritesReport(t *testing.T) {
 	if _, ok := r.Latency["pong"]; ok || r.Outcomes["ping"] != 0 {
 		t.Errorf("a run of the order flow reports Pings: %+v", r)
 	}
+	checkSeries(t, r, "reply", 1)
 }
 
 // -orders chooses what an OE1 session carries, so it needs -oe.

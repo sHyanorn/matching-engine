@@ -690,10 +690,11 @@ func (r *oeRun) report() report {
 
 // pings fills rep for a run of Pings and returns how many of the window's
 // answered Pings went out in it, their send lags, and what makes the run
-// invalid.
+// invalid. Its series has the same samples as the pong row.
 func (r *oeRun) pings(rep *report) (sent int, lag []int64, problems []string) {
 	start, end := int64(r.cfg.warmup), int64(r.cfg.warmup+r.cfg.duration)
 	var rtt []int64
+	ser := newSeries("pong", r.t0, r.cfg.warmup, r.cfg.duration)
 	missing := 0
 	for j := range r.total {
 		if !r.got[j] { // the warmup's Pings too, as in D030
@@ -710,18 +711,21 @@ func (r *oeRun) pings(rep *report) (sent int, lag []int64, problems []string) {
 			sent++
 		}
 		rtt, lag = append(rtt, r.rtt[j]), append(lag, r.lag[j])
+		ser.add(r.due(j), r.rtt[j], r.lag[j])
 	}
 	rep.Outcomes["pong"] = len(rtt)
 	if missing > 0 {
 		problems = append(problems, fmt.Sprintf("Pings with no Pong: %d", missing))
 	}
 	rep.Latency["pong"] = summarize(rtt)
+	rep.Series, problems = ser.finish(problems)
 	return sent, lag, problems
 }
 
 // orders fills rep for a run of the order flow or of R1, as the REST mode
 // reports one (worker.go): a command that was answered busy or with an
-// error fails the run, the warmup's too, and is left out of the latencies.
+// error fails the run, the warmup's too, and is left out of the latencies and
+// of the series.
 func (r *oeRun) orders(rep *report) (sent int, lag []int64, problems []string) {
 	cfg := r.cfg
 	rep.Symbol = cfg.symbol
@@ -733,6 +737,7 @@ func (r *oeRun) orders(rep *report) (sent int, lag []int64, problems []string) {
 	rep.Trades.Replies = r.trades
 	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
 	var reply, service []int64
+	ser := newSeries("reply", r.t0, cfg.warmup, cfg.duration)
 	missing, failed, warmupFailed := 0, 0, 0
 	for seq, c := range r.cmds[:r.nsent] {
 		j, out := int(c.request), r.res[seq]
@@ -757,12 +762,14 @@ func (r *oeRun) orders(rep *report) (sent int, lag []int64, problems []string) {
 			continue
 		}
 		reply, service, lag = append(reply, r.rtt[seq]), append(service, r.rtt[seq]-r.lag[j]), append(lag, r.lag[j])
+		ser.add(r.due(j), r.rtt[seq], r.lag[j])
 	}
 	if r.skipped > 0 {
 		rep.Outcomes["cancel_skipped"] = r.skipped
 	}
 	rep.Latency["reply"], rep.Latency["service"] = summarize(reply), summarize(service)
-	return sent, lag, r.commandProblems(failed, warmupFailed, missing)
+	rep.Series, problems = ser.finish(r.commandProblems(failed, warmupFailed, missing))
+	return sent, lag, problems
 }
 
 // commandProblems says what the commands of an order flow that failed or

@@ -99,6 +99,7 @@ func TestOEIOCSendsIOCOrders(t *testing.T) {
 	if rep.Mode != "oe_ioc" || rep.Symbol != fakeSymbol || rep.Trades.Replies != 0 {
 		t.Errorf("mode %q, symbol %q, %d trades in the replies", rep.Mode, rep.Symbol, rep.Trades.Replies)
 	}
+	checkSeries(t, rep, "reply", 1)
 }
 
 // A Done that is not that of an IOC order that rested nowhere and traded
@@ -242,6 +243,7 @@ func TestOEAckCancelReportsTheWindow(t *testing.T) {
 	if !maps.Equal(rep.Outcomes, want) || rep.Cancels != window || rep.Latency["cancel"].Count != window {
 		t.Errorf("outcomes %v, %d Cancels and %d cancel samples, want %v and %d of each", rep.Outcomes, rep.Cancels, rep.Latency["cancel"].Count, want, window)
 	}
+	checkSeries(t, rep, "reply", 1)
 }
 
 // The three latencies of R2 are timed from their own instants: with the Done
@@ -762,6 +764,7 @@ func TestRunOEFlowsWriteReport(t *testing.T) {
 		}
 	}
 	checkVerdict(t, stdout, r)
+	checkSeries(t, r, "reply", 1)
 
 	stdout, r = runOEReport(t, "-ack-cancel", "-symbol", fakeSymbol)
 	if r.Mode != "oe_ack_cancel" || r.Outcomes["order_rested"] != 500 || r.Outcomes["cancel_canceled"] != 500 || r.Cancels != 500 {
@@ -778,6 +781,7 @@ func TestRunOEFlowsWriteReport(t *testing.T) {
 		}
 	}
 	checkVerdict(t, stdout, r)
+	checkSeries(t, r, "reply", 1)
 }
 
 // With -http, a run of R1 or R2 prints that the counter rose, by 0 as nothing
@@ -815,6 +819,7 @@ func TestRunOEPushWritesReport(t *testing.T) {
 		}
 	}
 	checkVerdict(t, stdout, r)
+	checkSeries(t, r, "reply", 1)
 }
 
 // checkVerdict checks that a printed report ends with the verdict of r, and

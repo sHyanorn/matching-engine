@@ -88,6 +88,11 @@ type report struct {
 	Latency    map[string]summary `json:"latency_us"`
 
 	CounterRead bool `json:"counter_read,omitempty"` // OE1 with -http: the engine's trades counter was read before and after the run
+
+	// Series is the main latency row and the send lag per second of the
+	// measured part (series.go). Only the OE1 mode has one: the REST workers
+	// keep no due time with their samples.
+	Series *series `json:"series,omitempty"`
 }
 
 // tradeCounts are the trades of the whole run, warmup included, as each
