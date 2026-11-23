@@ -8,11 +8,19 @@
 #     holds RUNPOD_API_KEY, and no process below the Pod's pair.sh does;
 #   - that the environment text names only the Pod's RUNPOD_POD_ID,
 #     RUNPOD_DC_ID and RUNPOD_CPU_COUNT: each Pod also has three canary
-#     variables, whose values must appear in no log and no result file;
+#     variables, whose values must appear in no log and no result file,
+#     in the full archive or in the log copy;
 #   - engine and client: that the engine serves OE1 on port 9000, and
 #     that the client's archive, fetched from its port 8000, holds every
-#     run's report and has the SHA-256 that the log prints, as has the
-#     base64 copy in the log;
+#     run's report and has the size and SHA-256 that the log prints;
+#   - the log copy, which the client and the pilot print to the log in
+#     base64 next to the full archive (scripts/pair.sh, publish): that its
+#     marker line is in the log twice, the same line before and after the
+#     block, that the block decodes to an archive with the size and SHA-256
+#     of the marker, that it extracts and holds the files that a reader of
+#     the log needs, that it has no percentile curve and no table of a
+#     loadgen report, which the full archive still has, and that it differs
+#     from the full archive in nothing else;
 #   - selftest: that it prints its heartbeat;
 #   - a tarball of another commit, and one with an added file: that the
 #     start command refuses them and never runs pair.sh.
@@ -26,9 +34,11 @@
 # whole, hold the supervisor's environment text, can be fetched from port
 # 8000 with no one logged in, and say that they are a rehearsal, that each
 # run's report comes with the engine's log, which holds no network address
-# but 0.0.0.0 and 127.0.0.1, and that the key stays with the self-delete
-# timer. It takes minutes; the summary of what it found is printed. Ports
-# 8000, 8080, 9000 and 9100 must be free.
+# but 0.0.0.0 and 127.0.0.1, that the log copy holds the plan, the runs and
+# the summary, and that the key stays with the self-delete timer. It takes
+# minutes; the summary of what it found, and the number of lines that the
+# archive's block takes in the log, are printed. Ports 8000, 8080, 9000 and
+# 9100 must be free.
 #
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
@@ -248,8 +258,93 @@ deleted() {
 runpod_lines() { grep '^RUNPOD_' "$1" | sort | paste -sd ' ' -; }
 # envtext FILE POD: the RUNPOD_ lines of FILE are those of POD's allowlist.
 envtext() { [ "$(runpod_lines "$1")" = "RUNPOD_CPU_COUNT=2 RUNPOD_DC_ID=TEST-DC-1 RUNPOD_POD_ID=$2" ]; }
-# summed FILE: FILE has the SHA-256 that the client printed.
-summed() { [ -n "$sum" ] && [ "$(sha256sum < "$1" | cut -d ' ' -f 1)" = "$sum" ]; }
+# marked FILE LINE: FILE has the size and SHA-256 that the marker LINE, as pair.sh
+# prints it ("pair: NAME N bytes, sha256 H"), gives.
+marked() {
+	local size sum
+	read -r _ _ size _ _ sum <<< "$2"
+	[ -n "$sum" ] && [ "$(wc -c < "$1")" = "$size" ] && [ "$(sha256sum < "$1" | cut -d ' ' -f 1)" = "$sum" ]
+}
+# published LOG: the log has the second marker of the log copy, the last line
+# that pair.sh prints before it serves the archive.
+published() {
+	local n
+	n=$(grep -sc '^pair: results-log.tgz ' "$1") || true
+	[ "${n:-0}" -ge 2 ]
+}
+# framed LOG: the marker of the log copy is in LOG twice, as the same line, the
+# first before the begin line of the base64 block and the second after its end line.
+framed() {
+	awk '/^pair: results-log.tgz / { n++; if (n == 1) { first = $0; at1 = NR } else { second = $0; at2 = NR } }
+		$0 == "-- begin results-log.tgz base64" { begins++; begin = NR }
+		$0 == "-- end results-log.tgz base64" { ends++; end = NR }
+		END { exit !(n == 2 && first == second && begins == 1 && ends == 1 && at1 < begin && begin < end && end < at2) }' "$1"
+}
+# narrow LOG: no line of the base64 block in LOG is wider than 76 characters,
+# and the block is not empty.
+narrow() {
+	sed -n '/^-- begin results-log.tgz base64$/,/^-- end results-log.tgz base64$/p' "$1" | sed '1d;$d' |
+		awk 'length($0) > 76 { wide = 1 } END { exit wide || !NR }'
+}
+# holds DIR FILE...: each FILE below DIR is a file that is not empty.
+holds() {
+	local d=$1 f
+	shift
+	for f; do
+		[ -s "$d/$f" ] || {
+			echo "  $f is missing or empty"
+			return 1
+		}
+	done
+}
+# curves DIR HAVE: DIR holds loadgen reports (.json files that are objects with a
+# latency_us object), and, if HAVE is yes, each has a curve in every latency row
+# and its table, the .txt file of its name; if HAVE is no, none has either.
+curves() {
+	python3 -I -c '
+import json, os, sys
+root, have = sys.argv[1], sys.argv[2] == "yes"
+found = 0
+for d, _, names in os.walk(root):
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        path = os.path.join(d, n)
+        j = json.load(open(path))
+        if not (isinstance(j, dict) and isinstance(j.get("latency_us"), dict)):
+            continue
+        found += 1
+        for name, row in j["latency_us"].items():
+            assert ("curve" in row) == have, (path, name)
+        assert os.path.exists(path[:-5] + ".txt") == have, path
+assert found, "no reports"
+' "$1" "$2"
+}
+# nothing_else FULL SLIM: the files of SLIM are those of FULL and log-copy.txt,
+# but for the tables of loadgen reports, and those it has are the files of FULL
+# but for the reports, which differ.
+nothing_else() {
+	local f
+	[ "$(comm -13 <(cd "$1" && find . -type f | sort) <(cd "$2" && find . -type f | sort))" = ./log-copy.txt ] || return 1
+	while read -r f; do
+		case $f in
+		*.txt) grep -q '"latency_us"' "$1/${f%.txt}.json" ;;
+		*) false ;;
+		esac || {
+			echo "  $f is not in the log copy"
+			return 1
+		}
+	done < <(comm -23 <(cd "$1" && find . -type f | sort) <(cd "$2" && find . -type f | sort))
+	while read -r f; do
+		cmp -s "$1/$f" "$2/$f" || case $f in
+		*.json) grep -q '"latency_us"' "$1/$f" ;;
+		*) false ;;
+		esac || {
+			echo "  $f differs"
+			return 1
+		}
+	done < <(comm -12 <(cd "$1" && find . -type f | sort) <(cd "$2" && find . -type f | sort))
+}
 # logged FILE LOG: FILE is not empty and each of its lines is a line of LOG.
 logged() { [ -s "$1" ] && [ -z "$(grep -vxFf "$2" "$1")" ]; }
 reports() {
@@ -296,6 +391,32 @@ keyheld() {
 	done
 }
 
+# publication LOG FILE...: what a Pod published, as its log LOG shows it, with
+# the archive fetched from its port 8000 in $t/fetched.tgz. The full archive
+# is extracted to $t/results, the log copy to $t/logcopy; FILE..., below
+# results/, are the files that the log copy must hold.
+publication() {
+	local log=$1 full logline
+	shift
+	full=$(grep '^pair: results.tgz ' "$log" || true)
+	logline=$(grep -m 1 '^pair: results-log.tgz ' "$log" || true)
+	sed -n '/^-- begin results-log.tgz base64$/,/^-- end results-log.tgz base64$/p' "$log" | sed '1d;$d' |
+		base64 -d > "$t/logged.tgz" || true
+	mkdir "$t/results" "$t/logcopy"
+	tar -xzf "$t/fetched.tgz" -C "$t/results" || true
+	tar -xzf "$t/logged.tgz" -C "$t/logcopy" || true
+	check "the archive served on port 8000 has the size and SHA-256 that the log prints for it" marked "$t/fetched.tgz" "$full"
+	check "the log prints the log copy's marker twice, as one line, before and after the base64 block" framed "$log"
+	check "the base64 block is not wider than 76 characters" narrow "$log"
+	check "the base64 copy in the log has the size and SHA-256 of the log copy's marker" marked "$t/logged.tgz" "$logline"
+	check "the log copy holds $*" holds "$t/logcopy/results" "$@"
+	check "no file of the log copy holds a curve" not grep -rqF '"curve"' "$t/logcopy"
+	check "the log copy has no curve and no table of any loadgen report" curves "$t/logcopy" no
+	check "the full archive still has the curves and the tables" curves "$t/results" yes
+	check "the log copy differs from the full archive in loadgen's tables, their curves and log-copy.txt only" \
+		nothing_else "$t/results/results" "$t/logcopy/results"
+}
+
 # pilot rehearses the pilot's two modes. The plan's durations and send lag
 # bound are shortened; nothing else differs from a rented pair but the
 # CPUs, which the two Pods share half and half. The result files are kept
@@ -307,17 +428,15 @@ pilot() {
 		RESULT_PATH="$path" "${over[@]}"
 	watch
 	for _ in $(seq 1800); do
-		grep -q -- '-- end results.tgz base64' "$t/matrix.log" && break
+		published "$t/matrix.log" && break
 		sleep 1
 	done
-	sum=$(sed -n 's/^pair: results.tgz [0-9]* bytes, sha256 //p' "$t/matrix.log")
 	curl -fsS --noproxy '*' --retry 5 --retry-connrefused -o "$t/fetched.tgz" "http://127.0.0.1:8000/$path/results.tgz" || true
-	sed -n '/^-- begin results.tgz base64$/,/^-- end results.tgz base64$/p' "$t/matrix.log" | sed '1d;$d' |
-		base64 -d > "$t/logged.tgz" || true
-	mkdir "$t/results" && tar -xzf "$t/fetched.tgz" -C "$t/results" || true
+	publication "$t/matrix.log" env.txt engine-env.txt plan.json runs.jsonl loopback.json g2.json summary.json summary.txt log-copy.txt
 	local r=$t/results/results
-	check "the archive served on port 8000 has the SHA-256 in the log" summed "$t/fetched.tgz"
-	check "the base64 copy in the log has the same SHA-256" summed "$t/logged.tgz"
+	echo "the publish block, from the full archive's marker to the log copy's last, has" \
+		"$(awk '/^pair: results.tgz / { from = NR } /^pair: results-log.tgz / { to = NR } END { print to - from + 1 }' "$t/matrix.log") lines;" \
+		"the log has $(wc -l < "$t/matrix.log") lines"
 	check "the archive holds the plan, the runs, the loopback run, G2 and the summary" \
 		bash -c 'cd "$0" && [ -s env.txt ] && [ -s plan.json ] && [ -s runs.jsonl ] && [ -s loopback.json ] && [ -s g2.json ] && [ -s summary.json ] && [ -s summary.txt ]' "$r"
 	check "the archive holds the supervisor's environment text, engine-env.txt" [ -s "$r/engine-env.txt" ]
@@ -372,10 +491,12 @@ assert s["rehearsal"] is True and s["publishable"] is False
 			[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" "http://127.0.0.1:9100/engine-log?start=../x")" = 400 ]'
 	check "no response of the control port holds the environment" \
 		bash -c '! curl -s --noproxy "*" http://127.0.0.1:9100/host | grep -qE "PATH=|RUNPOD|COMMIT"'
-	check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$r"
-	check "no output holds the value of a canary variable" not grep -rqF -e "$tokenx" -e "$jwt" -e "$pubip" "$t"/*.log "$r"
+	check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$r" "$t/logcopy"
+	check "no output holds the value of a canary variable" not grep -rqF -e "$tokenx" -e "$jwt" -e "$pubip" "$t"/*.log "$r" "$t/logcopy"
 	check "env.txt names only the Pod's id, data centre and CPU count" envtext "$r/env.txt" matrix
 	check "engine-env.txt names only the Pod's id, data centre and CPU count" envtext "$r/engine-env.txt" supervise
+	check "the log copy's env.txt names only the Pod's id, data centre and CPU count" envtext "$t/logcopy/results/env.txt" matrix
+	check "the log copy's engine-env.txt names only the Pod's id, data centre and CPU count" envtext "$t/logcopy/results/engine-env.txt" supervise
 	check "supervise: pair.sh, pairrun and the engine and loadgen it starts run without RUNPOD_API_KEY" \
 		keyless supervise pair.sh pairrun engine loadgen
 	check "matrix: pair.sh, pairrun, loadgen and bin/pair serve run without RUNPOD_API_KEY" \
@@ -397,29 +518,25 @@ fi
 
 touch "$t/deletes"
 for _ in $(seq 240); do
-	grep -q -- '-- end results.tgz base64' "$t/client.log" && [ "$(date +%s)" -gt $((now + 50)) ] && break
+	published "$t/client.log" && [ "$(date +%s)" -gt $((now + 50)) ] && break
 	sleep 1
 done
 for d in "${deadline[@]}"; do
 	read -r name at <<< "$d"
 	check "$name deleted itself once, with its key, at its deadline" deleted "$name" "$at"
 done
-sum=$(sed -n 's/^pair: results.tgz [0-9]* bytes, sha256 //p' "$t/client.log")
 curl -fsS --noproxy '*' --retry 5 --retry-connrefused -o "$t/fetched.tgz" "http://127.0.0.1:8000/$path/results.tgz" || true
-sed -n '/^-- begin results.tgz base64$/,/^-- end results.tgz base64$/p' "$t/client.log" | sed '1d;$d' |
-	base64 -d > "$t/logged.tgz" || true
 check "the engine serves OE1 on port 9000" grep -q '^oe listening on .*:9000$' "$t/engine.log"
-check "the archive served on port 8000 has the SHA-256 in the log" summed "$t/fetched.tgz"
-check "the base64 copy in the log has the same SHA-256" summed "$t/logged.tgz"
+publication "$t/client.log" env.txt run-1.json run-2.json log-copy.txt
 check "nothing else is served" [ "$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/results.tgz)" = 404 ]
-mkdir "$t/results" && tar -xzf "$t/fetched.tgz" -C "$t/results" || true
 check "the archive holds env.txt and every run's report" reports
 check "the selftest Pod prints its heartbeat" grep -q '^pair: alive at ' "$t/selftest.log"
 check "a tarball of another commit is refused" refused other "pair: tarball of commit $commit"
 check "a tarball with an added file is refused" refused added "pair: tree $(sed -n 's/^pair: tree //p' "$t/added.log" | grep -vx "$tree")"
-check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$t/results"
-check "no output holds the value of a canary variable" not grep -rqF -e "$tokenx" -e "$jwt" -e "$pubip" "$t"/*.log "$t/results"
+check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$t/results" "$t/logcopy"
+check "no output holds the value of a canary variable" not grep -rqF -e "$tokenx" -e "$jwt" -e "$pubip" "$t"/*.log "$t/results" "$t/logcopy"
 check "env.txt names only the Pod's id, data centre and CPU count" envtext "$t/results/results/env.txt" client
+check "the log copy's env.txt names only the Pod's id, data centre and CPU count" envtext "$t/logcopy/results/env.txt" client
 check "the engine's environment text names only the Pod's id, data centre and CPU count" envtext "$t/engine.log" engine
 check "engine: pair.sh and the engine run without RUNPOD_API_KEY" keyless engine pair.sh engine
 check "client: pair.sh, loadgen and bin/pair serve run without RUNPOD_API_KEY" keyless client pair.sh loadgen serve

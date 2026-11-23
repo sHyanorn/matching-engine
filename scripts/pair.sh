@@ -28,14 +28,35 @@
 # Dockerfile does. client waits until ENGINE_ADDR (host:port) accepts a
 # connection, then makes RUNS loadgen -oe runs (5) at RATE (10000) with
 # WARMUP (10s) and DURATION (60s), each into run-N.json and run-N.txt,
-# and writes env.txt. It packs them into results.tgz, prints the
-# archive's SHA-256, each run's table and the archive in base64 to the
-# log, and serves the archive at /RESULT_PATH/results.tgz on port 8000.
-# env.txt holds the CPU, the clock source and the cost of reading it,
-# whether SO_BUSY_POLL can be set, the kernel's boot ID (the same on two
-# Pods only if they share a host), and three variables of the Pod:
-# RUNPOD_POD_ID, RUNPOD_DC_ID and RUNPOD_CPU_COUNT. It is published and the
-# supervisor serves its copy unauthenticated, so no other variable goes in.
+# and writes env.txt. It prints each run's table to the log and publishes
+# the results. env.txt holds the CPU, the clock source and the cost of
+# reading it, whether SO_BUSY_POLL can be set, the kernel's boot ID (the
+# same on two Pods only if they share a host), and three variables of the
+# Pod: RUNPOD_POD_ID, RUNPOD_DC_ID and RUNPOD_CPU_COUNT. It is published
+# and the supervisor serves its copy unauthenticated, so no other variable
+# goes in.
+#
+# To publish, client and matrix pack the results directory twice. The log
+# returns at most its last 5000 lines, so the log copy (results-log.tgz,
+# made by pairrun slim) leaves out what the full archive still has and the
+# log can do without: the percentile curves of the loadgen reports and
+# loadgen's text tables. It adds log-copy.txt, which says so. The log gets,
+# in this order,
+#
+#   pair: results.tgz N bytes, sha256 H          the full archive
+#   pair: results-log.tgz M bytes, sha256 H2     the log copy
+#   -- begin results-log.tgz base64
+#   ...                                          the log copy, 76 characters a line
+#   -- end results-log.tgz base64
+#   pair: results-log.tgz M bytes, sha256 H2     the same line again
+#
+# so that a log cut at either end still shows the log copy's size and hash.
+# The log copy is fetched from the log: the lines between the begin and end
+# lines, decoded with base64 -d and checked against H2. The full archive,
+# which holds every file as it is, is fetched over HTTP from
+# /RESULT_PATH/results.tgz on port 8000, which the Pod serves from then on,
+# and checked against H. If pairrun slim fails, a line says so and the log
+# copy is a copy of the full archive: the results are printed all the same.
 #
 # supervise and matrix are the pilot (cmd/pairrun). supervise serves the
 # control port 9100 and, with the engine's OE1 port 9000 and HTTP port
@@ -113,13 +134,24 @@ engine() {
 	exec bin/engine -addr 127.0.0.1:8080 -oe-addr 0.0.0.0:9000 -data "$(mktemp -d)"
 }
 
-# publish packs the results, prints the archive and serves it.
+# publish packs the results, prints the log copy of the archive and serves
+# the archive. The log copy is not allowed to stop the results from being
+# printed: if it cannot be made, the whole archive stands in for it.
 publish() {
+	local marker
 	tar -czf results.tgz results
+	mkdir -p slim
+	if ! { bin/pairrun slim -in results -out slim/results && tar -C slim -cf - results | gzip -9n > results-log.tgz; }; then
+		echo "pair: pairrun slim failed, results-log.tgz is a copy of results.tgz"
+		cp results.tgz results-log.tgz
+	fi
+	marker="pair: results-log.tgz $(wc -c < results-log.tgz) bytes, sha256 $(sha256sum results-log.tgz | cut -d ' ' -f 1)"
 	echo "pair: results.tgz $(wc -c < results.tgz) bytes, sha256 $(sha256sum results.tgz | cut -d ' ' -f 1)"
-	echo "-- begin results.tgz base64"
-	base64 results.tgz
-	echo "-- end results.tgz base64"
+	echo "$marker"
+	echo "-- begin results-log.tgz base64"
+	base64 results-log.tgz
+	echo "-- end results-log.tgz base64"
+	echo "$marker"
 	exec bin/pair serve :8000 "$RESULT_PATH" results.tgz
 }
 

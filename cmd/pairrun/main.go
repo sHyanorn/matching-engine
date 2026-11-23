@@ -11,6 +11,8 @@
 // loadgen's numbers as they came, to its results directory (plan.go,
 // validity.go, g2.go, summary.go). Each run's results also hold the engine's
 // own output for it, bounded in size and without network addresses.
+// `pairrun slim` copies a results directory without the parts that the Pod's
+// log has no room for (slim.go).
 //
 // The control port has no authentication: the supervisor serves a fixed set of
 // routes, none of which takes a path, and runs nothing the client names but a
@@ -34,7 +36,8 @@ import (
 
 const usage = `usage:
   pairrun supervise -engine BIN -loadgen BIN -work DIR [-listen :9100] [-env FILE]
-  pairrun client -loadgen BIN -oe HOST:PORT -http HOST:PORT -ctl HOST:PORT -out DIR [-deadline UNIXSECONDS] [-deadline-margin 10m]`
+  pairrun client -loadgen BIN -oe HOST:PORT -http HOST:PORT -ctl HOST:PORT -out DIR [-deadline UNIXSECONDS] [-deadline-margin 10m]
+  pairrun slim -in DIR -out DIR`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -55,6 +58,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return runSupervise(ctx, args[1:], stdout)
 	case "client":
 		return runClient(ctx, args[1:], stdout)
+	case "slim":
+		return runSlim(args[1:])
 	}
 	return fmt.Errorf("pairrun: unknown command %q\n%s", args[0], usage)
 }
