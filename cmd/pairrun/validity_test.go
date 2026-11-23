@@ -210,3 +210,44 @@ func TestReadReport(t *testing.T) {
 		t.Errorf("missing file: %v, want not exist", err)
 	}
 }
+
+// The measured part ends where the report's duration_s says if that falls in the
+// last window, which is shorter than the others then; otherwise it ends with the
+// last window.
+func TestDecodeSeriesEnd(t *testing.T) {
+	const start = "2026-11-23T05:21:00Z"
+	at := func(d time.Duration) time.Time { return time.Date(2026, 11, 23, 5, 21, 0, 0, time.UTC).Add(d) }
+	for _, c := range []struct {
+		name      string
+		windowS   float64
+		windows   int
+		durationS float64
+		end       time.Duration // after the start
+	}{
+		{"a whole number of seconds", 1, 3, 3, 3 * time.Second},
+		{"a duration that ends in the last window", 1, 3, 2.2, 2200 * time.Millisecond},
+		{"a duration just inside the last window", 1, 3, 2.001, 2001 * time.Millisecond},
+		{"a duration of half a window", 0.5, 4, 1.75, 1750 * time.Millisecond},
+		{"no duration in the report", 1, 3, 0, 3 * time.Second},
+		{"a duration that ends before the last window", 1, 3, 1.9, 3 * time.Second},
+		{"a duration that ends where the one before it does", 1, 3, 2, 3 * time.Second},
+		{"a duration past the last window", 1, 3, 3.4, 3 * time.Second},
+		{"a negative duration", 1, 3, -2.5, 3 * time.Second},
+		{"a window width that is not given", 0, 3, 2.5, 2500 * time.Millisecond},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			n := make([]int, c.windows)
+			p99 := make([]float64, c.windows)
+			for i := range n {
+				n[i], p99[i] = 10, 1
+			}
+			ser, err := decodeSeries(&loadgenReport{Series: seriesOf(t, start, c.windowS, "reply", n, p99), DurationS: c.durationS})
+			if err != nil || ser == nil {
+				t.Fatalf("series: %v, %v", ser, err)
+			}
+			if want := at(c.end); !ser.End.Equal(want) {
+				t.Errorf("the measured part ends at %v, want %v", ser.End, want)
+			}
+		})
+	}
+}

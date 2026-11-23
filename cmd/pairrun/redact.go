@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"unicode/utf8"
 )
 
 func runRedact(args []string) error {
@@ -33,12 +31,22 @@ func runRedact(args []string) error {
 // the errors that the notes and problems repeat. On a rented Pod that is a
 // public address. The files in stay as they are; only the copy is published.
 //
-// The mask is defined on text, so a file that is not valid UTF-8 or that holds
-// a NUL byte is copied byte for byte; every file of the results is text. An
-// address is no JSON number, so in a JSON file it stands in a string and the
-// file stays valid JSON. Files keep their permission bits. Anything but a
-// regular file or a directory is an error that names it.
+// Every file is masked as bytes, whatever its encoding, so that none passes
+// for not being text. An address that a file spells with a NUL byte between its
+// characters, as UTF-16 does, is not found. An address is no JSON number, so in
+// a JSON file it stands in a string and the file stays valid JSON. Files keep
+// their permission bits. Anything but a regular file or a directory is an error
+// that names it.
+//
+// A file that cannot be read or written, or whose masked bytes still hold an
+// address that the mask does not leave, ends the copy with an error that names
+// it, and out is removed: it holds all of the masked results or none.
 func redact(in, out string) error {
+	return redactWith(in, out, redactAddresses)
+}
+
+// redactWith is redact with the mask given, so that a test can make it leak.
+func redactWith(in, out string, mask func([]byte) []byte) error {
 	if fi, err := os.Stat(in); err != nil {
 		return err
 	} else if !fi.IsDir() {
@@ -47,7 +55,7 @@ func redact(in, out string) error {
 	if err := os.Mkdir(out, 0o755); err != nil {
 		return err
 	}
-	return filepath.WalkDir(in, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(in, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -73,11 +81,16 @@ func redact(in, out string) error {
 		if err != nil {
 			return err
 		}
-		if utf8.Valid(data) && !bytes.Contains(data, []byte{0}) {
-			data = redactAddresses(data)
+		data = mask(data)
+		if leavesAddress(data) {
+			return fmt.Errorf("%s: an address is left after masking", path)
 		}
 		return writeNewPerm(dst, data, info.Mode().Perm())
 	})
+	if err != nil {
+		return errors.Join(err, os.RemoveAll(out))
+	}
+	return nil
 }
 
 // writeNewPerm writes data to a file that must not exist yet, with exactly the
@@ -99,8 +112,9 @@ const redactedAddress = "x.x.x.x"
 // 127.0.0.1 (the engine's own listen address and loopback), which stay with
 // their port. An address is four decimal numbers of at most 255 joined by
 // dots, with no digit before or after it and no dot and digit before or after
-// it: a timestamp, a longer number or 1.2.3.4.5 is not one. IPv6 addresses
-// are not redacted. The result is never longer than text.
+// it: a timestamp, a longer number or 1.2.3.4.5 is not one, but a version
+// number of four parts is. IPv6 addresses are not redacted. The result is never
+// longer than text.
 func redactAddresses(text []byte) []byte {
 	out := make([]byte, 0, len(text))
 	for i := 0; i < len(text); {
@@ -112,7 +126,7 @@ func redactAddresses(text []byte) []byte {
 		}
 		quad := string(text[i : i+n])
 		i += n
-		if quad == "0.0.0.0" || quad == "127.0.0.1" {
+		if exempt(quad) {
 			out = append(out, quad...)
 			continue
 		}
@@ -120,6 +134,22 @@ func redactAddresses(text []byte) []byte {
 		i += portLen(text[i:])
 	}
 	return out
+}
+
+// exempt reports whether the mask leaves the address quad as it is.
+func exempt(quad string) bool {
+	return quad == "0.0.0.0" || quad == "127.0.0.1"
+}
+
+// leavesAddress reports whether text holds an address that the mask does not
+// exempt, which a masked text must not.
+func leavesAddress(text []byte) bool {
+	for i := range text {
+		if n := dottedQuad(text, i); n > 0 && !exempt(string(text[i:i+n])) {
+			return true
+		}
+	}
+	return false
 }
 
 // dottedQuad returns the length of the IPv4 address that starts at text[i],

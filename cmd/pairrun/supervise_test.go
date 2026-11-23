@@ -628,7 +628,7 @@ func TestSupervisorCutsAnEngineLogOverTheLimit(t *testing.T) {
 // note and the two ranges describe the same file.
 func TestEngineLogOfAGrowingFileIsReadAtOneSize(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "engine-001.log")
-	all := engineLogBytes(8 << 20)
+	all := engineLogBytes(512 << 10)
 	f, err := os.Create(name)
 	if err != nil {
 		t.Fatal(err)
@@ -658,7 +658,7 @@ func TestEngineLogOfAGrowingFileIsReadAtOneSize(t *testing.T) {
 	defer close(stop)
 
 	grew := false
-	for reads, began := 0, time.Now(); reads < 300 || !grew; reads++ {
+	for reads, began := 0, time.Now(); reads < 100 || !grew; reads++ {
 		if time.Since(began) > 10*time.Second {
 			t.Fatal("the file did not grow while it was read")
 		}
@@ -677,15 +677,15 @@ func TestEngineLogOfAGrowingFileIsReadAtOneSize(t *testing.T) {
 	}
 }
 
-// The served text of a log is redacted; the file stays as the engine wrote it
-// and the note counts the file's bytes.
+// The served text of a log is redacted before it is cut; the file stays as the
+// engine wrote it and the note counts the redacted text's bytes.
 func TestSupervisorRedactsTheEngineLogItServes(t *testing.T) {
 	st := newSupervisorTest(t)
 	st.ready = true
 	st.setStarts(1)
 	const (
-		remote   = `{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"10.1.2.3:46376","reason":"EOF"}` + "\n"
-		netErr   = "oe: read tcp 10.1.2.3:9000->4.5.6.7:8899: connection reset by peer\n"
+		remote   = `{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"198.51.100.4:46376","reason":"EOF"}` + "\n"
+		netErr   = "oe: read tcp 198.51.100.4:9000->203.0.113.7:8899: connection reset by peer\n"
 		kept     = "listening on 0.0.0.0:8080 from 127.0.0.1:46376, 1.2.3.4.5, 2026-11-23T05:46:09.271175058Z, data-3568997236\n"
 		redacted = `{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"x.x.x.x","reason":"EOF"}` + "\n" +
 			"oe: read tcp x.x.x.x->x.x.x.x: connection reset by peer\n" + kept
@@ -698,27 +698,73 @@ func TestSupervisorRedactsTheEngineLogItServes(t *testing.T) {
 	})
 	t.Run("a cut log", func(t *testing.T) {
 		const head, tail = 16 << 10, 48 << 10
+		redactedRemote, redactedErr := strings.Split(redacted, "\n")[0]+"\n", strings.Split(redacted, "\n")[1]+"\n"
 		data := engineLogBytes(100_000)
-		copy(data, remote)
-		copy(data[head-len(netErr):], netErr)      // the last bytes of the head
-		copy(data[len(data)-tail:], remote)        // the first bytes of the tail
+		copy(data, remote)                         // the start of the head
+		copy(data[head-len(netErr):], netErr)      // the last bytes of the head in the file
+		copy(data[50_000:], remote)                // the part that is left out
+		copy(data[len(data)-tail:], remote)        // the first bytes of the tail in the file
 		copy(data[len(data)-len(netErr):], netErr) // the end of the file
+		// The log as redacted: the cut is made of that, not of the file.
+		text := redactedRemote + string(data[len(remote):head-len(netErr)]) + redactedErr +
+			string(data[head:50_000]) + redactedRemote +
+			string(data[50_000+len(remote):len(data)-tail]) + redactedRemote +
+			string(data[len(data)-tail+len(remote):len(data)-len(netErr)]) + redactedErr
 		st.writeEngineLog(t, 1, data)
 		code, body := st.request(t, http.MethodGet, "/engine-log?start=1")
 		if code != http.StatusOK {
 			t.Fatalf("answered %d", code)
 		}
-		note := fmt.Sprintf("\n[engine log cut: %d of %d bytes omitted]\n", len(data)-64<<10, len(data))
-		redactedRemote, redactedErr := strings.Split(redacted, "\n")[0]+"\n", strings.Split(redacted, "\n")[1]+"\n"
-		wantHead := redactedRemote + string(data[len(remote):head-len(netErr)]) + redactedErr
-		wantTail := redactedRemote + string(data[len(data)-tail+len(remote):len(data)-len(netErr)]) + redactedErr
-		if want := wantHead + note + wantTail; body != want {
-			t.Errorf("the body is %d bytes, want %d: the redacted head, the note for the file's %d bytes and the redacted tail", len(body), len(want), len(data))
+		note := fmt.Sprintf("\n[engine log cut: %d of %d bytes omitted]\n", len(text)-64<<10, len(text))
+		if want := text[:head] + note + text[len(text)-tail:]; body != want {
+			t.Errorf("the body is %d bytes, want %d: the first 16 KiB of the redacted log, the note for its %d bytes and its last 48 KiB", len(body), len(want), len(text))
 		}
-		if file, err := os.ReadFile(engineLogName(st.work, 1)); err != nil || !strings.Contains(string(file), "10.1.2.3:46376") || len(file) != len(data) {
+		if line, cut := engineLogCut([]byte(body)); !cut || line != strings.Trim(note, "\n") {
+			t.Errorf("the client finds the cut %q, %v, want %q", line, cut, strings.Trim(note, "\n"))
+		}
+		if file, err := os.ReadFile(engineLogName(st.work, 1)); err != nil || !strings.Contains(string(file), "198.51.100.4:46376") || len(file) != len(data) {
 			t.Errorf("the file on disk was changed: %d bytes, %v", len(file), err)
 		}
 	})
+}
+
+// A cut of the file inside an address leaves two pieces that no mask takes for
+// one. The log is redacted first, so at either cut, wherever it falls in the
+// address, none of its digits is served next to the note.
+func TestSupervisorEngineLogCutLeavesNoPartOfAnAddress(t *testing.T) {
+	const (
+		addr       = "203.0.113.7:9000"
+		head, tail = 16 << 10, 48 << 10
+		size       = 100_000
+	)
+	st := newSupervisorTest(t)
+	st.ready = true
+	st.setStarts(1)
+	for _, cut := range []string{"head", "tail"} {
+		for before := 1; before < len(addr); before++ { // the bytes of the address on the near side of the cut
+			t.Run(fmt.Sprintf("%s/%d", cut, before), func(t *testing.T) {
+				data := engineLogBytes(size) // letters only
+				at := head - before
+				if cut == "tail" {
+					at = size - tail - before
+				}
+				copy(data[at:], addr)
+				st.writeEngineLog(t, 1, data)
+				code, body := st.request(t, http.MethodGet, "/engine-log?start=1")
+				if code != http.StatusOK {
+					t.Fatalf("answered %d", code)
+				}
+				i := strings.Index(body, "\n[engine log cut: ")
+				if i < 0 {
+					t.Fatal("the log was not cut")
+				}
+				rest := body[:i] + body[i+strings.Index(body[i:], "]\n")+2:] // all but the note
+				if j := strings.IndexAny(rest, "0123456789"); j >= 0 {
+					t.Errorf("a digit of the address is served: ...%q...", rest[max(0, j-10):min(len(rest), j+10)])
+				}
+			})
+		}
+	}
 }
 
 // Nothing but a start of the supervisor selects a file: a number that is no

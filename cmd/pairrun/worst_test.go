@@ -219,13 +219,69 @@ func TestWorstOfSetsTheWakeMeterAgainstTheWorstWindow(t *testing.T) {
 		t.Errorf("notes %v", rec.Notes)
 	}
 
-	// A run with no wake file has no wake; one whose file holds no second that
-	// overlaps the window has a wake that saw nothing, which is not the same.
+	// A run with no wake file has no wake.
 	if w := worstOf(rep, nil, nil, &rec); w == nil || w.Wake != nil {
 		t.Errorf("without a wake file: worst %+v, want a null wake", w)
 	}
-	if w := worstOf(rep, []wakeRow{}, off, &rec); w == nil || !reflect.DeepEqual(w.Wake, &wakeSeen{}) {
-		t.Errorf("with a wake file of no second: worst %+v, want a wake of n 0", w)
+	if len(rec.Notes) != 0 {
+		t.Errorf("notes %v", rec.Notes)
+	}
+}
+
+// A file with no second that overlaps the worst window has nothing to say about
+// it: the wake stays null, and a note says why, where a meter that stalled has
+// seconds of n 0 there and so a wake that saw nothing.
+func TestWorstOfLeavesTheWakeNullWhereNoSecondOverlaps(t *testing.T) {
+	start := unixSecond(5000, 500*time.Millisecond)
+	rep := &loadgenReport{Series: seriesOf(t, start.UTC().Format(time.RFC3339Nano), 1, "reply", []int{10, 10, 10, 10}, []float64{5, 6, 90, 7})}
+	off := &clockOffset{OffsetUS: 2e6, ErrorUS: 100} // window 2 is [5004.5, 5005.5) on the engine machine's clock
+	for _, c := range []struct {
+		name string
+		wake []wakeRow
+		seen *wakeSeen
+	}{
+		{"no second at all", []wakeRow{}, nil},
+		{"only seconds before the window", []wakeRow{{Second: 5001, N: 900, P99: 100, Max: 400}, {Second: 5003, N: 900, P99: 100, Max: 400}}, nil},
+		{"only seconds after it", []wakeRow{{Second: 5006, N: 900, P99: 100, Max: 400}}, nil},
+		{"seconds of the meter that saw no wake", []wakeRow{{Second: 5004}, {Second: 5005}}, &wakeSeen{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var rec runRecord
+			w := worstOf(rep, c.wake, off, &rec)
+			if w == nil || w.Window != 2 || !reflect.DeepEqual(w.Wake, c.seen) {
+				t.Errorf("worst %+v, want window 2 with the wake %+v", w, c.seen)
+			}
+			notes := 0
+			if c.seen == nil {
+				notes = 1
+			}
+			if len(rec.Notes) != notes || notes == 1 && !strings.HasPrefix(rec.Notes[0], "wake: no second of the meter overlaps the worst second") {
+				t.Errorf("notes %q, want %d, a note that no second overlaps", rec.Notes, notes)
+			}
+		})
+	}
+}
+
+// The last window of a measured part that is not a whole number of seconds is
+// shorter, and the seconds of the wake meter that it overlaps are those of its
+// own length: here it is [5002.75, 5002.95), in second 5002 alone.
+func TestWorstOfReadsTheShorterLastWindowOverItsOwnLength(t *testing.T) {
+	start := unixSecond(5000, 750*time.Millisecond)
+	rep := &loadgenReport{
+		Series:    seriesOf(t, start.UTC().Format(time.RFC3339Nano), 1, "reply", []int{10, 10, 10}, []float64{5, 6, 90}),
+		DurationS: 2.2,
+	}
+	var wake []wakeRow
+	for i := range 6 {
+		wake = append(wake, wakeRow{Second: int64(5000 + i), N: 100 + i, P99: float64(10 * (i + 1)), Max: float64(1000 + i)})
+	}
+	var rec runRecord
+	w := worstOf(rep, wake, &clockOffset{}, &rec)
+	if w == nil || w.Window != 2 {
+		t.Fatalf("worst %+v, want window 2", w)
+	}
+	if want := (&wakeSeen{N: 102, P99: 30, Max: 1002}); !reflect.DeepEqual(w.Wake, want) {
+		t.Errorf("wake %+v, want %+v from second 5002 alone", w.Wake, want)
 	}
 }
 

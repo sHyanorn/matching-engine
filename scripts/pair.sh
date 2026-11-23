@@ -28,13 +28,14 @@
 # Dockerfile does. client waits until ENGINE_ADDR (host:port) accepts a
 # connection, then makes RUNS loadgen -oe runs (5) at RATE (10000) with
 # WARMUP (10s) and DURATION (60s), each into run-N.json and run-N.txt,
-# and writes env.txt. It prints each run's table to the log and publishes
-# the results. env.txt holds the CPU, the clock source and the cost of
-# reading it, whether SO_BUSY_POLL can be set, the kernel's boot ID (the
-# same on two Pods only if they share a host), and three variables of the
-# Pod: RUNPOD_POD_ID, RUNPOD_DC_ID and RUNPOD_CPU_COUNT. It is published
-# and the supervisor serves its copy unauthenticated, so no other variable
-# goes in.
+# and writes env.txt. It publishes the results. It prints neither
+# ENGINE_ADDR nor loadgen's output to the log, which is not masked: a table
+# can quote the address, and the tables are in the full archive. env.txt
+# holds the CPU, the clock source and the cost of reading it, whether
+# SO_BUSY_POLL can be set, the kernel's boot ID (the same on two Pods only
+# if they share a host), and three variables of the Pod: RUNPOD_POD_ID,
+# RUNPOD_DC_ID and RUNPOD_CPU_COUNT. It is published and the supervisor
+# serves its copy unauthenticated, so no other variable goes in.
 #
 # To publish, client and matrix first copy the results with their network
 # addresses masked (pairrun redact into pub/results): every IPv4 address but
@@ -178,7 +179,7 @@ client() {
 	local n
 	mkdir -p results
 	envtxt > results/env.txt
-	echo "pair: waiting for $ENGINE_ADDR"
+	echo "pair: waiting for the engine"
 	# shellcheck disable=SC2016 # the inner shell expands them
 	until timeout 5 bash -c ': > "/dev/tcp/${0%:*}/${0##*:}"' "$ENGINE_ADDR" 2>/dev/null; do
 		sleep 2
@@ -187,7 +188,6 @@ client() {
 		echo "== run $n"
 		bin/loadgen -oe "$ENGINE_ADDR" -rate "${RATE:-10000}" -warmup "${WARMUP:-10s}" -duration "${DURATION:-60s}" \
 			-out "results/run-$n.json" > "results/run-$n.txt" 2>&1 || true
-		cat "results/run-$n.txt"
 	done
 	publish
 }

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -16,22 +18,22 @@ import (
 func TestRedactAddresses(t *testing.T) {
 	for _, c := range []struct{ name, in, want string }{
 		{"the remote of an engine log line",
-			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"10.1.2.3:46376","reason":"EOF"}`,
+			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"198.51.100.4:46376","reason":"EOF"}`,
 			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"x.x.x.x","reason":"EOF"}`},
 		{"both addresses of a network error",
-			`read tcp 10.1.2.3:9000->4.5.6.7:8899: connection reset by peer`,
+			`read tcp 198.51.100.4:9000->203.0.113.7:8899: connection reset by peer`,
 			`read tcp x.x.x.x->x.x.x.x: connection reset by peer`},
-		{"an address without a port", "peer 4.5.6.7 left", "peer x.x.x.x left"},
-		{"an address at the start and at the end", "4.5.6.7 and 255.255.255.255", "x.x.x.x and x.x.x.x"},
-		{"addresses side by side", "10.0.0.1,10.0.0.2;10.0.0.3", "x.x.x.x,x.x.x.x;x.x.x.x"},
-		{"an address that ends a sentence", "no route to 4.5.6.7.", "no route to x.x.x.x."},
-		{"a port is part of the address only with digits", "4.5.6.7: gone", "x.x.x.x: gone"},
+		{"an address without a port", "peer 203.0.113.7 left", "peer x.x.x.x left"},
+		{"an address at the start and at the end", "203.0.113.7 and 255.255.255.255", "x.x.x.x and x.x.x.x"},
+		{"addresses side by side", "192.0.2.1,192.0.2.2;192.0.2.3", "x.x.x.x,x.x.x.x;x.x.x.x"},
+		{"an address that ends a sentence", "no route to 203.0.113.7.", "no route to x.x.x.x."},
+		{"a port is part of the address only with digits", "203.0.113.7: gone", "x.x.x.x: gone"},
 		{"the listen address", "listening on 0.0.0.0:8080 and 0.0.0.0", "listening on 0.0.0.0:8080 and 0.0.0.0"},
 		{"loopback", `"remote":"127.0.0.1:46376" 127.0.0.1`, `"remote":"127.0.0.1:46376" 127.0.0.1`},
-		{"loopback next to another address", "127.0.0.1:9000->4.5.6.7:8899", "127.0.0.1:9000->x.x.x.x"},
+		{"loopback next to another address", "127.0.0.1:9000->203.0.113.7:8899", "127.0.0.1:9000->x.x.x.x"},
 		{"five numbers", "version 1.2.3.4.5 of it", "version 1.2.3.4.5 of it"},
 		{"five numbers, the address first", "1.2.3.4.5", "1.2.3.4.5"},
-		{"five numbers, the address last", "12.1.2.3.4", "12.1.2.3.4"},
+		{"five numbers, the address last", "0.1.2.3.4", "0.1.2.3.4"},
 		{"a timestamp", "2026-11-23T05:46:09.271175058Z", "2026-11-23T05:46:09.271175058Z"},
 		{"a longer number", "data-3568997236 session 17890137111478110228", "data-3568997236 session 17890137111478110228"},
 		{"numbers that are too large or too long", "256.1.1.1 and 1.2.3.456 and 1.2.3.4567 and 991.2.3.4", "256.1.1.1 and 1.2.3.456 and 1.2.3.4567 and 991.2.3.4"},
@@ -117,14 +119,57 @@ func TestRedactKeepsWhatIsNotAnAddress(t *testing.T) {
 	})
 }
 
-func TestRedactCopiesAFileThatIsNotTextByteForByte(t *testing.T) {
-	// Each holds an address that the mask would change.
-	files := map[string]string{
+// The tests quote addresses that belong to no one: the documentation ranges,
+// loopback, the listen address and the broadcast address.
+func TestTestsQuoteDocumentationAddressesOnly(t *testing.T) {
+	var allowed []netip.Prefix
+	for _, p := range []string{"192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "255.255.255.255/32"} {
+		allowed = append(allowed, netip.MustParsePrefix(p))
+	}
+	files, err := filepath.Glob("*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no test files: %v", err)
+	}
+	for _, name := range files {
+		text, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range text {
+			n := dottedQuad(text, i)
+			if n == 0 {
+				continue
+			}
+			quad := string(text[i : i+n])
+			addr, err := netip.ParseAddr(quad) // it refuses a number with a leading zero
+			if err != nil || !addr.IsLoopback() && !addr.IsUnspecified() && !slices.ContainsFunc(allowed, func(p netip.Prefix) bool { return p.Contains(addr) }) {
+				t.Errorf("%s quotes %s, which may belong to someone: use an address of 192.0.2.0/24, 198.51.100.0/24 or 203.0.113.0/24", name, quad)
+			}
+		}
+	}
+}
+
+// The mask works on bytes, so a NUL byte or a byte that is no UTF-8 does not
+// keep it from an address. A file that spells an address with a NUL byte
+// between its characters, as UTF-16 does, has none in its bytes: that is
+// beyond what the mask can find.
+func TestRedactMasksAFileThatIsNotText(t *testing.T) {
+	var every strings.Builder // no address among them, so the file must come out as it went in
+	for b := range 256 {
+		every.WriteByte(byte(b))
+	}
+	got := redactOf(t, map[string]string{
 		"nul.log":     "engine \x00 203.0.113.7:9000 stopped\n",
 		"invalid.log": "engine \xff\xfe 203.0.113.7:9000 stopped\n",
 		"cut.log":     "engine 203.0.113.7:9000 \xc2", // a multi-byte character cut short
-	}
-	compare(t, redactOf(t, files), files)
+		"every.bin":   every.String(),
+	})
+	compare(t, got, map[string]string{
+		"nul.log":     "engine \x00 x.x.x.x stopped\n",
+		"invalid.log": "engine \xff\xfe x.x.x.x stopped\n",
+		"cut.log":     "engine x.x.x.x \xc2",
+		"every.bin":   every.String(),
+	})
 }
 
 func TestRedactMasksATextFileWithMultibyteCharacters(t *testing.T) {
@@ -239,6 +284,47 @@ func TestRedactRefusesAnOutThatExists(t *testing.T) {
 			}
 			compare(t, readTree(t, filepath.Dir(out)), before)
 		})
+	}
+}
+
+// A file that is gone when the walk reaches it cannot be read, whoever runs the
+// test: the mask, which runs on a.log, removes b.log.
+func TestRedactNamesAFileThatCannotBeReadAndLeavesNoCopy(t *testing.T) {
+	in := t.TempDir()
+	writeTree(t, in, map[string]string{"a.log": "engine 203.0.113.7:9000\n", "b.log": "gone before it is read"})
+	out := filepath.Join(t.TempDir(), "out")
+	mask := func(text []byte) []byte {
+		if err := os.Remove(filepath.Join(in, "b.log")); err != nil {
+			t.Error(err)
+		}
+		return redactAddresses(text)
+	}
+	err := redactWith(in, out, mask)
+	if want := filepath.Join(in, "b.log"); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("want an error that names %s, got %v", want, err)
+	}
+	if _, err := os.Stat(out); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a copy that failed is left in out: %v", err)
+	}
+}
+
+func TestRedactRefusesAFileThatStillHoldsAnAddress(t *testing.T) {
+	in := t.TempDir()
+	writeTree(t, in, map[string]string{
+		"a.log":      "engine 0.0.0.0:8080 and 127.0.0.1\n",
+		"runs/b.log": "engine 203.0.113.7:9000\n",
+	})
+	out := filepath.Join(t.TempDir(), "out")
+	leaky := func(text []byte) []byte { return text }
+	err := redactWith(in, out, leaky)
+	if want := filepath.Join(in, "runs", "b.log"); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("want an error that names %s, got %v", want, err)
+	}
+	if strings.Contains(err.Error(), "203.0.113.7") {
+		t.Errorf("the error quotes the address: %v", err)
+	}
+	if _, err := os.Stat(out); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a copy that failed is left in out: %v", err)
 	}
 }
 

@@ -59,7 +59,7 @@ func New(logger *slog.Logger) (*Pool, error) {
 		return nil, fmt.Errorf("spin: listing the CPUs this process may run on: %w", err)
 	}
 	cores := Cores(sysfsCPU, allowed)
-	pool := cores[:min(len(cores), max(runtime.GOMAXPROCS(0)-1, 0))]
+	pool := PoolCPUs(cores, runtime.GOMAXPROCS(0))
 	p := NewPool(pool, logger)
 	p.logger.Info("spin mode on", "cores", len(cores), "pool", pool, "gomaxprocs", runtime.GOMAXPROCS(0))
 	return p, nil
@@ -87,6 +87,13 @@ func Cores(sysfs string, allowed []int) []int {
 		}
 	}
 	return cores
+}
+
+// PoolCPUs returns the CPUs of cores, as Cores gives them, that New puts in the
+// pool of a program that runs on gomaxprocs Ps: the first gomaxprocs-1, none if
+// that is not above 0. The result shares cores' array.
+func PoolCPUs(cores []int, gomaxprocs int) []int {
+	return cores[:min(len(cores), max(gomaxprocs-1, 0))]
 }
 
 // lowestCPU returns the lowest CPU of a kernel CPU list such as "0-1,4",

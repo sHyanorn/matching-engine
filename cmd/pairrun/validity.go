@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -38,7 +39,8 @@ type loadgenReport struct {
 	Outcomes     map[string]int        `json:"outcomes"`
 	Trades       tradeCounts           `json:"trades"`
 	Latency      map[string]latencyRow `json:"latency_us"`
-	Series       json.RawMessage       `json:"series"` // per second; only the OE1 modes have one. Read apart from the rest (reportSeries) so that nothing in it can fail the report
+	DurationS    float64               `json:"duration_s"` // of the measured part
+	Series       json.RawMessage       `json:"series"`     // per second; only the OE1 modes have one. Read apart from the rest (reportSeries) so that nothing in it can fail the report
 }
 
 // reportSeries is the part of loadgen's series that the runner reads to align
@@ -48,6 +50,7 @@ type reportSeries struct {
 	WindowS float64   `json:"window_s"`
 	Start   time.Time `json:"start"`
 	N       []int     `json:"n"`
+	End     time.Time `json:"-"` // the end of the measured part, set by decodeSeries
 }
 
 // window is the width of a window of the series, a second if the report does
@@ -61,6 +64,9 @@ func (s reportSeries) window() time.Duration {
 
 // decodeSeries reads the series of rep, or returns nil if the report has none,
 // as a REST run's has not. A series that has no start or no window is an error.
+// The measured part ends where the report's duration_s says if that falls inside
+// the last window, which is shorter than the others when the duration is not a
+// whole number of them, and else at the end of the last window.
 func decodeSeries(rep *loadgenReport) (*reportSeries, error) {
 	if rep == nil || len(rep.Series) == 0 || string(rep.Series) == "null" {
 		return nil, nil
@@ -72,6 +78,10 @@ func decodeSeries(rep *loadgenReport) (*reportSeries, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	ser.End = ser.Start.Add(time.Duration(len(ser.N)) * ser.window())
+	if end := ser.Start.Add(time.Duration(math.Round(rep.DurationS * float64(time.Second)))); end.Before(ser.End) && end.After(ser.End.Add(-ser.window())) {
+		ser.End = end
 	}
 	return &ser, nil
 }

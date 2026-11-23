@@ -139,3 +139,42 @@ func TestClientWorstWithoutAWakeOrAReport(t *testing.T) {
 		}
 	}
 }
+
+// A wake file with no second that overlaps the worst window, as when the meter's
+// clock is further from the client's than the offset says, leaves the worst
+// second's wake null: runs.jsonl has a null and a note, and summary.txt shows
+// "wake -" and not a meter that saw nothing. The file and the offset are kept.
+func TestClientWorstWithAWakeThatOverlapsNothing(t *testing.T) {
+	r, _ := worstRig(t, nil)
+	r.sup.wakeAnswer = func(int, int64, int64) (int, []byte) {
+		a := wakeAnswer{NowUnixNS: clockStart.Add(1500 * time.Millisecond).UnixNano(), TickUS: 1000, N: []int{}, P99: []float64{}, Max: []float64{},
+			Placement: wakePlacement{CPU: 3, Siblings: []int{3}, Cores: 4, TopologyReadable: true, Pinned: true}}
+		data, err := json.Marshal(a)
+		if err != nil {
+			panic(err)
+		}
+		return http.StatusOK, data
+	}
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	withSeries := 0
+	for _, rec := range r.records() {
+		if rec.Flow == flowREST {
+			continue
+		}
+		withSeries++
+		if rec.Worst == nil || rec.Worst.Window != 3 || rec.Worst.Wake != nil || rec.Wake == "" || rec.ClockOffset == nil || !rec.Valid {
+			t.Errorf("%s: worst %+v, wake file %q, offset %+v, valid %v, want window 3 with a null wake, and the file and the offset kept", rec.Config, rec.Worst, rec.Wake, rec.ClockOffset, rec.Valid)
+		}
+		if len(rec.Notes) != 1 || !strings.HasPrefix(rec.Notes[0], "wake: no second of the meter overlaps the worst second") {
+			t.Errorf("%s: notes %q, want the note that no second overlaps", rec.Config, rec.Notes)
+		}
+	}
+	if line := strings.Split(string(r.file("runs.jsonl")), "\n")[0]; !strings.Contains(line, `,"wake":null},`) {
+		t.Errorf("the first line of runs.jsonl does not have a null wake in its worst second: %s", line)
+	}
+	if n := strings.Count(string(r.file("summary.txt")), "  wake -  clock +1500.0ms"); n != withSeries {
+		t.Errorf("summary.txt shows no wake for %d runs, want the %d that have a series", n, withSeries)
+	}
+}

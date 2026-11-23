@@ -300,6 +300,10 @@ func cpuRange(from, to int) []int {
 	return cpus
 }
 
+// sharesPool is what the note of a placement says when the meter's CPU is one
+// that the engine's spin pool may hand out.
+const sharesPool = "shares a CPU with the spin pool"
+
 func TestPlaceWake(t *testing.T) {
 	// Four cores of two threads on 8 CPUs, cpu0 and cpu4 the threads of a core.
 	ht := map[int]string{0: "0,4", 1: "1,5", 2: "2,6", 3: "3,7", 4: "0,4", 5: "1,5", 6: "2,6", 7: "3,7"}
@@ -324,7 +328,8 @@ func TestPlaceWake(t *testing.T) {
 		{"one CPU", map[int]string{5: "5"}, []int{5}, -1, []int{}, 0, false, "1 CPU", false},
 		{"no CPU", nil, nil, -1, []int{}, 0, false, "0 CPU", false},
 		{"threads numbered side by side", map[int]string{0: "0-1", 1: "0-1", 2: "2-3", 3: "2-3"}, cpuRange(0, 3), 3, []int{2, 3}, 2, true, "", false},
-		{"the last core has one thread allowed, another core two", ht, []int{0, 1, 4}, 1, []int{1}, 2, true, "", true},
+		{"the last core has one thread allowed, another core two", ht, []int{0, 1, 4}, 1, []int{1}, 2, true, sharesPool, true},
+		{"a CPU of its own after a core of two threads", map[int]string{0: "0-1", 1: "0-1", 2: "2"}, cpuRange(0, 2), 2, []int{2}, 2, true, sharesPool, true},
 		{"both threads of the last core allowed", ht, []int{0, 1, 5}, 5, []int{1, 5}, 2, true, "", false},
 		{"two CPUs that are the threads of one core", map[int]string{0: "0-1", 1: "0-1"}, []int{0, 1}, 1, []int{0, 1}, 1, true, "", false},
 		{"two cores of one thread, the pilot's rehearsal", map[int]string{0: "0", 1: "1"}, []int{0, 1}, 1, []int{1}, 2, true, "", false},
@@ -359,6 +364,63 @@ func TestPlaceWake(t *testing.T) {
 	}
 }
 
+// The pool hands out the lowest CPU of each core, lowest core first, and at
+// most GOMAXPROCS-1 of them, and the engine has one P for each allowed CPU at
+// most. With cpu0 and cpu1 the threads of one core and cpu2 on a core of its
+// own, the pool is cpu0 and cpu2, so the meter on cpu2 shares its CPU with a
+// spinner, and the placement says so.
+func TestPlaceWakeNotesACPUTheSpinPoolMayHandOut(t *testing.T) {
+	sysfs := fakeTopology(t, map[int]string{0: "0-1", 1: "0-1", 2: "2"})
+	allowed := cpuRange(0, 2)
+	p := placeWake(sysfs, allowed)
+	if p.CPU != 2 || !reflect.DeepEqual(p.Siblings, []int{2}) || p.Cores != 2 || !p.TopologyReadable || p.Pinned {
+		t.Errorf("got cpu %d, siblings %v, cores %d, readable %v, pinned %v, want 2, [2], 2, true, false", p.CPU, p.Siblings, p.Cores, p.TopologyReadable, p.Pinned)
+	}
+	if !strings.Contains(p.Note, sharesPool) {
+		t.Errorf("note %q does not say %q", p.Note, sharesPool)
+	}
+	if pool := spin.PoolCPUs(spin.Cores(sysfs, allowed), len(allowed)); !slices.Equal(pool, []int{0, 2}) {
+		t.Errorf("the spin pool is %v, want [0 2], which holds the meter's CPU", pool)
+	}
+}
+
+// A meter on a CPU that the pool cannot reach has no note: the pool leaves one
+// P to the rest of the engine, and takes the lowest CPU of a core, not its
+// other threads.
+func TestPlaceWakeDoesNotNoteACPUTheSpinPoolCannotReach(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		lists   map[int]string
+		allowed []int
+		cpu     int
+	}{
+		{"every CPU a core: the cap keeps the last one out", map[int]string{0: "0", 1: "1", 2: "2", 3: "3"}, cpuRange(0, 3), 3},
+		{"the meter takes a core's higher thread", map[int]string{0: "0-1", 1: "0-1", 2: "2-3", 3: "2-3"}, cpuRange(0, 3), 3},
+		{"two threads of one core", map[int]string{0: "0-1", 1: "0-1"}, cpuRange(0, 1), 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := placeWake(fakeTopology(t, c.lists), c.allowed)
+			if p.CPU != c.cpu || p.Note != "" {
+				t.Errorf("got cpu %d and note %q, want cpu %d and no note", p.CPU, p.Note, c.cpu)
+			}
+		})
+	}
+}
+
+// A topology that cannot be read and a CPU that the pool may hand out are both
+// said. Here cpu3 has no list, so it is a core of its own after cpu0 and cpu1,
+// the threads of one, and cpu2.
+func TestPlaceWakeKeepsTheTopologyNoteBesideTheSharingNote(t *testing.T) {
+	p := placeWake(fakeTopology(t, map[int]string{0: "0-1", 1: "0-1", 2: "2"}), cpuRange(0, 3))
+	if p.CPU != 3 || p.TopologyReadable {
+		t.Fatalf("got cpu %d, readable %v, want cpu 3 and an unreadable topology", p.CPU, p.TopologyReadable)
+	}
+	unreadable, shares := strings.Index(p.Note, "unreadable"), strings.Index(p.Note, sharesPool)
+	if unreadable < 0 || shares < unreadable || strings.Count(p.Note, "; ") != 1 {
+		t.Errorf("note %q, want the unreadable-topology note and then %q, joined by a semicolon", p.Note, sharesPool)
+	}
+}
+
 // The placement is written into a JSON file: no field is null, and a meter
 // that does not exist says -1.
 func TestWakePlacementJSONHasNoNulls(t *testing.T) {
@@ -382,6 +444,7 @@ func TestWakeForWindow(t *testing.T) {
 		{Second: 1001, N: 880, P99: 150, Max: 9000},
 		// 1002 is missing
 		{Second: 1003, N: 905, P99: 105, Max: 300},
+		{Second: 1004, N: 0}, // a second in which the meter saw no wake
 	}
 	at := unixSecond
 	for _, c := range []struct {
@@ -392,29 +455,32 @@ func TestWakeForWindow(t *testing.T) {
 		n      int
 		p99    float64
 		max    float64
+		seen   bool // some second of the rows overlaps the window
 	}{
-		{"inside one second", 0, at(1000, 200*time.Millisecond), 500 * time.Millisecond, 900, 110, 400},
-		{"straddles two seconds", 0, at(1000, 700*time.Millisecond), time.Second, 1780, 150, 9000},
-		{"a whole second, aligned", 0, at(1001, 0), time.Second, 880, 150, 9000},
-		{"ends on a second's start", 0, at(1000, 500*time.Millisecond), 500 * time.Millisecond, 900, 110, 400},
-		{"an offset moves it by a second", time.Second, at(1000, 200*time.Millisecond), 500 * time.Millisecond, 880, 150, 9000},
-		{"a negative offset moves it back", -time.Second, at(1001, 200*time.Millisecond), 500 * time.Millisecond, 900, 110, 400},
-		{"an offset of a few ms moves it over a boundary", 100 * time.Millisecond, at(1000, 950*time.Millisecond), 20 * time.Millisecond, 880, 150, 9000},
-		{"a missing second counts nothing", 0, at(1002, 200*time.Millisecond), 500 * time.Millisecond, 0, 0, 0},
-		{"straddles a missing second and a present one", 0, at(1002, 700*time.Millisecond), time.Second, 905, 105, 300},
-		{"spans a missing second", 0, at(1001, 500*time.Millisecond), 2 * time.Second, 880 + 905, 150, 9000},
-		{"before every row", 0, at(990, 0), time.Second, 0, 0, 0},
-		{"after every row", 0, at(1100, 0), time.Second, 0, 0, 0},
-		{"a window of no length", 0, at(1000, 500*time.Millisecond), 0, 0, 0, 0},
-		{"no rows", 0, at(1000, 0), time.Second, 0, 0, 0},
+		{"inside one second", 0, at(1000, 200*time.Millisecond), 500 * time.Millisecond, 900, 110, 400, true},
+		{"straddles two seconds", 0, at(1000, 700*time.Millisecond), time.Second, 1780, 150, 9000, true},
+		{"a whole second, aligned", 0, at(1001, 0), time.Second, 880, 150, 9000, true},
+		{"ends on a second's start", 0, at(1000, 500*time.Millisecond), 500 * time.Millisecond, 900, 110, 400, true},
+		{"an offset moves it by a second", time.Second, at(1000, 200*time.Millisecond), 500 * time.Millisecond, 880, 150, 9000, true},
+		{"a negative offset moves it back", -time.Second, at(1001, 200*time.Millisecond), 500 * time.Millisecond, 900, 110, 400, true},
+		{"an offset of a few ms moves it over a boundary", 100 * time.Millisecond, at(1000, 950*time.Millisecond), 20 * time.Millisecond, 880, 150, 9000, true},
+		{"a missing second counts nothing", 0, at(1002, 200*time.Millisecond), 500 * time.Millisecond, 0, 0, 0, false},
+		{"straddles a missing second and a present one", 0, at(1002, 700*time.Millisecond), time.Second, 905, 105, 300, true},
+		{"spans a missing second", 0, at(1001, 500*time.Millisecond), 2 * time.Second, 880 + 905, 150, 9000, true},
+		{"a second of no wake is seen", 0, at(1004, 200*time.Millisecond), 500 * time.Millisecond, 0, 0, 0, true},
+		{"before every row", 0, at(990, 0), time.Second, 0, 0, 0, false},
+		{"after every row", 0, at(1100, 0), time.Second, 0, 0, 0, false},
+		{"an offset moves it out of the rows", 5 * time.Second, at(1000, 200*time.Millisecond), 500 * time.Millisecond, 0, 0, 0, false},
+		{"a window of no length", 0, at(1000, 500*time.Millisecond), 0, 0, 0, 0, false},
+		{"no rows", 0, at(1000, 0), time.Second, 0, 0, 0, false},
 	} {
 		in := rows
 		if c.name == "no rows" {
 			in = nil
 		}
-		n, p99, worst := wakeForWindow(in, c.offset, c.start, c.length)
-		if n != c.n || p99 != c.p99 || worst != c.max {
-			t.Errorf("%s: n %d, p99 %v, max %v, want %d, %v, %v", c.name, n, p99, worst, c.n, c.p99, c.max)
+		n, p99, worst, seen := wakeForWindow(in, c.offset, c.start, c.length)
+		if n != c.n || p99 != c.p99 || worst != c.max || seen != c.seen {
+			t.Errorf("%s: n %d, p99 %v, max %v, seen %v, want %d, %v, %v, %v", c.name, n, p99, worst, seen, c.n, c.p99, c.max, c.seen)
 		}
 	}
 }

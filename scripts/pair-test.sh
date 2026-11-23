@@ -26,6 +26,9 @@
 #     one fetched from port 8000 or the one decoded from the log, nor any file
 #     extracted from one, holds 127.0.0.2, the address at which the rehearsal's
 #     client reaches the engine, which the mask does not exempt;
+#   - the client's log, which is not masked: that it holds no line of the
+#     tables that loadgen wrote to the Pod's own results, which can quote the
+#     engine's address, and does not hold 127.0.0.2;
 #   - selftest: that it prints its heartbeat;
 #   - a tarball of another commit, and one with an added file: that the
 #     start command refuses them and never runs pair.sh.
@@ -424,6 +427,12 @@ podsrc() {
 # Its status is not 0 for an archive that cannot be read, so a check that WORD is
 # not there needs one that it is, in the same archive, to be worth anything.
 in_archive() { { tar -tzf "$1" && tar -xzOf "$1"; } | grep -aF -- "$2" > /dev/null; }
+# printed LOG FILE...: some line of a FILE that is not empty is a line of LOG.
+printed() {
+	local log=$1
+	shift
+	grep -qxFf <(grep -hv '^$' "$@") "$log"
+}
 # quotes WORD FILE...: each FILE holds WORD.
 quotes() {
 	local w=$1 f
@@ -712,6 +721,10 @@ check "the engine serves OE1 on port 9000" grep -q '^oe listening on .*:9000$' "
 publication "$t/client.log" env.txt run-1.json run-2.json log-copy.txt
 check "nothing else is served" [ "$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/results.tgz)" = 404 ]
 check "the archive holds env.txt and every run's report" reports
+src=$(podsrc) || src=/no-pod-with-results
+check "the Pod's own results hold loadgen's table of each run" holds "$src/results" run-1.txt run-2.txt
+check "the client's log holds no line of those tables" not printed "$t/client.log" "$src"/results/run-{1,2}.txt
+check "the client's log does not hold $peer" not grep -qF -- "$peer" "$t/client.log"
 check "the selftest Pod prints its heartbeat" grep -q '^pair: alive at ' "$t/selftest.log"
 check "a tarball of another commit is refused" refused other "pair: tarball of commit $commit"
 check "a tarball with an added file is refused" refused added "pair: tree $(sed -n 's/^pair: tree //p' "$t/added.log" | grep -vx "$tree")"

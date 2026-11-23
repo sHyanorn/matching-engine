@@ -67,6 +67,34 @@ func TestCores(t *testing.T) {
 	}
 }
 
+// The pool leaves one P to the rest of the program, so it never holds more
+// than GOMAXPROCS-1 cores, and the first ones when there are more.
+func TestPoolCPUs(t *testing.T) {
+	cores := []int{0, 2, 4}
+	tests := []struct {
+		name       string
+		cores      []int
+		gomaxprocs int
+		want       []int
+	}{
+		{"one P more than the cores", cores, 4, []int{0, 2, 4}},
+		{"many more Ps than cores", cores, 64, []int{0, 2, 4}},
+		{"one P fewer than the cores", cores, 3, []int{0, 2}},
+		{"two Ps", cores, 2, []int{0}},
+		{"one P leaves none", cores, 1, nil},
+		{"no P", cores, 0, nil},
+		{"a negative count", cores, -3, nil},
+		{"no cores", nil, 8, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PoolCPUs(tc.cores, tc.gomaxprocs); !slices.Equal(got, tc.want) {
+				t.Errorf("PoolCPUs(%v, %d) = %v, want %v", tc.cores, tc.gomaxprocs, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLowestCPU(t *testing.T) {
 	tests := []struct {
 		list string

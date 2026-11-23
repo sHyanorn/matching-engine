@@ -9,7 +9,7 @@ import (
 )
 
 func TestPlanConfigs(t *testing.T) {
-	const oe, http = "10.0.0.1:9000", "10.0.0.1:8080"
+	const oe, http = "203.0.113.1:9000", "203.0.113.1:8080"
 	want := []struct {
 		name, flow, engine string
 		rate               float64

@@ -82,6 +82,24 @@ func (f *fakeSupervisor) answerAt(nows ...time.Time) {
 	}
 }
 
+// answerWithClock makes the fake supervisor answer with its seconds and the
+// clock that now reads, so that a client whose clock moves finds the
+// supervisor's moving with it.
+func (f *fakeSupervisor) answerWithClock(now func() time.Time) {
+	f.wakeAnswer = func(_ int, from, to int64) (int, []byte) {
+		var a wakeAnswer
+		if err := json.Unmarshal(fakeWakeAnswer(from, to), &a); err != nil {
+			panic(err)
+		}
+		a.NowUnixNS = now().UnixNano()
+		data, err := json.Marshal(a)
+		if err != nil {
+			panic(err)
+		}
+		return http.StatusOK, data
+	}
+}
+
 func readWakeFile(t *testing.T, r *rig, name string) wakeFile {
 	t.Helper()
 	data := r.file(name)
@@ -97,20 +115,20 @@ func readWakeFile(t *testing.T, r *rig, name string) wakeFile {
 
 // The offset is the supervisor's clock at its answer minus the client's clock
 // half way between its request and the answer, and the error is half the round
-// trip. The request asks for the measured part, with a second to spare on each
-// side, in the client's clock.
+// trip. An offset within the tolerance leaves the one request, which asks for
+// the measured part, with a second to spare on each side, in the client's clock.
 func TestClientWakeOffsetFromTheClockAroundTheRequest(t *testing.T) {
 	r := wakeRig(t)
 	send := unixSecond(9000, 0)
 	r.c.now = scriptedNow(t, send, send.Add(40*time.Millisecond))
-	// The supervisor read 1.5 s and 123 us ahead of the client when it answered,
+	// The supervisor read 150 ms and 123 us ahead of the client when it answered,
 	// 20 ms after the request was sent.
-	r.sup.answerAt(send.Add(20*time.Millisecond + 1500*time.Millisecond + 123*time.Microsecond))
+	r.sup.answerAt(send.Add(20*time.Millisecond + 150*time.Millisecond + 123*time.Microsecond))
 	start := unixSecond(8990, 500*time.Millisecond)
 	var rec runRecord
 	r.c.keepWake(context.Background(), "01-R1-r1", wakeReport(t, start, 3), &rec)
 
-	want := clockOffset{OffsetUS: 1_500_123, ErrorUS: 20_000}
+	want := clockOffset{OffsetUS: 150_123, ErrorUS: 20_000}
 	if rec.ClockOffset == nil || *rec.ClockOffset != want {
 		t.Errorf("clock offset %+v, want %+v", rec.ClockOffset, want)
 	}
@@ -130,7 +148,7 @@ func TestClientWakeOffsetFromTheClockAroundTheRequest(t *testing.T) {
 	if err := json.Unmarshal(fakeWakeAnswer(from, to), &answered); err != nil {
 		t.Fatal(err)
 	}
-	answered.NowUnixNS = send.Add(20*time.Millisecond + 1500*time.Millisecond + 123*time.Microsecond).UnixNano()
+	answered.NowUnixNS = send.Add(20*time.Millisecond + 150*time.Millisecond + 123*time.Microsecond).UnixNano()
 	if !reflect.DeepEqual(f.wakeAnswer, answered) {
 		t.Errorf("the file holds %+v, want the supervisor's answer %+v", f.wakeAnswer, answered)
 	}
@@ -270,6 +288,216 @@ func TestClientWakeAsksAgainWhenTheLastSecondIsNotFinished(t *testing.T) {
 	})
 }
 
+// askedRange returns the from and to, in Unix ms, of the nth /wake request of
+// the fake supervisor, counted from 0.
+func askedRange(t *testing.T, f *fakeSupervisor, n int) (from, to int64) {
+	t.Helper()
+	if n >= len(f.wakeAsked) {
+		t.Fatalf("%d /wake requests, no request %d", len(f.wakeAsked), n)
+	}
+	q := f.wakeAsked[n]
+	from, errFrom := strconv.ParseInt(q.Get("from"), 10, 64)
+	to, errTo := strconv.ParseInt(q.Get("to"), 10, 64)
+	if errFrom != nil || errTo != nil {
+		t.Fatalf("request %d asked %v, want a from and a to in Unix ms", n, q)
+	}
+	return from, to
+}
+
+// A client whose engine machine's clock is 5 s ahead gets the seconds of its
+// window: the first request measures the offset, and the second asks for the
+// measured part on the supervisor's clock. The meter below recorded the seconds
+// that the part lies in on its own clock, 8985 to 8988, and the unshifted range
+// holds only seconds before them.
+func TestClientWakeAsksForThePartOnTheSupervisorsClock(t *testing.T) {
+	const ahead = 5 * time.Second
+	base := unixSecond(9000, 0)
+	r := wakeRig(t)
+	r.c.now = func() time.Time { return base } // no time passes, so the offset is exact
+	start := base.Add(-20*time.Second + 250*time.Millisecond)
+	end := start.Add(3 * time.Second)
+	// Second s, from 8983 to 8992, has s-8980 wakes, each s-8980 tens of us late.
+	m := newWakeMeter(wakePlacement{CPU: 1, Siblings: []int{1}})
+	for sec := int64(8983); sec <= 8992; sec++ {
+		for i := range int(sec - 8980) {
+			m.record(unixSecond(sec, time.Duration(i)*time.Millisecond), time.Duration(sec-8980)*10*time.Microsecond)
+		}
+	}
+	r.sup.wakeAnswer = func(_ int, from, to int64) (int, []byte) {
+		a := m.answer(from, to)
+		a.NowUnixNS = base.Add(ahead).UnixNano()
+		data, err := json.Marshal(a)
+		if err != nil {
+			panic(err)
+		}
+		return http.StatusOK, data
+	}
+	rep := wakeReport(t, start, 3)
+	var rec runRecord
+	rows := r.c.keepWake(context.Background(), "01-R1-r1", rep, &rec)
+	worst := worstOf(rep, rows, rec.ClockOffset, &rec)
+
+	if len(r.sup.wakeAsked) != 2 {
+		t.Fatalf("%d requests, want the probe and one built with the offset", len(r.sup.wakeAsked))
+	}
+	for i, shift := range []time.Duration{0, ahead} {
+		from, to := askedRange(t, r.sup, i)
+		wantFrom, wantTo := start.Add(shift-time.Second).UnixMilli(), end.Add(shift+time.Second).UnixMilli()
+		if from != wantFrom || to != wantTo {
+			t.Errorf("request %d asked from %d to %d, want %d to %d (the part and a second either side, %v on)", i+1, from, to, wantFrom, wantTo, shift)
+		}
+	}
+	if want := (clockOffset{OffsetUS: 5e6}); rec.ClockOffset == nil || *rec.ClockOffset != want {
+		t.Errorf("clock offset %+v, want %+v", rec.ClockOffset, want)
+	}
+	f := readWakeFile(t, r, rec.Wake)
+	if f.T0 != 8985 || len(f.N) != 5 || f.N[0] != 5 || f.N[4] != 9 {
+		t.Errorf("the file has %d seconds from %d with n %v, want 8985 to 8989, the second request's", len(f.N), f.T0, f.N)
+	}
+	// Window 0, the worst of the flat series, is [8980.25, 8981.25) here and
+	// [8985.25, 8986.25) there: seconds 8985 and 8986.
+	if want := (&wakeSeen{N: 5 + 6, P99: 60, Max: 60}); worst == nil || !reflect.DeepEqual(worst.Wake, want) {
+		t.Errorf("worst %+v, want a wake of %+v", worst, want)
+	}
+	if len(rec.Notes) != 0 {
+		t.Errorf("notes %v", rec.Notes)
+	}
+}
+
+// The first request measures the offset and each next one is built with the
+// offset of the one before. A request is repeated when its offset is more than
+// 250 ms from the one its range was built with, three requests at most, and the
+// offset kept with the file is the one measured on the last request, whose
+// seconds are the file's.
+func TestClientWakeAsksAgainWhileTheOffsetMoves(t *testing.T) {
+	base := unixSecond(9000, 0)
+	start := base.Add(-time.Minute)
+	end := start.Add(3 * time.Second)
+	for _, c := range []struct {
+		name    string
+		offsets []time.Duration // the supervisor's clock minus the client's at each answer
+		note    bool            // that it kept moving
+	}{
+		{"an offset within the tolerance is kept as it comes", []time.Duration{100 * time.Millisecond}, false},
+		{"a large offset is asked for again", []time.Duration{5 * time.Second, 5 * time.Second}, false},
+		{"a negative one too", []time.Duration{-3 * time.Second, -3 * time.Second}, false},
+		{"an offset that moves less than the tolerance since the range was built", []time.Duration{5 * time.Second, 5200 * time.Millisecond}, false},
+		{"an offset that moves more than it", []time.Duration{5 * time.Second, 5300 * time.Millisecond, 5300 * time.Millisecond}, false},
+		{"an offset that keeps moving stops at three requests", []time.Duration{5 * time.Second, 6 * time.Second, 7 * time.Second, 8 * time.Second}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := wakeRig(t)
+			r.c.now = func() time.Time { return base }
+			nows := make([]time.Time, len(c.offsets))
+			for i, o := range c.offsets {
+				nows[i] = base.Add(o)
+			}
+			r.sup.answerAt(nows...)
+			var rec runRecord
+			r.c.keepWake(context.Background(), "01-R1-r1", wakeReport(t, start, 3), &rec)
+
+			asks := min(len(c.offsets), wakeAsks)
+			if r.sup.wakeReads != asks {
+				t.Fatalf("%d requests, want %d", r.sup.wakeReads, asks)
+			}
+			for i := range asks {
+				var shift time.Duration // the offset the range is built with: the one just measured
+				if i > 0 {
+					shift = c.offsets[i-1]
+				}
+				from, to := askedRange(t, r.sup, i)
+				wantFrom, wantTo := start.Add(shift-time.Second).UnixMilli(), end.Add(shift+time.Second).UnixMilli()
+				if from != wantFrom || to != wantTo {
+					t.Errorf("request %d asked from %d to %d, want %d to %d (shifted by %v)", i+1, from, to, wantFrom, wantTo, shift)
+				}
+			}
+			kept := c.offsets[asks-1]
+			f := readWakeFile(t, r, rec.Wake)
+			if rec.ClockOffset == nil || rec.ClockOffset.duration() != kept || f.Clock != *rec.ClockOffset || f.NowUnixNS != nows[asks-1].UnixNano() {
+				t.Errorf("kept offset %+v, the file's clock %+v and now %d, want %v and the last request's answer, %d", rec.ClockOffset, f.Clock, f.NowUnixNS, kept, nows[asks-1].UnixNano())
+			}
+			if moving := len(rec.Notes) == 1 && strings.Contains(rec.Notes[0], "kept moving"); moving != c.note || len(rec.Notes) > 1 {
+				t.Errorf("notes %v, want one that the offset kept moving: %v", rec.Notes, c.note)
+			}
+		})
+	}
+}
+
+// The wait for the last second and the shift are in the same loop: a part that
+// has just ended on a supervisor 5 s ahead takes two requests and one wait.
+func TestClientWakeWaitsOnceAndShiftsInTheSameRequest(t *testing.T) {
+	base := unixSecond(9000, 0)
+	end := base.Add(-250 * time.Millisecond)
+	start := end.Add(-3 * time.Second)
+	r := wakeRig(t)
+	r.c.now = func() time.Time { return base }
+	// On the supervisor's clock the part ends at 9004.75, so it must run to
+	// 9005.01 for second 9004 to be served: 10 ms after its first answer.
+	r.sup.answerAt(base.Add(5*time.Second), base.Add(5*time.Second+30*time.Millisecond))
+	var rec runRecord
+	began := time.Now()
+	r.c.keepWake(context.Background(), "01-R1-r1", wakeReport(t, start, 3), &rec)
+	if took := time.Since(began); took < 10*time.Millisecond {
+		t.Errorf("keepWake took %v, want it to wait the 10 ms that the supervisor needs", took)
+	}
+	if r.sup.wakeReads != 2 || len(rec.Notes) != 0 {
+		t.Errorf("%d requests, notes %v, want 2 and none", r.sup.wakeReads, rec.Notes)
+	}
+	from, to := askedRange(t, r.sup, 1)
+	if wantFrom, wantTo := start.Add(4*time.Second).UnixMilli(), end.Add(6*time.Second).UnixMilli(); from != wantFrom || to != wantTo {
+		t.Errorf("the second request asked from %d to %d, want %d to %d", from, to, wantFrom, wantTo)
+	}
+	if rec.ClockOffset == nil || rec.ClockOffset.duration() != 5*time.Second+30*time.Millisecond {
+		t.Errorf("clock offset %+v, want the second answer's, 5.03 s", rec.ClockOffset)
+	}
+}
+
+// The last window is shorter when the measured part is not a whole number of
+// seconds, so the request ends a second past where the part really ends.
+func TestClientWakeAsksUpToTheEndOfAPartThatIsNotWhole(t *testing.T) {
+	r := wakeRig(t)
+	r.c.now = func() time.Time { return clockStart }
+	r.sup.answerAt(clockStart)
+	start := clockStart.Add(-time.Hour + 250*time.Millisecond)
+	rep := wakeReport(t, start, 3)
+	rep.DurationS = 2.2 // the third window holds the last 0.2 s
+	var rec runRecord
+	r.c.keepWake(context.Background(), "01-R1-r1", rep, &rec)
+	if r.sup.wakeReads != 1 || len(rec.Notes) != 0 {
+		t.Fatalf("%d requests, notes %v, want 1 and none", r.sup.wakeReads, rec.Notes)
+	}
+	from, to := askedRange(t, r.sup, 0)
+	if wantFrom, wantTo := start.Add(-time.Second).UnixMilli(), start.Add(2200*time.Millisecond+time.Second).UnixMilli(); from != wantFrom || to != wantTo {
+		t.Errorf("asked from %d to %d, want %d to %d: the part's end, 2.2 s after its start, and a second", from, to, wantFrom, wantTo)
+	}
+}
+
+// The note of the placement is in the wake file that the client keeps: a meter
+// on cpu2, which the spin pool of cpu0 and cpu2 may hand out.
+func TestClientKeepsThePlacementNoteInTheWakeFile(t *testing.T) {
+	r := wakeRig(t)
+	r.c.now = func() time.Time { return clockStart }
+	m := newWakeMeter(placeWake(fakeTopology(t, map[int]string{0: "0-1", 1: "0-1", 2: "2"}), cpuRange(0, 2)))
+	r.sup.wakeAnswer = func(_ int, from, to int64) (int, []byte) {
+		a := m.answer(from, to)
+		a.NowUnixNS = clockStart.UnixNano()
+		data, err := json.Marshal(a)
+		if err != nil {
+			panic(err)
+		}
+		return http.StatusOK, data
+	}
+	var rec runRecord
+	r.c.keepWake(context.Background(), "01-R1-r1", wakeReport(t, clockStart.Add(-time.Hour), 3), &rec)
+	f := readWakeFile(t, r, rec.Wake)
+	if f.Placement.CPU != 2 || !strings.Contains(f.Placement.Note, sharesPool) {
+		t.Errorf("placement %+v in the wake file, want cpu 2 and a note that says %q", f.Placement, sharesPool)
+	}
+	if !strings.Contains(string(r.file(rec.Wake)), `"note":"`+sharesPool+": ") {
+		t.Errorf("the wake file %s does not hold the note", r.file(rec.Wake))
+	}
+}
+
 // Through the matrix: every run whose report has a series has a wake file next
 // to it and an offset in its record, and the REST run, which has none, has
 // neither; a wake that cannot be had leaves every run as valid as it was.
@@ -281,6 +509,7 @@ func TestClientKeepsTheWakeOfEachRunThatHasASeries(t *testing.T) {
 		t.Helper()
 		p := rounds(1)
 		r := newRig(t, p, nil)
+		r.sup.answerWithClock(r.clock.Now) // the same clock as the client's, so that one request settles the offset
 		writeMatrixScript(t, p, func(cfg config, round int, f fakeRun) fakeRun {
 			if cfg.Flow == flowREST {
 				return f

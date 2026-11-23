@@ -28,7 +28,7 @@ const (
 	engineOEAddr    = "0.0.0.0:9000"
 )
 
-// What /engine-log serves of an engine's output: a file of at most
+// What /engine-log serves of an engine's output, redacted: a text of at most
 // engineLogLimit bytes whole, else its first engineLogHead bytes, a line that
 // says how much was left out, and its last engineLogTail bytes. The client
 // finds a cut by engineLogCutFormat, so the note is built from it.
@@ -53,10 +53,9 @@ func engineLogCutNote(omitted, total int64) string {
 }
 
 // engineLogCut returns the note line of a log that /engine-log cut, and
-// whether it is one. The head is served redacted and so may be shorter than
-// engineLogHead: the note is the line, within the first engineLogHead bytes,
-// that engineLogCutNote makes for a file of more than engineLogLimit bytes. A
-// log that quotes another number is not cut.
+// whether it is one: the note is the line, within the first engineLogHead
+// bytes, that engineLogCutNote makes for a text of more than engineLogLimit
+// bytes. A log that quotes another number is not cut.
 func engineLogCut(body []byte) (string, bool) {
 	marker := []byte("\n" + engineLogCutPrefix)
 	window := body[:min(len(body), engineLogHead+len(marker))]
@@ -297,10 +296,11 @@ func (s *supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // starts, and the file name is built from the number alone: the route takes
 // no path, so it serves only files that startEngine named.
 //
-// The served text is redacted (redactAddresses): the results are published,
-// and the log names the machines that connected to the engine. The file stays
-// as the engine wrote it, and the note counts that file's bytes, not the
-// served ones.
+// The log is redacted (redactAddresses) before it is cut: the results are
+// published, and the log names the machines that connected to the engine, and
+// a cut of the file could fall inside an address, leaving two pieces that the
+// mask would take for no address. The note counts the redacted text's bytes.
+// The file stays as the engine wrote it.
 func (s *supervisor) serveEngineLog(w http.ResponseWriter, r *http.Request) {
 	arg := r.URL.Query().Get("start")
 	n, err := strconv.ParseUint(arg, 10, 64) // no sign, no separators
@@ -328,7 +328,10 @@ func (s *supervisor) serveEngineLog(w http.ResponseWriter, r *http.Request) {
 }
 
 // readEngineLog reads the file name as /engine-log serves it. The engine may
-// still be appending, so the size is read once and every range lies below it.
+// still be appending, so the size is read once and the note and both parts of
+// a cut describe the file at that size. The file is read whole, as the mask
+// must see every address in it whole; the engine logs connections, sessions
+// and failures, not commands.
 func readEngineLog(name string) ([]byte, error) {
 	f, err := os.Open(name)
 	if err != nil {
@@ -339,20 +342,19 @@ func readEngineLog(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	size := fi.Size()
-	if size <= engineLogLimit {
-		body := make([]byte, size)
-		if err := readRange(f, body, 0); err != nil {
-			return nil, err
-		}
-		return redactAddresses(body), nil
-	}
-	head, tail := make([]byte, engineLogHead), make([]byte, engineLogTail)
-	if err := errors.Join(readRange(f, head, 0), readRange(f, tail, size-engineLogTail)); err != nil {
+	raw := make([]byte, fi.Size())
+	if err := readRange(f, raw, 0); err != nil {
 		return nil, err
 	}
-	body := append(redactAddresses(head), engineLogCutNote(size-engineLogLimit, size)...)
-	return append(body, redactAddresses(tail)...), nil
+	text := redactAddresses(raw)
+	if len(text) <= engineLogLimit {
+		return text, nil
+	}
+	note := engineLogCutNote(int64(len(text))-engineLogLimit, int64(len(text)))
+	body := make([]byte, 0, engineLogLimit+len(note))
+	body = append(body, text[:engineLogHead]...)
+	body = append(body, note...)
+	return append(body, text[len(text)-engineLogTail:]...), nil
 }
 
 // readRange fills p from the file at off.

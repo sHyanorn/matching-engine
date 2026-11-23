@@ -44,7 +44,9 @@ type wakePlacement struct {
 // The meter takes the last core of that order and on it the highest allowed
 // CPU, which the pool does not hand out: the meter does not share a logical CPU
 // with a spinner. The exception is a last core that has one allowed CPU while
-// another core has two, for the pool then reaches the last core. sysfs is the
+// another core has two, for the pool then reaches the last core, and the note
+// says so. The engine is started with no GOMAXPROCS override, so it has at most
+// one P for each allowed CPU, and the pool is sized for that. sysfs is the
 // directory Linux describes the CPUs in.
 //
 // If the sibling list of that core cannot be read, the topology is unknown
@@ -66,7 +68,18 @@ func placeWake(sysfs string, allowed []int) wakePlacement {
 		p.Note = "the thread siblings of the last core are unreadable: the highest allowed CPU is used"
 	}
 	p.CPU = slices.Max(p.Siblings)
+	if slices.Contains(spin.PoolCPUs(cores, len(allowed)), p.CPU) {
+		p.addNote("shares a CPU with the spin pool: with -oe-spin a spinning thread may be pinned to the meter's CPU and delay its wakes")
+	}
 	return p
+}
+
+// addNote adds s to the note of the placement.
+func (p *wakePlacement) addNote(s string) {
+	if p.Note != "" {
+		p.Note += "; "
+	}
+	p.Note += s
 }
 
 // coreSiblings returns the allowed CPUs among the thread siblings of cpu, and
@@ -156,7 +169,7 @@ func (m *wakeMeter) run(ctx context.Context) {
 	m.mu.Lock()
 	m.place.Pinned = err == nil
 	if err != nil {
-		m.addNote("the pin was refused, the meter runs unpinned: " + err.Error())
+		m.place.addNote("the pin was refused, the meter runs unpinned: " + err.Error())
 	}
 	m.mu.Unlock()
 	m.loop(ctx)
@@ -166,17 +179,9 @@ func (m *wakeMeter) run(ctx context.Context) {
 func (m *wakeMeter) putBack(restore func() error) {
 	if err := restore(); err != nil {
 		m.mu.Lock()
-		m.addNote("the thread's CPUs could not be put back, it keeps the pin: " + err.Error())
+		m.place.addNote("the thread's CPUs could not be put back, it keeps the pin: " + err.Error())
 		m.mu.Unlock()
 	}
-}
-
-// addNote adds s to the note of the placement. The caller holds m.mu.
-func (m *wakeMeter) addNote(s string) {
-	if m.place.Note != "" {
-		m.place.Note += "; "
-	}
-	m.place.Note += s
 }
 
 // loop sleeps wakeTick and records how late each wake came, until ctx ends.
@@ -337,6 +342,19 @@ func (o clockOffset) duration() time.Duration {
 	return time.Duration(math.Round(o.OffsetUS * float64(time.Microsecond)))
 }
 
+const (
+	// wakeSlack is how far past the measured part, on each side, a client asks
+	// /wake for seconds.
+	wakeSlack = time.Second
+	// wakeShiftTolerance is how far the offset measured on an answer may be from
+	// the one its request's range was built with before the range is built again.
+	wakeShiftTolerance = 250 * time.Millisecond
+	// wakeAsks is the most /wake requests a run makes: the first measures the
+	// offset, the next is built with it, and one more is for an offset that is
+	// still moving.
+	wakeAsks = 3
+)
+
 // wakeSettleSlack is how long past the end of a second the supervisor needs to
 // have recorded a wake due in the next one, which is due a tick after it starts.
 const wakeSettleSlack = 10 * time.Millisecond
@@ -367,10 +385,12 @@ type wakeFile struct {
 // bound of the p99 of all the wakes, as no more than 1% of a second's wakes lie
 // above its p99. A second that is not in rows counts nothing: the supervisor
 // fills the gaps of its answer, so a missing one lies outside the answer or was
-// not finished.
-func wakeForWindow(rows []wakeRow, offset time.Duration, windowStart time.Time, windowLen time.Duration) (n int, p99, worst float64) {
+// not finished. seen is false if no second of rows overlaps the window, when
+// the meter has nothing to say about it; a stalled meter has seconds of n 0
+// there instead.
+func wakeForWindow(rows []wakeRow, offset time.Duration, windowStart time.Time, windowLen time.Duration) (n int, p99, worst float64, seen bool) {
 	if windowLen <= 0 {
-		return 0, 0, 0
+		return 0, 0, 0, false
 	}
 	start := windowStart.UnixNano() + offset.Nanoseconds()
 	end := start + windowLen.Nanoseconds()
@@ -378,7 +398,8 @@ func wakeForWindow(rows []wakeRow, offset time.Duration, windowStart time.Time, 
 		if r.Second*int64(time.Second) < end && (r.Second+1)*int64(time.Second) > start {
 			n += r.N
 			p99, worst = max(p99, r.P99), max(worst, r.Max)
+			seen = true
 		}
 	}
-	return n, p99, worst
+	return n, p99, worst, seen
 }

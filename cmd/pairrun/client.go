@@ -603,12 +603,21 @@ func (c *client) keepEngineLog(ctx context.Context, base string, start int, rec 
 // base, in the engine machine's clock, next to the report, with the offset of
 // that clock from this one, which the same request measures. The seconds can be
 // set against the report's series only through the offset, so a run whose report
-// has no series (the REST runs) gets neither. The supervisor serves a second
-// once a later one has a wake, so if the window has only just ended the last
-// of its seconds is not served yet: the request is repeated once, after the
-// wait that wakeWait gives. Like the engine log, the wake is evidence and not a
-// rule of validity: what cannot be had is noted and the run stands. It returns
-// the seconds it kept, or nil if it kept no wake file.
+// has no series (the REST runs) gets neither.
+//
+// The offset is known only once a request is answered. The first request asks
+// for the part on this machine's clock and measures it; the next asks for the
+// part on the supervisor's clock, shifted by the offset just measured, which
+// a machine whose clock is off by more than the slack needs to get any second.
+// A request is made again, up to wakeAsks in all, when the offset it measured
+// is more than wakeShiftTolerance from the one its range was built with; within
+// that the answer is kept. The offset kept is the one measured on the request
+// whose seconds are kept. The supervisor serves a second once a later one has a
+// wake, so if the part has only just ended its last second is not served yet:
+// the request is repeated once, after the wait that wakeWait gives. Like the
+// engine log, the wake is evidence and not a rule of validity: what cannot be
+// had is noted and the run stands. It returns the seconds it kept, or nil if it
+// kept no wake file.
 func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, rec *runRecord) []wakeRow {
 	ser, err := decodeSeries(rep)
 	if err != nil {
@@ -618,12 +627,12 @@ func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, 
 	if ser == nil {
 		return nil
 	}
-	window := ser.window()
-	end := ser.Start.Add(time.Duration(len(ser.N)) * window)
-	target := fmt.Sprintf("http://%s/wake?from=%d&to=%d", c.Ctl, ser.Start.Add(-time.Second).UnixMilli(), end.Add(time.Second).UnixMilli())
 	var a wakeAnswer
 	var off clockOffset
-	for attempt := 1; ; attempt++ {
+	var shift time.Duration // the offset that this request's range is built with; none for the first
+	waited := false
+	for ask := 1; ; ask++ {
+		target := fmt.Sprintf("http://%s/wake?from=%d&to=%d", c.Ctl, ser.Start.Add(shift-wakeSlack).UnixMilli(), ser.End.Add(shift+wakeSlack).UnixMilli())
 		send := c.now()
 		data, err := c.fetch(ctx, http.MethodGet, target, 10*time.Second)
 		recv := c.now()
@@ -639,17 +648,25 @@ func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, 
 			return nil
 		}
 		off = measureOffset(send, recv, a.NowUnixNS)
-		wait := wakeWait(a.NowUnixNS, end, off.duration())
-		if wait == 0 || attempt == 2 {
+		moved := (off.duration() - shift).Abs() > wakeShiftTolerance
+		wait := wakeWait(a.NowUnixNS, ser.End, off.duration())
+		if ask == wakeAsks || !moved && (wait == 0 || waited) {
 			if wait > 0 {
 				rec.Notes = append(rec.Notes, "wake: the last second of the measured part was not finished when the supervisor answered")
 			}
+			if moved {
+				rec.Notes = append(rec.Notes, "wake: the clock offset kept moving, so the seconds asked for may not cover the measured part")
+			}
 			break
 		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(wait):
+		shift = off.duration()
+		if wait > 0 && !waited {
+			waited = true
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(wait):
+			}
 		}
 	}
 	rec.ClockOffset = &off

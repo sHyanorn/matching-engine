@@ -46,6 +46,8 @@ var mainRows = []string{"reply", "pong"}
 // none) and the offset it measured. It returns nil for a report without a
 // series, and for one whose series keepWake has already noted as unusable. A
 // series that has a start and windows but no usable main row is noted in rec.
+// If no kept second overlaps the window its wake stays nil, which is not a wake
+// that saw nothing, and rec says so.
 func worstOf(rep *loadgenReport, wake []wakeRow, off *clockOffset, rec *runRecord) *worstSecond {
 	ser, err := decodeSeries(rep)
 	if ser == nil || err != nil {
@@ -58,8 +60,13 @@ func worstOf(rep *loadgenReport, wake []wakeRow, off *clockOffset, rec *runRecor
 	}
 	if wake != nil && off != nil {
 		start := ser.Start.Add(time.Duration(w.Window) * ser.window())
-		n, p99, worst := wakeForWindow(wake, off.duration(), start, ser.window())
-		w.Wake = &wakeSeen{N: n, P99: p99, Max: worst}
+		// The last window is shorter when the measured part is not a whole number of windows.
+		n, p99, worst, seen := wakeForWindow(wake, off.duration(), start, min(ser.window(), ser.End.Sub(start)))
+		if seen {
+			w.Wake = &wakeSeen{N: n, P99: p99, Max: worst}
+		} else {
+			rec.Notes = append(rec.Notes, "wake: no second of the meter overlaps the worst second: the clocks may differ by more than the offset's error, or the meter recorded nothing then")
+		}
 	}
 	return w
 }
