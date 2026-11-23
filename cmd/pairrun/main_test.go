@@ -303,18 +303,49 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-// freeAddr returns a loopback address that nothing listens on now.
+// freeAddrs returns n loopback addresses that nothing listens on now. All n
+// listeners are open before any is closed, so the addresses differ. Another
+// process can still take one before the caller's server binds it.
+func freeAddrs(t *testing.T, n int) []string {
+	t.Helper()
+	var lns []net.Listener
+	defer func() {
+		for _, ln := range lns {
+			_ = ln.Close()
+		}
+	}()
+	addrs := make([]string, n)
+	for i := range addrs {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lns = append(lns, ln)
+		addrs[i] = ln.Addr().String()
+	}
+	return addrs
+}
+
+// freeAddr returns one address of freeAddrs.
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	return freeAddrs(t, 1)[0]
+}
+
+func TestFreeAddrs(t *testing.T) {
+	addrs := freeAddrs(t, 64)
+	seen := map[string]bool{}
+	for _, a := range addrs {
+		if seen[a] {
+			t.Fatalf("address %s given twice in %v", a, addrs)
+		}
+		seen[a] = true
+		ln, err := net.Listen("tcp", a)
+		if err != nil {
+			t.Fatalf("address %s is not free: %v", a, err)
+		}
+		_ = ln.Close()
 	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return addr
 }
 
 // eventually polls cond until it holds or the test's patience ends.

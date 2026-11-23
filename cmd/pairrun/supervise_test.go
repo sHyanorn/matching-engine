@@ -51,13 +51,14 @@ type supervisorTest struct {
 func newSupervisorTest(t *testing.T, mutate ...func(*superviseOptions)) *supervisorTest {
 	t.Helper()
 	t.Setenv(secretName, secretValue)
+	addrs := freeAddrs(t, 2)
 	o := superviseOptions{
 		Engine:   fakeBinary(t, "fake-engine"),
 		Loadgen:  fakeBinary(t, "fake-loadgen"),
 		Work:     filepath.Join(t.TempDir(), "work"),
 		Params:   defaultParams,
-		httpAddr: freeAddr(t),
-		oeAddr:   freeAddr(t),
+		httpAddr: addrs[0],
+		oeAddr:   addrs[1],
 		src:      fakeSources(fakeProc(t, fakeHostFiles("0-7"))),
 		// A measurement takes a tenth of a second or more.
 		clockRead: func() float64 { return 25 },
@@ -180,6 +181,30 @@ func TestSupervisorConfigs(t *testing.T) {
 		if h.MemLimitBytes != fakeMemLimit || h.GoMemLimitBytes != fakeMemLimit/2 {
 			t.Errorf("%s: memory limit %d and GOMEMLIMIT %d, want %d and %d", c.config, h.MemLimitBytes, h.GoMemLimitBytes, int64(fakeMemLimit), int64(fakeMemLimit/2))
 		}
+	}
+}
+
+// A /start whose client has gone while it waited for the lock does not start
+// an engine; the next one does.
+func TestSupervisorStartOfAGoneClientStartsNothing(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/start?config=default", nil).WithContext(ctx)
+	st.op.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		st.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	cancel()
+	st.op.Unlock()
+	<-done
+	if entries, _ := filepath.Glob(filepath.Join(st.work, "*")); st.starts != 0 || len(entries) != 0 || st.cmd != nil {
+		t.Errorf("a request whose client had gone started an engine: starts %d, %v", st.starts, entries)
+	}
+	if h := st.start(t, "default"); h.Starts != 1 || !alive(h.EnginePID) {
+		t.Errorf("the next /start gave %+v, want the first start", h)
 	}
 }
 

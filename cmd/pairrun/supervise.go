@@ -253,6 +253,11 @@ func (s *supervisor) serveStart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
+	// The client may have given up while this request waited for the lock;
+	// a restart now would be for nobody.
+	if r.Context().Err() != nil {
+		return
+	}
 	if err := s.startEngine(name, cfg, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

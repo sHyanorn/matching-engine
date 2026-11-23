@@ -566,6 +566,9 @@ func TestClientWaitsUntilTheSupervisorIsReady(t *testing.T) {
 		if !strings.Contains(string(r.file("summary.txt")), "Stopped: error: supervisor at "+r.c.Ctl+" not ready after 50ms") {
 			t.Errorf("summary.txt does not say that the supervisor was not ready:\n%s", r.file("summary.txt"))
 		}
+		if first, _, _ := strings.Cut(string(r.file("summary.txt")), "\n"); first != "NOT PUBLISHABLE: the supervisor never reported ready" {
+			t.Errorf("first line of summary.txt is %q", first)
+		}
 	})
 	t.Run("supervisor that is not there", func(t *testing.T) {
 		r := newRig(t, p, nil)

@@ -294,7 +294,7 @@ func (c *client) writeSummary(stopped, reason string) error {
 		Params:              c.Params,
 		Overrides:           c.Overrides,
 		SupervisorOverrides: c.supervisorOverrides,
-		SupervisorSilent:    c.supervisorOverrides == nil,
+		SupervisorSilent:    c.supervisorOverrides == nil, // derived from the missing overrides: nil until the supervisor has answered
 		Configs:             append(append([]config(nil), c.configs...), c.long),
 		Records:             c.records,
 		G2:                  g,

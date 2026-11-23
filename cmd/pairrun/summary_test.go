@@ -174,7 +174,7 @@ func TestBuildSummaryTakesNumbersAsTheyAre(t *testing.T) {
 func TestBuildSummaryHeader(t *testing.T) {
 	records := matrix(5, good)
 	plain := summaryOf(records, nil)
-	if plain.Rehearsal || !plain.Publishable || strings.HasPrefix(plain.text(), "REHEARSAL") {
+	if plain.Rehearsal || !plain.Publishable || strings.HasPrefix(plain.text(), "REHEARSAL") || strings.Contains(plain.text(), "NOT PUBLISHABLE") {
 		t.Errorf("a run with no overrides is marked: rehearsal %v, publishable %v", plain.Rehearsal, plain.Publishable)
 	}
 	if plain.Runs != 45 || plain.Engine.LimitBytes != 16<<30 || plain.Engine.GoMemLimitBytes != 8<<30 {
@@ -277,6 +277,20 @@ func TestBuildSummaryClockFit(t *testing.T) {
 			if want := "unfit above 100 ns: " + c.verdict + "\n"; !strings.Contains(s.text(), want) {
 				t.Errorf("summary.txt lacks %q:\n%s", want, s.text())
 			}
+			// summary.json says that a clock was not read by leaving its key out.
+			data, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var keys map[string]json.RawMessage
+			if err := json.Unmarshal(data, &keys); err != nil {
+				t.Fatal(err)
+			}
+			for key, read := range map[string]bool{"engine_clock_read_ns": c.engine != 0, "client_clock_read_ns": c.client != 0} {
+				if _, has := keys[key]; has != read {
+					t.Errorf("summary.json has %s: %v, want %v", key, has, read)
+				}
+			}
 		})
 	}
 	s := buildSummary(summaryInput{Params: defaultParams, Configs: allConfigs(), G2: base.G2, EngineClockReadNS: 31.25, ClientClockReadNS: 22.5})
@@ -294,6 +308,9 @@ func TestBuildSummaryOfASupervisorThatNeverAnswered(t *testing.T) {
 	s := buildSummary(summaryInput{Params: defaultParams, Configs: allConfigs(), G2: g2Of(nil, 5, true), SupervisorSilent: true})
 	if s.Rehearsal || s.Publishable || strings.HasPrefix(s.text(), "REHEARSAL") {
 		t.Errorf("rehearsal %v, publishable %v, want false and false", s.Rehearsal, s.Publishable)
+	}
+	if first, _, _ := strings.Cut(s.text(), "\n"); first != "NOT PUBLISHABLE: the supervisor never reported ready" {
+		t.Errorf("first line of summary.txt is %q", first)
 	}
 }
 

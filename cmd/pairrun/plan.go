@@ -214,9 +214,11 @@ func loadgenArgs(c config, out string) []string {
 		"-out", out)
 }
 
-// loadgenCommand is the command of a loadgen run. Loadgen reads nothing from
-// its environment, so it gets an empty one: this process's would hand it
-// whatever the Pod's start command left here.
+// loadgenCommand is the command of a loadgen run. Loadgen's own code reads
+// nothing from its environment, so it gets an empty one: this process's would
+// hand it whatever the Pod's start command left here. The Go runtime reads
+// GOGC, GOMAXPROCS, GODEBUG and GOMEMLIMIT, and with an empty environment it
+// stays at its defaults.
 func loadgenCommand(ctx context.Context, bin string, args []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = []string{}

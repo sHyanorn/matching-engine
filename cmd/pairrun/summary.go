@@ -61,8 +61,8 @@ type summaryFile struct {
 	StopReason          string            `json:"stop_reason,omitempty"`
 	Runs                int               `json:"runs"`
 	Engine              engineMemory      `json:"engine"`
-	EngineClockReadNS   float64           `json:"engine_clock_read_ns"` // mean cost of reading the clock on each machine
-	ClientClockReadNS   float64           `json:"client_clock_read_ns"`
+	EngineClockReadNS   float64           `json:"engine_clock_read_ns,omitempty"` // mean cost of reading the clock on each machine; absent if not read
+	ClientClockReadNS   float64           `json:"client_clock_read_ns,omitempty"`
 	ClockUnfit          bool              `json:"clock_unfit"` // a read costs more than maxClockReadNS on either machine; G2 does not depend on it
 	Configs             []configSummary   `json:"configs"`
 	Tuning              []tuning          `json:"tuning"`
@@ -201,6 +201,8 @@ func (s summaryFile) text() string {
 	var b strings.Builder
 	if s.Rehearsal {
 		b.WriteString("REHEARSAL: not publishable\n")
+	} else if !s.Publishable {
+		b.WriteString("NOT PUBLISHABLE: the supervisor never reported ready\n")
 	}
 	p := s.Params
 	fmt.Fprintf(&b, "Pilot matrix: %d rounds, %g/s and %g/s, %gs warmup and %gs measured (%gs for the long run), send lag p99.9 at most %g us\n",
