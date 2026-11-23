@@ -19,9 +19,10 @@
 # same DEADLINE. It then fetches the tarball of COMMIT, refuses it unless
 # git get-tar-commit-id names COMMIT and its files hash to the tree TREE,
 # and runs this script from it in mode MODE with RUNPOD_API_KEY removed
-# from its environment, so that this script and everything it starts run
-# without the key and only the timer holds it. The start command does not
-# end on its own, so a Pod keeps its log until it is deleted.
+# from its environment, so that no process this script starts holds the
+# key. The start shell does, as do the timer and the curl, git and tar that
+# the start shell runs before this script. The start command does not end
+# on its own, so a Pod keeps its log until it is deleted.
 #
 # engine and client build engine and loadgen with the image's Go, as the
 # Dockerfile does. client waits until ENGINE_ADDR (host:port) accepts a
@@ -32,8 +33,9 @@
 # log, and serves the archive at /RESULT_PATH/results.tgz on port 8000.
 # env.txt holds the CPU, the clock source and the cost of reading it,
 # whether SO_BUSY_POLL can be set, the kernel's boot ID (the same on two
-# Pods only if they share a host), and the RUNPOD_* variables, but for
-# those whose names suggest a secret.
+# Pods only if they share a host), and three variables of the Pod:
+# RUNPOD_POD_ID, RUNPOD_DC_ID and RUNPOD_CPU_COUNT. It is published and the
+# supervisor serves its copy unauthenticated, so no other variable goes in.
 #
 # supervise and matrix are the pilot (cmd/pairrun). supervise serves the
 # control port 9100 and, with the engine's OE1 port 9000 and HTTP port
@@ -97,7 +99,10 @@ envtxt() {
 	bin/pair probe
 	echo "thread siblings: $(for c in /sys/devices/system/cpu/cpu[0-9]*; do echo -n "${c##*/}=$(show "$c/topology/thread_siblings_list") "; done)"
 	echo "cgroup memory.max: $(show /sys/fs/cgroup/memory.max), taskset: $(taskset --version 2>&1 | head -n 1)"
-	env | grep '^RUNPOD_' | grep -Eiv '^[^=]*(KEY|SECRET|TOKEN|PASS)' | sort || true
+	local v
+	for v in RUNPOD_CPU_COUNT RUNPOD_DC_ID RUNPOD_POD_ID; do
+		[ -z "${!v+x}" ] || echo "$v=${!v}"
+	done
 	lscpu
 }
 

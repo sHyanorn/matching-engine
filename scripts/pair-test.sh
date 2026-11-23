@@ -6,6 +6,9 @@
 #     not before, and that no Pod prints the key;
 #   - that the key stays with the self-delete timer: the Pod's start shell
 #     holds RUNPOD_API_KEY, and no process below the Pod's pair.sh does;
+#   - that the environment text names only the Pod's RUNPOD_POD_ID,
+#     RUNPOD_DC_ID and RUNPOD_CPU_COUNT: each Pod also has three canary
+#     variables, whose values must appear in no log and no result file;
 #   - engine and client: that the engine serves OE1 on port 9000, and
 #     that the client's archive, fetched from its port 8000, holds every
 #     run's report and has the SHA-256 that the log prints, as has the
@@ -49,6 +52,9 @@ hex() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
 key=rpa_$(hex 20)
 path=$(hex 16)
 commit=$(hex 20) other=$(hex 20) added=$(hex 20)
+# Canary variables of each Pod: a name that a filter on KEY, SECRET, TOKEN
+# and PASS stops, one that it lets through, and one that only looks harmless.
+tokenx=canary-$(hex 12) jwt=canary-$(hex 12) pubip=canary-$(hex 12)
 
 # The working tree as a tree object, and tarballs of it as codeload serves
 # them: a pax global header whose comment is the commit ID, then the files
@@ -131,7 +137,8 @@ pod() {
 		esac
 	done
 	env PATH="$go:$PATH" TMPDIR="$t/tmp" CURL_HOME="$t/curl" MODE="$mode" COMMIT="$c" TREE="$tree" \
-		DEADLINE="$at" RUNPOD_POD_ID="$name" RUNPOD_API_KEY="$key" "${vars[@]}" \
+		DEADLINE="$at" RUNPOD_POD_ID="$name" RUNPOD_DC_ID=TEST-DC-1 RUNPOD_CPU_COUNT=2 RUNPOD_API_KEY="$key" \
+		RUNPOD_TEST_TOKEN_X="$tokenx" RUNPOD_JWT="$jwt" RUNPOD_PUBLIC_IP="$pubip" "${vars[@]}" \
 		"${pin[@]}" setsid bash -c "$boot" > "$t/$name.log" 2>&1 &
 	pids+=($!)
 	started+=("$name=$!")
@@ -236,6 +243,10 @@ deleted() {
 	awk -v id="$1" -v at="$2" '$1 == id { n++; ok = $2 >= at && $2 < at + 5 && $3 == "key" }
 		END { exit !(n == 1 && ok) }' "$t/deletes"
 }
+# runpod_lines FILE: the RUNPOD_ lines of FILE, sorted, as one line.
+runpod_lines() { grep '^RUNPOD_' "$1" | sort | paste -sd ' ' -; }
+# envtext FILE POD: the RUNPOD_ lines of FILE are those of POD's allowlist.
+envtext() { [ "$(runpod_lines "$1")" = "RUNPOD_CPU_COUNT=2 RUNPOD_DC_ID=TEST-DC-1 RUNPOD_POD_ID=$2" ]; }
 # summed FILE: FILE has the SHA-256 that the client printed.
 summed() { [ -n "$sum" ] && [ "$(sha256sum < "$1" | cut -d ' ' -f 1)" = "$sum" ]; }
 # logged FILE LOG: FILE is not empty and each of its lines is a line of LOG.
@@ -336,6 +347,9 @@ assert s["rehearsal"] is True and s["publishable"] is False
 	check "no response of the control port holds the environment" \
 		bash -c '! curl -s --noproxy "*" http://127.0.0.1:9100/host | grep -qE "PATH=|RUNPOD|COMMIT"'
 	check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$r"
+	check "no output holds the value of a canary variable" not grep -rqF -e "$tokenx" -e "$jwt" -e "$pubip" "$t"/*.log "$r"
+	check "env.txt names only the Pod's id, data centre and CPU count" envtext "$r/env.txt" matrix
+	check "engine-env.txt names only the Pod's id, data centre and CPU count" envtext "$r/engine-env.txt" supervise
 	check "supervise: pair.sh, pairrun and the engine and loadgen it starts run without RUNPOD_API_KEY" \
 		keyless supervise pair.sh pairrun engine loadgen
 	check "matrix: pair.sh, pairrun, loadgen and bin/pair serve run without RUNPOD_API_KEY" \
@@ -378,6 +392,9 @@ check "the selftest Pod prints its heartbeat" grep -q '^pair: alive at ' "$t/sel
 check "a tarball of another commit is refused" refused other "pair: tarball of commit $commit"
 check "a tarball with an added file is refused" refused added "pair: tree $(sed -n 's/^pair: tree //p' "$t/added.log" | grep -vx "$tree")"
 check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$t/results"
+check "no output holds the value of a canary variable" not grep -rqF -e "$tokenx" -e "$jwt" -e "$pubip" "$t"/*.log "$t/results"
+check "env.txt names only the Pod's id, data centre and CPU count" envtext "$t/results/results/env.txt" client
+check "the engine's environment text names only the Pod's id, data centre and CPU count" envtext "$t/engine.log" engine
 check "engine: pair.sh and the engine run without RUNPOD_API_KEY" keyless engine pair.sh engine
 check "client: pair.sh, loadgen and bin/pair serve run without RUNPOD_API_KEY" keyless client pair.sh loadgen serve
 check "selftest: pair.sh runs without RUNPOD_API_KEY" keyless selftest pair.sh
