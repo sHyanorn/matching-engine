@@ -307,6 +307,7 @@ func TestSupervisorRoutes(t *testing.T) {
 		{"GET", "/start"}, {"PUT", "/start"}, {"POST", "/start/"}, {"GET", "/stop"}, {"POST", "/stop/x"},
 		{"GET", "/loopback"}, {"GET", "/loopback.json/"}, {"POST", "/loopback.json"}, {"HEAD", "/loopback.txt"}, {"GET", "/Host"},
 		{"GET", "/engine-env"}, {"GET", "/engine-env.txt/"}, {"POST", "/engine-env.txt"}, {"HEAD", "/engine-env.txt"},
+		{"POST", "/engine-log?start=1"}, {"HEAD", "/engine-log?start=1"}, {"GET", "/engine-log/"}, {"GET", "/engine-logs"}, {"GET", "/engine-log.txt"},
 		{"POST", "/exec?cmd=id"}, {"OPTIONS", "/host"},
 	} {
 		if code, body := st.request(t, c.method, c.path); code != http.StatusNotFound {
@@ -447,6 +448,293 @@ func TestSupervisorWithoutAnEnvFileServesNoEnvText(t *testing.T) {
 	st.ready = true
 	if code, body := st.request(t, http.MethodGet, "/engine-env.txt"); code != http.StatusNotFound {
 		t.Errorf("/engine-env.txt without -env answered %d %q, want 404", code, body)
+	}
+}
+
+// engineLogBytes is n bytes that differ from place to place, so that one range
+// of them cannot pass for another. The first n of more bytes are the n.
+func engineLogBytes(n int) []byte {
+	b := make([]byte, n)
+	x := uint32(1)
+	for i := range b {
+		x = x*1664525 + 1013904223
+		b[i] = 'a' + byte(x>>24)%26
+	}
+	return b
+}
+
+// setStarts makes the supervisor say that it has made n starts.
+func (st *supervisorTest) setStarts(n int) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.starts = n
+}
+
+func (st *supervisorTest) writeEngineLog(t *testing.T, n int, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(engineLogName(st.work, n), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The tests spell out the design's numbers (a limit of 64 KiB, a head of 16 KiB
+// and a tail of 48 KiB) instead of reading the constants back.
+func TestSupervisorServesAnEngineLogWholeUpToTheLimit(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	st.setStarts(1)
+	for _, size := range []int{0, 1, 16 << 10, 64<<10 - 1, 64 << 10} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			data := engineLogBytes(size)
+			st.writeEngineLog(t, 1, data)
+			code, body := st.request(t, http.MethodGet, "/engine-log?start=1")
+			if code != http.StatusOK || body != string(data) {
+				t.Errorf("a log of %d bytes: answered %d with %d bytes, want 200 and the file as it is", size, code, len(body))
+			}
+		})
+	}
+}
+
+func TestSupervisorCutsAnEngineLogOverTheLimit(t *testing.T) {
+	const head, tail = 16 << 10, 48 << 10
+	st := newSupervisorTest(t)
+	st.ready = true
+	st.setStarts(1)
+	for _, size := range []int{64<<10 + 1, 64<<10 + 2, 100_000, 8<<20 + 123} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			data := engineLogBytes(size)
+			st.writeEngineLog(t, 1, data)
+			code, body := st.request(t, http.MethodGet, "/engine-log?start=1")
+			if code != http.StatusOK {
+				t.Fatalf("a log of %d bytes: answered %d: %.200s", size, code, body)
+			}
+			note := fmt.Sprintf("\n[engine log cut: %d of %d bytes omitted]\n", size-64<<10, size)
+			if want := head + len(note) + tail; len(body) != want {
+				t.Fatalf("the body is %d bytes, want %d: the head, %q and the tail", len(body), want, note)
+			}
+			if body[:head] != string(data[:head]) {
+				t.Error("the body does not start with the file's first 16 KiB")
+			}
+			if got := body[head : len(body)-tail]; got != note {
+				t.Errorf("between the head and the tail: %q, want %q", got, note)
+			}
+			if body[len(body)-tail:] != string(data[size-tail:]) {
+				t.Error("the body does not end with the file's last 48 KiB")
+			}
+		})
+	}
+}
+
+// The engine may append while its log is read: the size is read once, so the
+// note and the two ranges describe the same file.
+func TestEngineLogOfAGrowingFileIsReadAtOneSize(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "engine-001.log")
+	all := engineLogBytes(8 << 20)
+	f, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	written := 100 << 10
+	if _, err := f.Write(all[:written]); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for written+4096 <= len(all) {
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Microsecond):
+			}
+			if _, err := f.Write(all[written : written+4096]); err != nil {
+				return
+			}
+			written += 4096
+		}
+	}()
+	defer func() { <-done }()
+	defer close(stop)
+
+	grew := false
+	for reads, began := 0, time.Now(); reads < 300 || !grew; reads++ {
+		if time.Since(began) > 10*time.Second {
+			t.Fatal("the file did not grow while it was read")
+		}
+		body, err := readEngineLog(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var omitted, size int
+		if _, err := fmt.Sscanf(string(body[16<<10:]), "\n[engine log cut: %d of %d bytes omitted]\n", &omitted, &size); err != nil {
+			t.Fatalf("no note after the head: %v", err)
+		}
+		grew = grew || size > 100<<10
+		if omitted != size-64<<10 || string(body[:16<<10]) != string(all[:16<<10]) || string(body[len(body)-48<<10:]) != string(all[size-48<<10:size]) {
+			t.Fatalf("a log read at %d bytes, with %d omitted, is not that file's head and tail", size, omitted)
+		}
+	}
+}
+
+func TestRedactAddresses(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		{"the remote of an engine log line",
+			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"10.1.2.3:46376","reason":"EOF"}`,
+			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"x.x.x.x","reason":"EOF"}`},
+		{"both addresses of a network error",
+			`read tcp 10.1.2.3:9000->4.5.6.7:8899: connection reset by peer`,
+			`read tcp x.x.x.x->x.x.x.x: connection reset by peer`},
+		{"an address without a port", "peer 4.5.6.7 left", "peer x.x.x.x left"},
+		{"an address at the start and at the end", "4.5.6.7 and 255.255.255.255", "x.x.x.x and x.x.x.x"},
+		{"addresses side by side", "10.0.0.1,10.0.0.2;10.0.0.3", "x.x.x.x,x.x.x.x;x.x.x.x"},
+		{"an address that ends a sentence", "no route to 4.5.6.7.", "no route to x.x.x.x."},
+		{"a port is part of the address only with digits", "4.5.6.7: gone", "x.x.x.x: gone"},
+		{"the listen address", "listening on 0.0.0.0:8080 and 0.0.0.0", "listening on 0.0.0.0:8080 and 0.0.0.0"},
+		{"loopback", `"remote":"127.0.0.1:46376" 127.0.0.1`, `"remote":"127.0.0.1:46376" 127.0.0.1`},
+		{"loopback next to another address", "127.0.0.1:9000->4.5.6.7:8899", "127.0.0.1:9000->x.x.x.x"},
+		{"five numbers", "version 1.2.3.4.5 of it", "version 1.2.3.4.5 of it"},
+		{"five numbers, the address first", "1.2.3.4.5", "1.2.3.4.5"},
+		{"five numbers, the address last", "12.1.2.3.4", "12.1.2.3.4"},
+		{"a timestamp", "2026-11-23T05:46:09.271175058Z", "2026-11-23T05:46:09.271175058Z"},
+		{"a longer number", "data-3568997236 session 17890137111478110228", "data-3568997236 session 17890137111478110228"},
+		{"numbers that are too large or too long", "256.1.1.1 and 1.2.3.456 and 1.2.3.4567 and 991.2.3.4", "256.1.1.1 and 1.2.3.456 and 1.2.3.4567 and 991.2.3.4"},
+		{"three numbers", "go1.27.4 and 1.2.3", "go1.27.4 and 1.2.3"},
+		{"IPv6 is not redacted", "peer [2001:db8::1]:9000", "peer [2001:db8::1]:9000"},
+		{"nothing", "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := string(redactAddresses([]byte(c.in))); got != c.want {
+				t.Errorf("redacted %q as %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// The served text of a log is redacted; the file stays as the engine wrote it
+// and the note counts the file's bytes.
+func TestSupervisorRedactsTheEngineLogItServes(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	st.setStarts(1)
+	const (
+		remote   = `{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"10.1.2.3:46376","reason":"EOF"}` + "\n"
+		netErr   = "oe: read tcp 10.1.2.3:9000->4.5.6.7:8899: connection reset by peer\n"
+		kept     = "listening on 0.0.0.0:8080 from 127.0.0.1:46376, 1.2.3.4.5, 2026-11-23T05:46:09.271175058Z, data-3568997236\n"
+		redacted = `{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"x.x.x.x","reason":"EOF"}` + "\n" +
+			"oe: read tcp x.x.x.x->x.x.x.x: connection reset by peer\n" + kept
+	)
+	t.Run("a whole log", func(t *testing.T) {
+		st.writeEngineLog(t, 1, []byte(remote+netErr+kept))
+		if code, body := st.request(t, http.MethodGet, "/engine-log?start=1"); code != http.StatusOK || body != redacted {
+			t.Errorf("answered %d %q, want %q", code, body, redacted)
+		}
+	})
+	t.Run("a cut log", func(t *testing.T) {
+		const head, tail = 16 << 10, 48 << 10
+		data := engineLogBytes(100_000)
+		copy(data, remote)
+		copy(data[head-len(netErr):], netErr)      // the last bytes of the head
+		copy(data[len(data)-tail:], remote)        // the first bytes of the tail
+		copy(data[len(data)-len(netErr):], netErr) // the end of the file
+		st.writeEngineLog(t, 1, data)
+		code, body := st.request(t, http.MethodGet, "/engine-log?start=1")
+		if code != http.StatusOK {
+			t.Fatalf("answered %d", code)
+		}
+		note := fmt.Sprintf("\n[engine log cut: %d of %d bytes omitted]\n", len(data)-64<<10, len(data))
+		redactedRemote, redactedErr := strings.Split(redacted, "\n")[0]+"\n", strings.Split(redacted, "\n")[1]+"\n"
+		wantHead := redactedRemote + string(data[len(remote):head-len(netErr)]) + redactedErr
+		wantTail := redactedRemote + string(data[len(data)-tail+len(remote):len(data)-len(netErr)]) + redactedErr
+		if want := wantHead + note + wantTail; body != want {
+			t.Errorf("the body is %d bytes, want %d: the redacted head, the note for the file's %d bytes and the redacted tail", len(body), len(want), len(data))
+		}
+		if file, err := os.ReadFile(engineLogName(st.work, 1)); err != nil || !strings.Contains(string(file), "10.1.2.3:46376") || len(file) != len(data) {
+			t.Errorf("the file on disk was changed: %d bytes, %v", len(file), err)
+		}
+	})
+}
+
+// Nothing but a start of the supervisor selects a file: a number that is no
+// number is a 400, a start that does not exist a 404, and neither serves any
+// of the files that are there.
+func TestSupervisorEngineLogRefusals(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	st.setStarts(2)
+	planted := map[string]string{
+		engineLogName(st.work, 1):         "log of start one",
+		engineLogName(st.work, 2):         "log of start two",
+		engineLogName(st.work, 3):         "log of a start that has not been made",
+		filepath.Join(st.work, "2"):       "file named 2 in the work directory",
+		filepath.Join(st.work, "..", "x"): "file next to the work directory",
+	}
+	for name, text := range planted {
+		if err := os.WriteFile(name, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		query string
+		want  int
+	}{
+		{"", http.StatusBadRequest}, {"start=", http.StatusBadRequest}, {"start=abc", http.StatusBadRequest},
+		{"start=../x", http.StatusBadRequest}, {"start=..%2Fx", http.StatusBadRequest},
+		{"start=1/../2", http.StatusBadRequest}, {"start=1%2F..%2F2", http.StatusBadRequest},
+		{"start=engine-001.log", http.StatusBadRequest}, {"start=-1", http.StatusBadRequest}, {"start=%2B1", http.StatusBadRequest},
+		{"start=1.5", http.StatusBadRequest}, {"start=0x1", http.StatusBadRequest}, {"start=%201", http.StatusBadRequest},
+		{"start=1%20", http.StatusBadRequest}, {"start=1,2", http.StatusBadRequest}, {"start=%D9%A1", http.StatusBadRequest},
+		{"start=0", http.StatusNotFound}, {"start=00", http.StatusNotFound}, {"start=3", http.StatusNotFound},
+		{"start=99999999999999999999", http.StatusNotFound},
+	} {
+		code, body := st.request(t, http.MethodGet, "/engine-log?"+c.query)
+		if code != c.want {
+			t.Errorf("GET /engine-log?%s answered %d, want %d", c.query, code, c.want)
+		}
+		for _, text := range planted {
+			if strings.Contains(body, text) {
+				t.Errorf("GET /engine-log?%s served %q", c.query, text)
+			}
+		}
+	}
+	// The route works for the starts that exist, so the refusals above are the
+	// route's judgement of the number.
+	for n, want := range map[int]string{1: "log of start one", 2: "log of start two"} {
+		if code, body := st.request(t, http.MethodGet, fmt.Sprintf("/engine-log?start=%d", n)); code != http.StatusOK || body != want {
+			t.Errorf("start %d answered %d %q, want %q", n, code, body, want)
+		}
+	}
+	// A start that was made but left no file is as missing as one that was not.
+	st.setStarts(4)
+	if code, body := st.request(t, http.MethodGet, "/engine-log?start=4"); code != http.StatusNotFound {
+		t.Errorf("a start with no log file answered %d %q, want 404", code, body)
+	}
+	if code, body := st.request(t, http.MethodGet, "/engine-log?start=3"); code != http.StatusOK || body != planted[engineLogName(st.work, 3)] {
+		t.Errorf("start 3 answered %d %q once it was made", code, body)
+	}
+}
+
+// The route reads the file that startEngine made, whatever the start's number.
+func TestSupervisorServesTheOutputOfEachEnginesStart(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	if code, _ := st.request(t, http.MethodGet, "/engine-log?start=1"); code != http.StatusNotFound {
+		t.Errorf("before any start the route answered %d, want 404", code)
+	}
+	st.start(t, "default")
+	_, dir1 := st.stub(t)
+	st.start(t, "spin-pin")
+	_, dir2 := st.stub(t)
+	for n, c := range []struct{ has, hasNot string }{{dir1, dir2}, {dir2, dir1}} {
+		code, body := st.request(t, http.MethodGet, fmt.Sprintf("/engine-log?start=%d", n+1))
+		if code != http.StatusOK || !strings.Contains(body, "fake engine stdout, data "+c.has+"\n") ||
+			!strings.Contains(body, "fake engine stderr, data "+c.has+"\n") || strings.Contains(body, c.hasNot) {
+			t.Errorf("start %d answered %d %q, want the stdout and stderr of that engine alone", n+1, code, body)
+		}
+	}
+	if code, _ := st.request(t, http.MethodGet, "/engine-log?start=3"); code != http.StatusNotFound {
+		t.Errorf("start 3 answered %d, want 404", code)
 	}
 }
 

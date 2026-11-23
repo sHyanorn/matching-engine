@@ -72,7 +72,8 @@ type stubReport struct {
 }
 
 // fakeEngine stands in for the engine: it takes the engine's flags, writes a
-// stubReport to stub.json in its data directory and listens on both addresses.
+// line to stdout and one to stderr that name its data directory, writes a
+// stubReport to stub.json in the directory and listens on both addresses.
 // "fake-engine-mute" never listens and "fake-engine-deaf" ignores SIGTERM.
 func fakeEngine(kind string) {
 	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
@@ -84,6 +85,8 @@ func fakeEngine(kind string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	fmt.Println("fake engine stdout, data", *data)
+	fmt.Fprintln(os.Stderr, "fake engine stderr, data", *data)
 	entries, _ := os.ReadDir(*data)
 	rep := stubReport{Args: os.Args[1:], Env: os.Environ(), EntriesAtStart: []string{}}
 	for _, e := range entries {

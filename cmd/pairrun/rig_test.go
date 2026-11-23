@@ -40,6 +40,9 @@ type fakeSupervisor struct {
 	envText    string            // served as /engine-env.txt, if not empty
 	clockNS    float64           // the record's clock_read_ns
 	overrides  map[string]string // the record's overrides
+	engineLogs map[int]string    // served as /engine-log of the nth start; a short text of the start's number if absent
+	logStatus  map[int]int       // /engine-log of the nth start answers this status instead
+	logAsked   []string          // the start of each /engine-log request, as it was written
 }
 
 func newFakeSupervisor(t *testing.T) *fakeSupervisor {
@@ -48,6 +51,7 @@ func newFakeSupervisor(t *testing.T) *fakeSupervisor {
 		bump: map[int]bool{}, bumped: map[int]bool{}, hostFails: map[int]bool{}, failStarts: map[int]bool{}, wrongStart: map[int]string{},
 		loopback: map[string]string{"loopback.json": `{"valid": true, "mode": "oe_ioc"}`, "loopback.txt": "loopback table\n"},
 		envText:  "clock source: tsc\nthread siblings: cpu0=0,4\n", clockNS: 30,
+		engineLogs: map[int]string{}, logStatus: map[int]int{},
 	}
 	f.srv = httptest.NewServer(f)
 	t.Cleanup(f.srv.Close)
@@ -110,9 +114,29 @@ func (f *fakeSupervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = fmt.Fprint(w, f.envText)
+	case "GET /engine-log":
+		arg := r.URL.Query().Get("start")
+		f.logAsked = append(f.logAsked, arg)
+		n, _ := strconv.Atoi(arg)
+		if status := f.logStatus[n]; status != 0 {
+			http.Error(w, "no engine log", status)
+			return
+		}
+		if text, ok := f.engineLogs[n]; ok {
+			_, _ = fmt.Fprint(w, text)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "output of the engine of start %d\n", n)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// asked returns the starts that /engine-log was asked for, in order.
+func (f *fakeSupervisor) asked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.logAsked...)
 }
 
 func (f *fakeSupervisor) startedConfigs() []string {

@@ -104,6 +104,7 @@ type runRecord struct {
 	Started         string                `json:"started"`      // before the engine was started
 	Ended           string                `json:"ended"`        // after the engine's metrics were read
 	Report          string                `json:"report"`       // loadgen's JSON, relative to the results directory; "" if no engine was started
+	EngineLog       string                `json:"engine_log"`   // the engine's output, bounded, relative to the results directory; "" if none was fetched
 	LoadgenExit     int                   `json:"loadgen_exit"` // -1 if loadgen did not run or did not exit by itself
 	LoadgenValid    bool                  `json:"loadgen_valid"`
 	LoadgenProblems []string              `json:"loadgen_problems"`
@@ -112,7 +113,7 @@ type runRecord struct {
 	ClientHost      machinePair           `json:"client_host"`
 	EngineHost      enginePair            `json:"engine_host"`
 	EngineMetrics   *engineMetrics        `json:"engine_metrics"`
-	Notes           []string              `json:"notes,omitempty"` // what could not be read, and the failed attempts to start the engine
+	Notes           []string              `json:"notes,omitempty"` // what could not be read, a cut engine log, and the failed attempts to start the engine
 	Outcomes        map[string]int        `json:"outcomes"`
 	Trades          tradeCounts           `json:"trades"`
 	Latency         map[string]latencyRow `json:"latency_us"`
@@ -361,6 +362,7 @@ func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 	} else {
 		rec.Notes = append(rec.Notes, "engine metrics: "+err.Error())
 	}
+	c.keepEngineLog(ctx, base, before.Starts, &rec)
 
 	rec.Study = append(evaluate(cfg, rep, repErr, p.MaxSendLag), stableRule(before.Starts, afterPtr, afterErr))
 	rec.Valid = allMet(rec.Study)
@@ -515,6 +517,25 @@ func (c *client) scrapeMetrics(ctx context.Context) (engineMetrics, error) {
 		return engineMetrics{}, err
 	}
 	return parseMetrics(data)
+}
+
+// keepEngineLog saves the output of the engine of the start numbered start
+// next to the report of the run base. The log is evidence, not a rule of
+// validity, so one that cannot be had is noted and the run stands.
+func (c *client) keepEngineLog(ctx context.Context, base string, start int, rec *runRecord) {
+	data, err := c.fetch(ctx, http.MethodGet, "http://"+c.Ctl+"/engine-log?start="+strconv.Itoa(start), 10*time.Second)
+	name := path.Join("runs", base+".engine.log")
+	if err == nil {
+		err = writeFileAtomic(filepath.Join(c.Out, name), data)
+	}
+	if err != nil {
+		rec.Notes = append(rec.Notes, "engine log: "+err.Error())
+		return
+	}
+	rec.EngineLog = name
+	if note, cut := engineLogCut(data); cut {
+		rec.Notes = append(rec.Notes, "engine log: "+note)
+	}
 }
 
 // parseMetrics finds go_gc_duration_seconds_count and

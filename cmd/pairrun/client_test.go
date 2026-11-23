@@ -152,7 +152,7 @@ func TestClientFullMatrix(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &first); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"seq", "round", "config", "flow", "engine_config", "args", "started", "ended", "report", "loadgen_exit",
+	for _, key := range []string{"seq", "round", "config", "flow", "engine_config", "args", "started", "ended", "report", "engine_log", "loadgen_exit",
 		"loadgen_valid", "loadgen_problems", "study", "valid", "client_host", "engine_host", "engine_metrics", "outcomes", "trades", "latency_us"} {
 		if _, ok := first[key]; !ok {
 			t.Errorf("a run record has no %q", key)
@@ -175,8 +175,8 @@ func TestClientFullMatrix(t *testing.T) {
 		t.Errorf("engine-env.txt is %q, want the supervisor's text %q", got, r.sup.envText)
 	}
 	entries, err := os.ReadDir(filepath.Join(r.out, "runs"))
-	if err != nil || len(entries) != 92 {
-		t.Errorf("runs/ has %d files, %v, want 92", len(entries), err)
+	if err != nil || len(entries) != 138 {
+		t.Errorf("runs/ has %d files, %v, want 138: a report, loadgen's output and the engine's log for each of 46 runs", len(entries), err)
 	}
 	if err := filepath.WalkDir(r.out, func(path string, d fs.DirEntry, err error) error {
 		if err == nil && strings.HasSuffix(path, ".tmp") {
@@ -818,6 +818,12 @@ func TestClientStartFailure(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(r.out, "runs", "04-R1-spin-pin-r1.json")); err == nil {
 		t.Error("a report file was made for a run that never started")
 	}
+	if _, err := os.Stat(filepath.Join(r.out, "runs", "04-R1-spin-pin-r1.engine.log")); err == nil || rec.EngineLog != "" {
+		t.Errorf("run 4 has an engine log, %q, though no engine ran for it: %v", rec.EngineLog, err)
+	}
+	if got := r.sup.asked(); len(got) != 18 {
+		t.Errorf("%d engine logs asked for, want 18: one for each run that had an engine", len(got))
+	}
 	if next := records[4]; next.Seq != 5 || next.Config != "R2" || !next.Valid {
 		t.Errorf("the run after the failed one is %d %s, valid %v", next.Seq, next.Config, next.Valid)
 	}
@@ -993,6 +999,181 @@ func TestClientWhatCannotBeReadIsNoted(t *testing.T) {
 	}
 }
 
+// engineLogNotes are the notes of a run that are about its engine log.
+func engineLogNotes(rec runRecord) []string {
+	var notes []string
+	for _, n := range rec.Notes {
+		if strings.HasPrefix(n, "engine log") {
+			notes = append(notes, n)
+		}
+	}
+	return notes
+}
+
+// A run's engine log is written next to its report, from the start of the
+// engine that the run was made with, and the record names it.
+func TestClientKeepsTheEngineLogOfEachRun(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	r.sup.failStarts[4] = true // run 4 asks twice, so from there the starts are one ahead of the runs
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	records := r.records()
+	if len(records) != 10 {
+		t.Fatalf("%d records", len(records))
+	}
+	var wantAsked []string
+	for _, rec := range records {
+		start := rec.EngineHost.Before.Starts
+		wantAsked = append(wantAsked, strconv.Itoa(start))
+		if want := strings.TrimSuffix(rec.Report, ".json") + ".engine.log"; rec.EngineLog != want || !strings.HasPrefix(want, "runs/") {
+			t.Errorf("run %d names its engine log %q, want %q", rec.Seq, rec.EngineLog, want)
+		}
+		got, err := os.ReadFile(filepath.Join(r.out, rec.EngineLog))
+		if want := fmt.Sprintf("output of the engine of start %d\n", start); err != nil || string(got) != want {
+			t.Errorf("run %d: engine log %q, %v, want %q", rec.Seq, got, err, want)
+		}
+		if notes := engineLogNotes(rec); len(notes) != 0 || !rec.Valid {
+			t.Errorf("run %d: notes %v, valid %v, want none and valid", rec.Seq, notes, rec.Valid)
+		}
+	}
+	if got := r.sup.asked(); !slices.Equal(got, wantAsked) || got[3] != "5" {
+		t.Errorf("engine logs asked for %v, want the start of each run's engine, %v", got, wantAsked)
+	}
+	if line, _, _ := strings.Cut(string(r.file("runs.jsonl")), "\n"); !strings.Contains(line, `"engine_log":"runs/01-F-r1.engine.log"`) {
+		t.Errorf("the first line of runs.jsonl does not name the engine log: %s", line)
+	}
+}
+
+// Another engine may be started during a run (it then makes the run invalid);
+// the log of the run is still that of its own engine.
+func TestClientAsksForTheLogOfTheEngineOfTheRun(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	r.sup.bump[3] = true // after run 3's start, the supervisor starts another engine
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	rec := r.records()[2]
+	if rec.Valid || rec.EngineHost.Before.Starts != 3 || rec.EngineHost.After.Starts != 4 {
+		t.Fatalf("run 3: valid %v, starts %d then %d, want an invalid run that saw a second start", rec.Valid, rec.EngineHost.Before.Starts, rec.EngineHost.After.Starts)
+	}
+	if got := r.sup.asked(); got[2] != "3" {
+		t.Errorf("the log asked for after run 3 is start %s, want 3, the engine the run was made with", got[2])
+	}
+	if got, _ := os.ReadFile(filepath.Join(r.out, rec.EngineLog)); string(got) != "output of the engine of start 3\n" {
+		t.Errorf("run 3's engine log %q", got)
+	}
+}
+
+// A log that the supervisor cut carries its note into the record. The note is
+// recognised by the format of the supervisor's code and by where it stands,
+// not by any text a log holds: a log that quotes a note that does not add up
+// is not cut, and a head that redaction made shorter does not hide one.
+func TestClientNotesACutEngineLog(t *testing.T) {
+	cut := strings.Repeat("h", engineLogHead) + engineLogCutNote(5000, 70536) + strings.Repeat("t", engineLogTail)
+	for _, c := range []struct {
+		name string
+		log  string
+		cut  bool
+	}{
+		{"cut", cut, true},
+		{"cut, its head shorter than the head's size", strings.Repeat("h", 10_000) + engineLogCutNote(5000, 70536) + strings.Repeat("t", engineLogTail-100), true},
+		{"cut, after a line that quotes another note", engineLogCutNote(1, 2) + strings.Repeat("h", engineLogHead-200) + engineLogCutNote(5000, 70536) + strings.Repeat("t", engineLogTail), true},
+		{"as long as the limit", strings.Repeat("x", engineLogLimit), false},
+		{"a short log that quotes a note that does not add up", engineLogCutNote(1, 2), false},
+		{"a log under the limit that quotes such a note where a cut one has its own", strings.Repeat("h", engineLogHead) + engineLogCutNote(1, 2) + strings.Repeat("t", engineLogTail-100), false},
+		{"a log over the limit that has another line where the note would be", strings.Repeat("x", engineLogHead) + "\nnot a note\n" + strings.Repeat("x", engineLogLimit), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := rounds(1)
+			r := newRig(t, p, nil)
+			writeMatrixScript(t, p, nil)
+			r.sup.engineLogs[2] = c.log
+			if err := r.run(); err != nil {
+				t.Fatal(err)
+			}
+			for _, rec := range r.records() {
+				notes, wantNotes := engineLogNotes(rec), 0
+				if c.cut && rec.Seq == 2 {
+					wantNotes = 1
+				}
+				if len(notes) != wantNotes {
+					t.Errorf("run %d: engine log notes %v, want %d", rec.Seq, notes, wantNotes)
+				}
+				if !rec.Valid {
+					t.Errorf("run %d is invalid: %+v", rec.Seq, rec.Study)
+				}
+			}
+			rec := r.records()[1]
+			if got, err := os.ReadFile(filepath.Join(r.out, rec.EngineLog)); err != nil || string(got) != c.log {
+				t.Errorf("the engine log kept is not the one served: %v", err)
+			}
+			if c.cut {
+				if notes := engineLogNotes(rec); len(notes) != 1 || !strings.Contains(notes[0], "5000 of 70536 bytes omitted") {
+					t.Errorf("run 2 notes %v, want one that says how much was omitted", rec.Notes)
+				}
+			}
+		})
+	}
+}
+
+// The log is evidence, not a rule: a run whose engine log could not be had is
+// as valid as it would have been with it.
+func TestClientEngineLogThatCannotBeFetchedIsNoted(t *testing.T) {
+	// Run 5, R2, is invalid, so that a run's invalidity is compared as well.
+	matrix := func(t *testing.T, status map[int]int) (*rig, []runRecord) {
+		t.Helper()
+		p := rounds(1)
+		r := newRig(t, p, nil)
+		writeMatrixScript(t, p, func(cfg config, round int, f fakeRun) fakeRun {
+			if cfg.Name == "R2" {
+				return editReport(f, func(c *cannedReport) { c.Outcomes = map[string]int{"order_rested": 5, "error": 2} })
+			}
+			return f
+		})
+		r.sup.logStatus = status
+		if err := r.run(); err != nil {
+			t.Fatal(err)
+		}
+		return r, r.records()
+	}
+	_, want := matrix(t, nil)
+	if !want[2].Valid || want[4].Valid {
+		t.Fatalf("without a failure run 3 is valid %v and run 5 valid %v, want true and false", want[2].Valid, want[4].Valid)
+	}
+	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			r, got := matrix(t, map[int]int{3: status, 5: status})
+			for i, rec := range got {
+				failing, notes, wantNotes := rec.Seq == 3 || rec.Seq == 5, engineLogNotes(rec), 0
+				if failing {
+					wantNotes = 1
+				}
+				if failing != (rec.EngineLog == "") || len(notes) != wantNotes {
+					t.Errorf("run %d: engine log %q, notes %v, want %d note and a log unless the fetch failed", rec.Seq, rec.EngineLog, rec.Notes, wantNotes)
+				}
+				if failing && !strings.Contains(notes[0], strconv.Itoa(status)) {
+					t.Errorf("run %d: note %q does not say what the supervisor answered", rec.Seq, notes[0])
+				}
+				if rec.Valid != want[i].Valid || !reflect.DeepEqual(rec.Study, want[i].Study) {
+					t.Errorf("run %d: valid %v and rules %+v, want those of the run without the failure, %v and %+v", rec.Seq, rec.Valid, rec.Study, want[i].Valid, want[i].Study)
+				}
+				_, err := os.Stat(filepath.Join(r.out, "runs", fmt.Sprintf("%02d-%s-r1.engine.log", rec.Seq, rec.Config)))
+				if failing != errors.Is(err, os.ErrNotExist) {
+					t.Errorf("run %d: engine log file, %v, want one unless the fetch failed: %v", rec.Seq, err, !failing)
+				}
+			}
+			if len(got) != len(want) {
+				t.Errorf("%d runs, want the %d of the matrix without the failure", len(got), len(want))
+			}
+		})
+	}
+}
+
 func TestClientKillsALoadgenThatOutlastsItsWindow(t *testing.T) {
 	p := rounds(1)
 	p.Warmup, p.Duration = 0, 100*time.Millisecond
@@ -1096,7 +1277,7 @@ func TestClientKilledInTheMiddleLeavesWholeFiles(t *testing.T) {
 
 	lines := 0
 	err := filepath.WalkDir(out, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || strings.HasSuffix(path, ".tmp") || strings.HasSuffix(path, ".txt") {
+		if err != nil || d.IsDir() || strings.HasSuffix(path, ".tmp") || strings.HasSuffix(path, ".txt") || strings.HasSuffix(path, ".log") {
 			return err
 		}
 		data, err := os.ReadFile(path)

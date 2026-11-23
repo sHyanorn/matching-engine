@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,53 @@ const (
 	engineHTTPAddr  = "0.0.0.0:8080"
 	engineOEAddr    = "0.0.0.0:9000"
 )
+
+// What /engine-log serves of an engine's output: a file of at most
+// engineLogLimit bytes whole, else its first engineLogHead bytes, a line that
+// says how much was left out, and its last engineLogTail bytes. The client
+// finds a cut by engineLogCutFormat, so the note is built from it.
+const (
+	engineLogLimit     = 64 << 10
+	engineLogHead      = 16 << 10
+	engineLogTail      = engineLogLimit - engineLogHead
+	engineLogCutPrefix = "[engine log cut: "
+	engineLogCutFormat = engineLogCutPrefix + "%d of %d bytes omitted]"
+)
+
+// engineLogName is the file that the output of the engine of the nth start
+// goes to in work.
+func engineLogName(work string, n int) string {
+	return filepath.Join(work, fmt.Sprintf("engine-%03d.log", n))
+}
+
+// engineLogCutNote is the separator of a cut log: a line of its own, however
+// the head ends.
+func engineLogCutNote(omitted, total int64) string {
+	return fmt.Sprintf("\n"+engineLogCutFormat+"\n", omitted, total)
+}
+
+// engineLogCut returns the note line of a log that /engine-log cut, and
+// whether it is one. The head is served redacted and so may be shorter than
+// engineLogHead: the note is the line, within the first engineLogHead bytes,
+// that engineLogCutNote makes for a file of more than engineLogLimit bytes. A
+// log that quotes another number is not cut.
+func engineLogCut(body []byte) (string, bool) {
+	marker := []byte("\n" + engineLogCutPrefix)
+	window := body[:min(len(body), engineLogHead+len(marker))]
+	for off := 0; ; {
+		i := bytes.Index(window[off:], marker)
+		if i < 0 {
+			return "", false
+		}
+		line, _, _ := bytes.Cut(body[off+i+1:], []byte("\n"))
+		var omitted, total int64
+		if _, err := fmt.Sscanf(string(line), engineLogCutFormat, &omitted, &total); err == nil &&
+			omitted > 0 && total-omitted == engineLogLimit && string(line) == fmt.Sprintf(engineLogCutFormat, omitted, total) {
+			return string(line), true
+		}
+		off += i + 1
+	}
+}
 
 // superviseOptions are what `pairrun supervise` is given.
 type superviseOptions struct {
@@ -62,9 +110,9 @@ func engineConfigs(goMemLimit int64) map[string]engineConfig {
 
 // supervisor runs the engine on this machine for the client on the other,
 // through a control port that has no authentication. It therefore serves
-// six routes and nothing else, and runs only the binaries it was started with
-// in the configurations of its table. One route serves the text of the -env
-// file as it is, so that file must hold nothing that is secret.
+// the routes of ServeHTTP and nothing else, and runs only the binaries it was
+// started with in the configurations of its table. One route serves the text
+// of the -env file as it is, so that file must hold nothing that is secret.
 type supervisor struct {
 	ctx        context.Context // ends with the process
 	out        io.Writer
@@ -213,9 +261,160 @@ func (s *supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(s.work, "loopback.txt"))
 	case "GET /engine-env.txt":
 		s.serveEnvText(w, r)
+	case "GET /engine-log":
+		s.serveEngineLog(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// serveEngineLog serves what the engine of the start numbered by the query's
+// start wrote to its stdout and stderr, bounded as engineLogLimit says. The
+// engine has not stopped when the client reads its log, so its lines at
+// shutdown are not in it. A start is a decimal number from 1 to the count of
+// starts, and the file name is built from the number alone: the route takes
+// no path, so it serves only files that startEngine named.
+//
+// The served text is redacted (redactAddresses): the results are published,
+// and the log names the machines that connected to the engine. The file stays
+// as the engine wrote it, and the note counts that file's bytes, not the
+// served ones.
+func (s *supervisor) serveEngineLog(w http.ResponseWriter, r *http.Request) {
+	arg := r.URL.Query().Get("start")
+	n, err := strconv.ParseUint(arg, 10, 64) // no sign, no separators
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		http.Error(w, fmt.Sprintf("start %q is not a number", arg), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	starts := s.starts
+	s.mu.Unlock()
+	if err != nil || n < 1 || n > uint64(starts) {
+		http.Error(w, fmt.Sprintf("no start %q: the supervisor has made %d", arg, starts), http.StatusNotFound)
+		return
+	}
+	body, err := readEngineLog(engineLogName(s.work, int(n)))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		http.Error(w, fmt.Sprintf("no log of start %d", n), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, "reading the engine log: "+err.Error(), http.StatusInternalServerError)
+	default:
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write(body) // a client that has gone has no use for an error
+	}
+}
+
+// readEngineLog reads the file name as /engine-log serves it. The engine may
+// still be appending, so the size is read once and every range lies below it.
+func readEngineLog(name string) ([]byte, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }() // only read
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := fi.Size()
+	if size <= engineLogLimit {
+		body := make([]byte, size)
+		if err := readRange(f, body, 0); err != nil {
+			return nil, err
+		}
+		return redactAddresses(body), nil
+	}
+	head, tail := make([]byte, engineLogHead), make([]byte, engineLogTail)
+	if err := errors.Join(readRange(f, head, 0), readRange(f, tail, size-engineLogTail)); err != nil {
+		return nil, err
+	}
+	body := append(redactAddresses(head), engineLogCutNote(size-engineLogLimit, size)...)
+	return append(body, redactAddresses(tail)...), nil
+}
+
+// redactedAddress is what redactAddresses puts in place of an address.
+const redactedAddress = "x.x.x.x"
+
+// redactAddresses returns text with every IPv4 address, and the port that
+// follows it if there is one, replaced by redactedAddress, except 0.0.0.0 and
+// 127.0.0.1 (the engine's own listen address and loopback), which stay with
+// their port. An address is four decimal numbers of at most 255 joined by
+// dots, with no digit before or after it and no dot and digit before or after
+// it: a timestamp, a longer number or 1.2.3.4.5 is not one. IPv6 addresses
+// are not redacted. The result is never longer than text.
+func redactAddresses(text []byte) []byte {
+	out := make([]byte, 0, len(text))
+	for i := 0; i < len(text); {
+		n := dottedQuad(text, i)
+		if n == 0 {
+			out = append(out, text[i])
+			i++
+			continue
+		}
+		quad := string(text[i : i+n])
+		i += n
+		if quad == "0.0.0.0" || quad == "127.0.0.1" {
+			out = append(out, quad...)
+			continue
+		}
+		out = append(out, redactedAddress...)
+		i += portLen(text[i:])
+	}
+	return out
+}
+
+// dottedQuad returns the length of the IPv4 address that starts at text[i],
+// or 0 if none does.
+func dottedQuad(text []byte, i int) int {
+	digit := func(j int) bool { return j >= 0 && j < len(text) && text[j] >= '0' && text[j] <= '9' }
+	if !digit(i) || digit(i-1) || i >= 1 && text[i-1] == '.' && digit(i-2) {
+		return 0
+	}
+	j := i
+	for octet := range 4 {
+		if octet > 0 {
+			if j >= len(text) || text[j] != '.' {
+				return 0
+			}
+			j++
+		}
+		start, value := j, 0
+		for ; digit(j) && j-start < 4; j++ {
+			value = value*10 + int(text[j]-'0')
+		}
+		if j == start || j-start > 3 || value > 255 {
+			return 0
+		}
+	}
+	if j < len(text) && text[j] == '.' && digit(j+1) {
+		return 0
+	}
+	return j - i
+}
+
+// portLen returns the length of the ":port" that starts text, or 0.
+func portLen(text []byte) int {
+	if len(text) == 0 || text[0] != ':' {
+		return 0
+	}
+	n := 0
+	for 1+n < len(text) && text[1+n] >= '0' && text[1+n] <= '9' {
+		n++
+	}
+	if n == 0 || n > 5 {
+		return 0
+	}
+	return 1 + n
+}
+
+// readRange fills p from the file at off.
+func readRange(f io.ReaderAt, p []byte, off int64) error {
+	n, err := f.ReadAt(p, off)
+	if n == len(p) {
+		return nil // the last byte of a file may come with io.EOF
+	}
+	return err
 }
 
 // serveEnvText serves the text of the file named by -env as it is, read at
@@ -324,7 +523,7 @@ func (s *supervisor) startEngine(name string, cfg engineConfig, prefix []string)
 	if err != nil {
 		return err
 	}
-	logName := filepath.Join(s.work, fmt.Sprintf("engine-%03d.log", n))
+	logName := engineLogName(s.work, n)
 	logFile, err := os.Create(logName)
 	if err != nil {
 		return errors.Join(err, os.RemoveAll(dir))

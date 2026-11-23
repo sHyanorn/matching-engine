@@ -9,10 +9,12 @@
 // configurations, decides for each run whether it is valid by the study's own
 // rules, computes the gate G2 after every round and writes every run, with
 // loadgen's numbers as they came, to its results directory (plan.go,
-// validity.go, g2.go, summary.go).
+// validity.go, g2.go, summary.go). Each run's results also hold the engine's
+// own output for it, bounded in size and without network addresses.
 //
-// The control port has no authentication: the supervisor serves six routes
-// and runs nothing the client names but a configuration of its own table.
+// The control port has no authentication: the supervisor serves a fixed set of
+// routes, none of which takes a path, and runs nothing the client names but a
+// configuration of its own table.
 // scripts/pair.sh starts it without the Pod's API key, and it starts the
 // engine and loadgen with environments of their own, not its own. It runs on
 // Linux.

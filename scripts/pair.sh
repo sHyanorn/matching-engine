@@ -47,12 +47,14 @@
 # ENGINE_HTTP and ENGINE_CTL (host:port of the three), with the Pod's own
 # DEADLINE as the end of its time, and publishes its results as client
 # does, with what the client fetched from the supervisor as engine-env.txt
-# next to env.txt. matrix passes DEADLINE_MARGIN with DEADLINE: no run
-# starts unless it would end that long before DEADLINE. It is a Go
-# duration ("600s", not "600") and 10m when unset (pairrun's
-# -deadline-margin); a value that is not one ends the client at flag
-# parsing, before any run. PILOT_* variables override the plan's rates and
-# durations for a rehearsal (cmd/pairrun).
+# next to env.txt. The results also hold the output of the engine of each
+# run as runs/*.engine.log, bounded in size, with its IPv4 addresses but
+# 0.0.0.0 and 127.0.0.1 replaced by x.x.x.x. matrix passes DEADLINE_MARGIN
+# with DEADLINE: no run starts unless it would end that long before
+# DEADLINE. It is a Go duration ("600s", not "600") and 10m when unset
+# (pairrun's -deadline-margin); a value that is not one ends the client at
+# flag parsing, before any run. PILOT_* variables override the plan's rates
+# and durations for a rehearsal (cmd/pairrun).
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

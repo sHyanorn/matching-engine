@@ -24,10 +24,11 @@
 # half of its CPUs, with the plan's durations and send lag bound
 # shortened by PILOT_* variables, and checks that the results come out
 # whole, hold the supervisor's environment text, can be fetched from port
-# 8000 with no one logged in, and say that they are a rehearsal, and that
-# the key stays with the self-delete timer. It takes minutes; the summary
-# of what it found is printed. Ports 8000, 8080, 9000 and 9100 must be
-# free.
+# 8000 with no one logged in, and say that they are a rehearsal, that each
+# run's report comes with the engine's log, which holds no network address
+# but 0.0.0.0 and 127.0.0.1, and that the key stays with the self-delete
+# timer. It takes minutes; the summary of what it found is printed. Ports
+# 8000, 8080, 9000 and 9100 must be free.
 #
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
@@ -335,6 +336,30 @@ for line in open(os.path.join(r, "runs.jsonl")):
     for ext in (".json", ".txt"):
         assert os.path.exists(base + ext), run["report"]
 ' "$r"
+	check "every run that has a report has a non-empty engine log next to it" \
+		python3 -I -c '
+import json, os, sys
+r = sys.argv[1]
+for line in open(os.path.join(r, "runs.jsonl")):
+    run = json.loads(line)
+    if run["report"] == "":
+        continue
+    log = run["engine_log"]
+    assert log == os.path.splitext(run["report"])[0] + ".engine.log", run["report"]
+    assert os.path.getsize(os.path.join(r, log)) > 0, log
+' "$r"
+	# The rehearsal talks over loopback only: the route's tests show the
+	# redaction, and this shows that no other address reaches the archive.
+	check "no engine log holds an IPv4 address other than 0.0.0.0 and 127.0.0.1" \
+		python3 -I -c '
+import glob, os, re, sys
+quad = re.compile(r"(?<![0-9])(?<![0-9]\.)[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?![0-9])(?!\.[0-9])")
+logs = glob.glob(os.path.join(sys.argv[1], "runs", "*.engine.log"))
+assert logs, "no engine logs"
+for name in logs:
+    for m in quad.finditer(open(name, errors="replace").read()):
+        assert m.group(0) in ("0.0.0.0", "127.0.0.1"), (name, m.group(0))
+' "$r"
 	check "the summary says that this is a rehearsal and not publishable" \
 		python3 -I -c '
 import json, sys
@@ -343,7 +368,8 @@ assert s["rehearsal"] is True and s["publishable"] is False
 ' "$r"
 	check "the control port serves nothing but its routes" \
 		bash -c '[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" http://127.0.0.1:9100/proc/self/environ)" = 404 ] &&
-			[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:9100/start?config=nope")" = 400 ]'
+			[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:9100/start?config=nope")" = 400 ] &&
+			[ "$(curl -s --noproxy "*" -o /dev/null -w "%{http_code}" "http://127.0.0.1:9100/engine-log?start=../x")" = 400 ]'
 	check "no response of the control port holds the environment" \
 		bash -c '! curl -s --noproxy "*" http://127.0.0.1:9100/host | grep -qE "PATH=|RUNPOD|COMMIT"'
 	check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$r"
