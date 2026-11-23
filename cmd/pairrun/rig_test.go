@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,13 @@ type fakeSupervisor struct {
 	engineLogs map[int]string    // served as /engine-log of the nth start; a short text of the start's number if absent
 	logStatus  map[int]int       // /engine-log of the nth start answers this status instead
 	logAsked   []string          // the start of each /engine-log request, as it was written
+
+	counterReads  int                  // the /counters requests so far
+	counterAnswer func(n int) counters // what the nth /counters answers; fakeEngineCounters if nil
+	counterStatus map[int]int          // the nth /counters answers this status instead
+	counterBody   map[int]string       // ... or this text
+	counterAll    int                  // every /counters answers this status, if not 0
+	onCounters    func(n int)          // called at each /counters, with its number
 }
 
 func newFakeSupervisor(t *testing.T) *fakeSupervisor {
@@ -51,7 +59,7 @@ func newFakeSupervisor(t *testing.T) *fakeSupervisor {
 		bump: map[int]bool{}, bumped: map[int]bool{}, hostFails: map[int]bool{}, failStarts: map[int]bool{}, wrongStart: map[int]string{},
 		loopback: map[string]string{"loopback.json": `{"valid": true, "mode": "oe_ioc"}`, "loopback.txt": "loopback table\n"},
 		envText:  "clock source: tsc\nthread siblings: cpu0=0,4\n", clockNS: 30,
-		engineLogs: map[int]string{}, logStatus: map[int]int{},
+		engineLogs: map[int]string{}, logStatus: map[int]int{}, counterStatus: map[int]int{}, counterBody: map[int]string{},
 	}
 	f.srv = httptest.NewServer(f)
 	t.Cleanup(f.srv.Close)
@@ -127,8 +135,43 @@ func (f *fakeSupervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = fmt.Fprintf(w, "output of the engine of start %d\n", n)
+	case "GET /counters":
+		f.counterReads++
+		n := f.counterReads
+		if f.onCounters != nil {
+			f.onCounters(n)
+		}
+		if status := cmp.Or(f.counterAll, f.counterStatus[n]); status != 0 {
+			http.Error(w, "no counters", status)
+			return
+		}
+		if body, ok := f.counterBody[n]; ok {
+			_, _ = fmt.Fprint(w, body)
+			return
+		}
+		read := fakeEngineCounters(n)
+		if f.counterAnswer != nil {
+			read = f.counterAnswer(n)
+		}
+		_ = json.NewEncoder(w).Encode(read)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// fakeEngineCounters is the nth reading of the fake supervisor's machine, all
+// of it counters that rise with the square of n, so that the difference of the
+// two readings of a run, the (2k-1)th and the 2kth of run k, differs from run
+// to run.
+func fakeEngineCounters(n int) counters {
+	v := int64(n * n)
+	return counters{
+		Values: map[string]int64{
+			schedRunNS: 1000 * v, schedDelayNS: 10 * v, schedSlices: 5 * v, schedTasks: 12,
+			cpuNrPeriods: 10 * v, cpuNrThrottled: v, cpuThrottledUS: 7 * v, cpuQuotaUS: 400000, cpuPeriodUS: 100000,
+			psiCPUSomeUS: 3 * v, stealTicks: v,
+		},
+		Source: map[string]string{psiSource: "cgroup", cpuStatSource: cgroupV2, cpuLimitSource: cgroupV2},
 	}
 }
 
@@ -148,7 +191,17 @@ func (f *fakeSupervisor) startedConfigs() []string {
 // metricsServer serves the engine's /metrics page, or answers status.
 func metricsServer(t *testing.T, status int) string {
 	t.Helper()
+	return metricsServerNoting(t, status, nil)
+}
+
+// metricsServerNoting is metricsServer that calls onRequest, if not nil, at
+// each request.
+func metricsServerNoting(t *testing.T, status int, onRequest func()) string {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if onRequest != nil {
+			onRequest()
+		}
 		if r.URL.Path != "/metrics" || status != http.StatusOK {
 			http.Error(w, "no metrics", status)
 			return

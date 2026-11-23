@@ -36,6 +36,7 @@ func fakeHostFiles(cpus string) map[string]string {
 		"status":     "Name:\tpairrun\nCpus_allowed_list:\t" + cpus + "\n",
 		"meminfo":    meminfo16G,
 		"memory.max": fmt.Sprint(fakeMemLimit),
+		"stat":       statText, "cpu.stat": cpuStatV2Text, "cpu.max": "max 100000\n", "cpu.pressure": pressureText,
 	}
 }
 
@@ -308,6 +309,7 @@ func TestSupervisorRoutes(t *testing.T) {
 		{"GET", "/loopback"}, {"GET", "/loopback.json/"}, {"POST", "/loopback.json"}, {"HEAD", "/loopback.txt"}, {"GET", "/Host"},
 		{"GET", "/engine-env"}, {"GET", "/engine-env.txt/"}, {"POST", "/engine-env.txt"}, {"HEAD", "/engine-env.txt"},
 		{"POST", "/engine-log?start=1"}, {"HEAD", "/engine-log?start=1"}, {"GET", "/engine-log/"}, {"GET", "/engine-logs"}, {"GET", "/engine-log.txt"},
+		{"POST", "/counters"}, {"HEAD", "/counters"}, {"GET", "/counters/"}, {"GET", "/Counters"}, {"GET", "/counters.json"},
 		{"POST", "/exec?cmd=id"}, {"OPTIONS", "/host"},
 	} {
 		if code, body := st.request(t, c.method, c.path); code != http.StatusNotFound {
@@ -321,6 +323,9 @@ func TestSupervisorRoutes(t *testing.T) {
 	}
 	if code, _ := st.request(t, http.MethodGet, "/host"); code != http.StatusOK {
 		t.Errorf("GET /host answered %d", code)
+	}
+	if code, _ := st.request(t, http.MethodGet, "/counters"); code != http.StatusOK {
+		t.Errorf("GET /counters answered %d", code)
 	}
 	if code, _ := st.request(t, http.MethodPost, "/stop"); code != http.StatusOK {
 		t.Errorf("POST /stop answered %d", code)
@@ -370,6 +375,93 @@ func TestSupervisorHostRecord(t *testing.T) {
 	}
 	if code, _ := st.request(t, http.MethodGet, "/host"); code != http.StatusInternalServerError {
 		t.Errorf("/host without the host's files answered %d, want 500", code)
+	}
+}
+
+// countersRoute reads /counters.
+func (st *supervisorTest) countersRoute(t *testing.T) counters {
+	t.Helper()
+	code, body := st.request(t, http.MethodGet, "/counters")
+	var c counters
+	if err := json.Unmarshal([]byte(body), &c); code != http.StatusOK || err != nil {
+		t.Fatalf("/counters answered %d %q, %v", code, body, err)
+	}
+	return c
+}
+
+// hasProcessCounters reports whether c holds any counter of a process, as a
+// value or as unreadable.
+func hasProcessCounters(c counters) bool {
+	for _, name := range processNames {
+		_, read := c.Values[name]
+		_, not := c.Unreadable[name]
+		if read || not {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSupervisorServesCounters(t *testing.T) {
+	st := newSupervisorTest(t)
+	st.ready = true
+	dir := filepath.Dir(st.src.procDir) // where fakeSources has the files, and where the threads go
+
+	// No engine runs: the machine's counters and none of a process.
+	c := st.countersRoute(t)
+	values(t, c, map[string]int64{
+		cpuNrPeriods: 100, cpuNrThrottled: 7, cpuThrottledUS: 4500, cpuQuotaUS: -1, cpuPeriodUS: 100000,
+		psiCPUSomeUS: 210309781, stealTicks: 3306,
+	})
+	if hasProcessCounters(c) {
+		t.Errorf("with no engine, the answer has counters of a process: %+v", c)
+	}
+
+	// The engine that /host reports has its threads read, and no other process.
+	h := st.start(t, "default")
+	fakeThreads(t, dir, h.EnginePID, map[string]string{"1": "1000 100 3\n", "2": "2000 200 5\n"})
+	c = st.countersRoute(t)
+	for name, want := range map[string]int64{schedRunNS: 3000, schedDelayNS: 300, schedSlices: 8, schedTasks: 2, stealTicks: 3306} {
+		if c.Values[name] != want {
+			t.Errorf("%s is %d, want %d (unreadable: %v)", name, c.Values[name], want, c.Unreadable)
+		}
+	}
+
+	// A stopped engine, or one that has exited, is not read.
+	if code, body := st.request(t, http.MethodPost, "/stop"); code != http.StatusOK {
+		t.Fatalf("/stop answered %d %q", code, body)
+	}
+	if c = st.countersRoute(t); hasProcessCounters(c) {
+		t.Errorf("after /stop, the answer has counters of a process: %+v", c)
+	}
+	h = st.start(t, "default")
+	fakeThreads(t, dir, h.EnginePID, map[string]string{"1": "1000 100 3\n"})
+	if err := syscall.Kill(h.EnginePID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the supervisor to see that the engine has exited", func() bool {
+		_, body := st.request(t, http.MethodGet, "/host")
+		var rec hostRecord
+		return json.Unmarshal([]byte(body), &rec) == nil && rec.EnginePID == 0
+	})
+	if c = st.countersRoute(t); hasProcessCounters(c) {
+		t.Errorf("after the engine exited, the answer has counters of a process: %+v", c)
+	}
+	if c.Values[stealTicks] != 3306 {
+		t.Errorf("the machine's counters are gone with the engine: %+v", c)
+	}
+}
+
+// The files of a machine that has nothing of what is read say so for each
+// name, and the route still answers.
+func TestSupervisorCountersOfAMachineWithoutTheFiles(t *testing.T) {
+	st := newSupervisorTest(t, func(o *superviseOptions) {
+		o.src = fakeSources(fakeProc(t, map[string]string{"meminfo": meminfo16G}))
+	})
+	c := st.countersRoute(t)
+	eachNameOnce(t, c, machineNames...)
+	if len(c.Values) != 0 {
+		t.Errorf("values %v of files that do not exist", c.Values)
 	}
 }
 

@@ -354,6 +354,43 @@ func TestBuildSummaryStopAndG2(t *testing.T) {
 	}
 }
 
+// counters_readable is made from the runs' deltas, for each machine: a name
+// read in any run is readable, one read in none is unreadable.
+func TestBuildSummaryCountersReadable(t *testing.T) {
+	records := matrix(1, good)
+	records[0].EngineDelta = &deltaResult{
+		Values:     map[string]int64{schedRunNS: 5, stealTicks: 0},
+		Unreadable: map[string]string{psiCPUSomeUS: "open /proc/pressure/cpu: no such file or directory"},
+		Settings:   counters{Values: map[string]int64{cpuQuotaUS: -1}, Unreadable: map[string]string{cpuPeriodUS: "empty"}},
+	}
+	records[1].EngineDelta = &deltaResult{
+		Values:     map[string]int64{schedRunNS: 7},
+		Unreadable: map[string]string{psiCPUSomeUS: "no some line", stealTicks: "went down"},
+		Settings:   counters{Values: map[string]int64{cpuQuotaUS: -1}, Unreadable: map[string]string{cpuPeriodUS: "empty"}},
+	}
+	records[2].EngineDelta = &deltaResult{Unreadable: map[string]string{allUnreadable: "404"}} // no reading: no name
+	records[0].ClientDelta = &deltaResult{Values: map[string]int64{cpuNrPeriods: 1}}
+	// The other runs have no deltas, as a run whose engine did not start has none.
+	s := summaryOf(records, nil)
+	engine := namesRead{
+		Readable:   []string{cpuQuotaUS, schedRunNS, stealTicks},
+		Unreadable: []string{cpuPeriodUS, psiCPUSomeUS},
+	}
+	client := namesRead{Readable: []string{cpuNrPeriods}, Unreadable: []string{}}
+	if !reflect.DeepEqual(s.CountersReadable.Engine, engine) || !reflect.DeepEqual(s.CountersReadable.Client, client) {
+		t.Errorf("counters_readable engine %+v, client %+v, want %+v and %+v", s.CountersReadable.Engine, s.CountersReadable.Client, engine, client)
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"counters_readable":{"engine":{"readable":["cpu_quota_us","sched_run_ns","steal_ticks"],"unreadable":["cpu_period_us","psi_cpu_some_us"]},` +
+		`"client":{"readable":["cpu_nr_periods"],"unreadable":[]}}`
+	if !strings.Contains(string(data), want) {
+		t.Errorf("summary.json lacks %s:\n%s", want, data)
+	}
+}
+
 func TestSummaryJSONIsStable(t *testing.T) {
 	s := summaryOf(matrix(5, good), nil)
 	a, errA := json.MarshalIndent(s, "", "  ")

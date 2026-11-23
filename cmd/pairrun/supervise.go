@@ -112,7 +112,8 @@ func engineConfigs(goMemLimit int64) map[string]engineConfig {
 // through a control port that has no authentication. It therefore serves
 // the routes of ServeHTTP and nothing else, and runs only the binaries it was
 // started with in the configurations of its table. One route serves the text
-// of the -env file as it is, so that file must hold nothing that is secret.
+// of the -env file as it is, so that file must hold nothing that is secret;
+// /counters serves numbers only.
 type supervisor struct {
 	ctx        context.Context // ends with the process
 	out        io.Writer
@@ -251,6 +252,8 @@ func (s *supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method + " " + r.URL.Path {
 	case "GET /host":
 		s.serveRecord(w)
+	case "GET /counters":
+		s.serveCounters(w)
 	case "POST /start":
 		s.serveStart(w, r)
 	case "POST /stop":
@@ -428,6 +431,17 @@ func (s *supervisor) serveEnvText(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, s.envFile)
 }
 
+// serveCounters answers with a reading of the machine's CPU counters and, if
+// an engine runs, of its threads' (counters.go). The engine is the one that
+// /host reports; none of the process counters are read when there is none.
+func (s *supervisor) serveCounters(w http.ResponseWriter) {
+	s.mu.Lock()
+	_, pid := s.runningEngine()
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(readCounters(s.src, pid)) // a client that has gone has no use for an error
+}
+
 func (s *supervisor) serveRecord(w http.ResponseWriter) {
 	h, err := s.record()
 	if err != nil {
@@ -497,14 +511,23 @@ func (s *supervisor) record() (hostRecord, error) {
 		Ready: s.ready, Starts: s.starts, machine: m, MemLimitBytes: s.memLimit, GoMemLimitBytes: s.goMemLimit,
 		ClockReadNS: s.clockNS, Overrides: s.overrides,
 	}
-	if s.cmd != nil {
-		select {
-		case <-s.exited:
-		default:
-			h.Config, h.EnginePID = s.config, s.cmd.Process.Pid
-		}
-	}
+	h.Config, h.EnginePID = s.runningEngine()
 	return h, nil
+}
+
+// runningEngine returns the configuration and the PID of the engine, or "" and
+// 0 if none runs. The engine counts as running only until it exits. The caller
+// holds s.mu.
+func (s *supervisor) runningEngine() (config string, pid int) {
+	if s.cmd == nil {
+		return "", 0
+	}
+	select {
+	case <-s.exited:
+		return "", 0
+	default:
+		return s.config, s.cmd.Process.Pid
+	}
 }
 
 // startEngine stops the running engine, gives a new one an empty data

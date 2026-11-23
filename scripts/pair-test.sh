@@ -34,9 +34,11 @@
 # whole, hold the supervisor's environment text, can be fetched from port
 # 8000 with no one logged in, and say that they are a rehearsal, that each
 # run's report comes with the engine's log, which holds no network address
-# but 0.0.0.0 and 127.0.0.1, that the log copy holds the plan, the runs and
-# the summary, and that the key stays with the self-delete timer. It takes
-# minutes; the summary of what it found, and the number of lines that the
+# but 0.0.0.0 and 127.0.0.1, that each run's record has the difference of the
+# CPU counters of both machines and the summary says which could be read,
+# that the log copy holds the plan, the runs and the summary, and that the
+# key stays with the self-delete timer. It takes minutes; the summary of what
+# it found, the counters that were readable and the number of lines that the
 # archive's block takes in the log, are printed. Ports 8000, 8080, 9000 and
 # 9100 must be free.
 #
@@ -467,6 +469,36 @@ for line in open(os.path.join(r, "runs.jsonl")):
     assert log == os.path.splitext(run["report"])[0] + ".engine.log", run["report"]
     assert os.path.getsize(os.path.join(r, log)) > 0, log
 ' "$r"
+	# The quota and period are settings, kept apart from the counters.
+	check "every run that has a report has the difference of the counters of each machine: each counter read or unreadable, none both" \
+		python3 -I -c '
+import json, os, sys
+r = sys.argv[1]
+machine = ["cpu_nr_periods", "cpu_nr_throttled", "cpu_throttled_us", "cpu_quota_us", "cpu_period_us", "psi_cpu_some_us", "steal_ticks"]
+process = ["sched_run_ns", "sched_delay_ns", "sched_slices", "sched_tasks"]
+runs = 0
+for line in open(os.path.join(r, "runs.jsonl")):
+    run = json.loads(line)
+    if run["report"] == "":
+        continue
+    runs += 1
+    for key, names in (("client_delta", machine), ("engine_delta", machine + process)):
+        d = run[key]
+        assert isinstance(d, dict), (run["report"], key)
+        settings = d.get("settings", {})
+        read = set(d.get("values", {})) | set(settings.get("values", {}))
+        unread = set(d.get("unreadable", {})) | set(settings.get("unreadable", {}))
+        assert not read & unread, (run["report"], key, read & unread)
+        missing = [n for n in names if n not in read | unread]
+        assert not missing, (run["report"], key, missing)
+assert runs, "no run has a report"
+' "$r"
+	check "the summary has counters_readable" \
+		python3 -I -c '
+import json, sys
+c = json.load(open(sys.argv[1] + "/summary.json"))["counters_readable"]
+assert all(isinstance(c[m][k], list) for m in ("engine", "client") for k in ("readable", "unreadable"))
+' "$r"
 	# The rehearsal talks over loopback only: the route's tests show the
 	# redaction, and this shows that no other address reaches the archive.
 	check "no engine log holds an IPv4 address other than 0.0.0.0 and 127.0.0.1" \
@@ -505,6 +537,12 @@ assert s["rehearsal"] is True and s["publishable"] is False
 	if [ -n "${PILOT_KEEP:-}" ]; then
 		mkdir -p "$PILOT_KEEP" && cp -r "$r"/. "$PILOT_KEEP"/
 	fi
+	python3 -I -c '
+import json, sys
+c = json.load(open(sys.argv[1] + "/summary.json"))["counters_readable"]
+for m in ("engine", "client"):
+    print("counters_readable, %s machine: readable %s; unreadable in all runs %s" % (m, " ".join(c[m]["readable"]) or "none", " ".join(c[m]["unreadable"]) or "none"))
+' "$r" || true
 	[ -s "$r/summary.txt" ] && cat "$r/summary.txt"
 	[ "$failed" = 0 ] || {
 		tail -n 20 "$t"/*.log

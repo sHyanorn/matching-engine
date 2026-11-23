@@ -10,7 +10,9 @@
 // rules, computes the gate G2 after every round and writes every run, with
 // loadgen's numbers as they came, to its results directory (plan.go,
 // validity.go, g2.go, summary.go). Each run's results also hold the engine's
-// own output for it, bounded in size and without network addresses.
+// own output for it, bounded in size and without network addresses, and each
+// run's record the change in both machines' CPU scheduling counters over the
+// run (counters.go), which tells a wait for a CPU from a stall of the host.
 // `pairrun slim` copies a results directory without the parts that the Pod's
 // log has no room for (slim.go).
 //

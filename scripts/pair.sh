@@ -70,7 +70,9 @@
 # does, with what the client fetched from the supervisor as engine-env.txt
 # next to env.txt. The results also hold the output of the engine of each
 # run as runs/*.engine.log, bounded in size, with its IPv4 addresses but
-# 0.0.0.0 and 127.0.0.1 replaced by x.x.x.x. matrix passes DEADLINE_MARGIN
+# 0.0.0.0 and 127.0.0.1 replaced by x.x.x.x, and each run's record in
+# runs.jsonl has the change in the CPU scheduling counters of both machines
+# over the run (engine_delta, client_delta). matrix passes DEADLINE_MARGIN
 # with DEADLINE: no run starts unless it would end that long before
 # DEADLINE. It is a Go duration ("600s", not "600") and 10m when unset
 # (pairrun's -deadline-margin); a value that is not one ends the client at

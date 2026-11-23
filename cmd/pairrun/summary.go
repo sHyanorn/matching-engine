@@ -67,6 +67,7 @@ type summaryFile struct {
 	Configs             []configSummary   `json:"configs"`
 	Tuning              []tuning          `json:"tuning"`
 	G2                  g2Result          `json:"g2"`
+	CountersReadable    countersRead      `json:"counters_readable"` // for each machine, the CPU counters that at least one run could read and those that no run could
 }
 
 // maxClockReadNS is the cost of a clock read, in ns, above which a pair is
@@ -124,6 +125,7 @@ func buildSummary(in summaryInput) summaryFile {
 		ClockUnfit:        in.EngineClockReadNS > maxClockReadNS || in.ClientClockReadNS > maxClockReadNS,
 		Tuning:            compareVariants(in.Records, p.Rounds, "R1-gogc-off", "R1-spin-pin"),
 		G2:                in.G2,
+		CountersReadable:  readableCounters(in.Records),
 	}
 	var floor *rowStats
 	if st, ok := statsOf(in.Records, floorConfig, "pong"); ok {

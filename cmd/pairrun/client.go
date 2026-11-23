@@ -113,6 +113,8 @@ type runRecord struct {
 	ClientHost      machinePair           `json:"client_host"`
 	EngineHost      enginePair            `json:"engine_host"`
 	EngineMetrics   *engineMetrics        `json:"engine_metrics"`
+	EngineDelta     *deltaResult          `json:"engine_delta"`    // the engine machine's CPU counters (counters.go) over the whole run, warmup and loadgen's start and end included, which is more than the measured part; nil if no engine was started
+	ClientDelta     *deltaResult          `json:"client_delta"`    // this machine's, over the same time
 	Notes           []string              `json:"notes,omitempty"` // what could not be read, a cut engine log, and the failed attempts to start the engine
 	Outcomes        map[string]int        `json:"outcomes"`
 	Trades          tradeCounts           `json:"trades"`
@@ -340,11 +342,13 @@ func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 	c.engine = before
 	rec.EngineHost.Before = before
 	rec.ClientHost.Before = c.machine(&rec)
+	countersBefore := c.takeCounters(ctx)
 
 	rec.LoadgenExit = c.runLoadgen(ctx, cfg, rec.Args, filepath.Join(c.Out, "runs", base+".txt"), &rec)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	rec.EngineDelta, rec.ClientDelta = c.deltas(countersBefore, c.takeCounters(ctx), &rec)
 
 	rep, repErr := readReport(reportFile)
 	after, afterErr := c.host(ctx)
@@ -497,6 +501,58 @@ func (c *client) requestStart(ctx context.Context, name string) (hostRecord, err
 		return h, fmt.Errorf("started engine %q: the supervisor reports config %q", name, h.Config)
 	}
 	return h, nil
+}
+
+// readings are the counters of both machines at one moment. engineErr says why
+// the engine machine's could not be had; they are then empty.
+type readings struct {
+	client    counters
+	engine    counters
+	engineErr error
+}
+
+// takeCounters reads this machine's counters and, through the supervisor, the
+// engine machine's and the running engine's. A run takes it twice, so the
+// engine's threads are read twice a run.
+func (c *client) takeCounters(ctx context.Context) readings {
+	r := readings{client: readCounters(c.src, 0)}
+	r.engine, r.engineErr = c.engineCounters(ctx)
+	return r
+}
+
+// engineCounters reads the supervisor's /counters.
+func (c *client) engineCounters(ctx context.Context) (counters, error) {
+	var r counters
+	data, err := c.fetch(ctx, http.MethodGet, "http://"+c.Ctl+"/counters", 10*time.Second)
+	if err == nil {
+		err = json.Unmarshal(data, &r)
+	}
+	if err == nil && len(r.Values)+len(r.Unreadable) == 0 {
+		err = errors.New("the answer holds no counter")
+	}
+	return r, err
+}
+
+// deltas makes the differences of two readings for the engine machine and for
+// this one. A reading of the engine machine that was not had is noted and
+// makes its difference unreadable as a whole. The run's validity does not
+// depend on any of this: the counters explain a run and are no rule of it.
+func (c *client) deltas(before, after readings, rec *runRecord) (engineDelta, clientDelta *deltaResult) {
+	cd, ed := delta(before.client, after.client), delta(before.engine, after.engine)
+	var reasons []string
+	for _, e := range []struct {
+		when string
+		err  error
+	}{{"before", before.engineErr}, {"after", after.engineErr}} {
+		if e.err != nil {
+			rec.Notes = append(rec.Notes, fmt.Sprintf("engine counters %s the run: %v", e.when, e.err))
+			reasons = append(reasons, e.when+": "+e.err.Error())
+		}
+	}
+	if len(reasons) > 0 {
+		ed = unreadableDelta(strings.Join(reasons, "; "))
+	}
+	return &ed, &cd
 }
 
 // host reads the supervisor's host record.

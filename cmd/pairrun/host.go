@@ -21,6 +21,17 @@ type sources struct {
 	meminfo  string
 	cgroupV2 string // memory.max
 	cgroupV1 string // memory.limit_in_bytes
+
+	// The files of readCounters.
+	procDir        string // holds <pid>/task/<tid>/schedstat of each thread
+	procStat       string // the machine's CPU times, for steal
+	cpuStatV2      string // the cgroup's cpu.stat
+	cpuMaxV2       string // cpu.max
+	cpuStatV1      string // cpu/cpu.stat
+	cfsQuotaV1     string // cpu/cpu.cfs_quota_us
+	cfsPeriodV1    string // cpu/cpu.cfs_period_us
+	pressureCgroup string // the cgroup's cpu.pressure, v2
+	pressureProc   string // the machine's, which counts the tasks of every container
 }
 
 var procSources = sources{
@@ -31,6 +42,16 @@ var procSources = sources{
 	meminfo:  "/proc/meminfo",
 	cgroupV2: "/sys/fs/cgroup/memory.max",
 	cgroupV1: "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+
+	procDir:        "/proc",
+	procStat:       "/proc/stat",
+	cpuStatV2:      "/sys/fs/cgroup/cpu.stat",
+	cpuMaxV2:       "/sys/fs/cgroup/cpu.max",
+	cpuStatV1:      "/sys/fs/cgroup/cpu/cpu.stat",
+	cfsQuotaV1:     "/sys/fs/cgroup/cpu/cpu.cfs_quota_us",
+	cfsPeriodV1:    "/sys/fs/cgroup/cpu/cpu.cfs_period_us",
+	pressureCgroup: "/sys/fs/cgroup/cpu.pressure",
+	pressureProc:   "/proc/pressure/cpu",
 }
 
 // machine is what a run records of a host, apart from the engine: the CPU,

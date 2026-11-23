@@ -3,12 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -153,7 +156,8 @@ func TestClientFullMatrix(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"seq", "round", "config", "flow", "engine_config", "args", "started", "ended", "report", "engine_log", "loadgen_exit",
-		"loadgen_valid", "loadgen_problems", "study", "valid", "client_host", "engine_host", "engine_metrics", "outcomes", "trades", "latency_us"} {
+		"loadgen_valid", "loadgen_problems", "study", "valid", "client_host", "engine_host", "engine_metrics", "engine_delta", "client_delta",
+		"outcomes", "trades", "latency_us"} {
 		if _, ok := first[key]; !ok {
 			t.Errorf("a run record has no %q", key)
 		}
@@ -996,6 +1000,278 @@ func TestClientWhatCannotBeReadIsNoted(t *testing.T) {
 	}
 	if stable.Verdict != verdictFail || !strings.Contains(stable.Value, "not read") {
 		t.Errorf("engine_stable: %+v", stable)
+	}
+}
+
+// deltaKeys are the keys that a run's delta of counters may have, and
+// settingsKeys those that its settings may have: nothing else, above all no
+// absolute reading.
+var (
+	deltaKeys    = []string{"values", "unreadable", "partial", "settings"}
+	settingsKeys = []string{"values", "unreadable", "source"}
+)
+
+// Each run carries the difference of the counters of both machines between
+// the readings before and after loadgen, and nothing absolute.
+func TestClientRecordsTheCountersDeltaOfBothMachines(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	steal := func(v int) { // this machine's steal, which the fake supervisor moves while it answers
+		text := fmt.Sprintf("cpu  1 0 1 1 0 0 0 %d 0 0\n", v)
+		if err := os.WriteFile(r.c.src.procStat, []byte(text), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	// Run k reads this machine's steal before the supervisor's (2k-1)th answer
+	// and after it: 100(k-1) then 100(k-1)+10k, a difference of 10k. The
+	// 2kth answer moves it on to 100k, where the next run starts.
+	steal(0)
+	r.sup.onCounters = func(n int) {
+		k := (n + 1) / 2
+		if n%2 == 1 {
+			steal(100*(k-1) + 10*k)
+		} else {
+			steal(100 * k)
+		}
+	}
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	var lines []map[string]map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(r.file("runs.jsonl")), []byte("\n")) {
+		var rec map[string]map[string]any
+		_ = json.Unmarshal(line, &rec) // the other fields are not objects
+		lines = append(lines, rec)
+	}
+	records := r.records()
+	if len(records) != 10 {
+		t.Fatalf("%d records, want 10", len(records))
+	}
+	for i, rec := range records {
+		k := int64(i + 1)
+		d := 4*k - 1 // (2k)^2 - (2k-1)^2, what fakeEngineCounters moves in a run
+		if !rec.Valid || len(rec.Notes) != 0 {
+			t.Errorf("run %d: valid %v, notes %v", k, rec.Valid, rec.Notes)
+		}
+		ed, cd := rec.EngineDelta, rec.ClientDelta
+		if ed == nil || cd == nil {
+			t.Fatalf("run %d: engine delta %+v, client delta %+v", k, ed, cd)
+		}
+		wantEngine := map[string]int64{
+			schedRunNS: 1000 * d, schedDelayNS: 10 * d, schedSlices: 5 * d, schedTasks: 0, cpuNrPeriods: 10 * d, cpuNrThrottled: d,
+			cpuThrottledUS: 7 * d, psiCPUSomeUS: 3 * d, stealTicks: d,
+		}
+		if !maps.Equal(ed.Values, wantEngine) || len(ed.Unreadable) != 0 || len(ed.Partial) != 0 {
+			t.Errorf("run %d: engine delta %+v, want values %v", k, ed, wantEngine)
+		}
+		if want := (counters{Values: map[string]int64{cpuQuotaUS: 400000, cpuPeriodUS: 100000}, Source: fakeEngineCounters(0).Source}); !reflect.DeepEqual(ed.Settings, want) {
+			t.Errorf("run %d: engine settings %+v, want %+v", k, ed.Settings, want)
+		}
+		wantClient := map[string]int64{cpuNrPeriods: 0, cpuNrThrottled: 0, cpuThrottledUS: 0, psiCPUSomeUS: 0, stealTicks: 10 * k}
+		if !maps.Equal(cd.Values, wantClient) || len(cd.Unreadable) != 0 || len(cd.Partial) != 0 {
+			t.Errorf("run %d: client delta %+v, want values %v", k, cd, wantClient)
+		}
+		wantSettings := counters{
+			Values: map[string]int64{cpuQuotaUS: -1, cpuPeriodUS: 100000},
+			Source: map[string]string{psiSource: "cgroup", cpuStatSource: cgroupV2, cpuLimitSource: cgroupV2},
+		}
+		if !reflect.DeepEqual(cd.Settings, wantSettings) {
+			t.Errorf("run %d: client settings %+v, want %+v", k, cd.Settings, wantSettings)
+		}
+
+		// The record holds the two deltas and nothing absolute: no key but
+		// those of a delta, and no reading.
+		for _, key := range []string{"engine_delta", "client_delta"} {
+			obj := lines[i][key]
+			for name, v := range obj {
+				if !slices.Contains(deltaKeys, name) {
+					t.Errorf("run %d: %s has the key %q", k, key, name)
+				}
+				if s, ok := v.(map[string]any); ok && name == "settings" {
+					for sk := range s {
+						if !slices.Contains(settingsKeys, sk) {
+							t.Errorf("run %d: %s settings has the key %q", k, key, sk)
+						}
+					}
+				}
+			}
+			if _, ok := obj["values"]; !ok {
+				t.Errorf("run %d: %s has no values: %v", k, key, obj)
+			}
+		}
+	}
+}
+
+// The first reading is taken after the engine has started and before loadgen
+// starts, the second after loadgen has ended and before the engine's metrics
+// are read.
+func TestClientReadsCountersJustAroundLoadgen(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	log := writeMatrixScript(t, p, nil)
+	var mu sync.Mutex
+	var events []string
+	note := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, fmt.Sprintf(format, args...))
+	}
+	loadgens := func() int { // started so far
+		data, _ := os.ReadFile(log)
+		return strings.Count(string(data), "\n")
+	}
+	r.http = metricsServerNoting(t, http.StatusOK, func() { note("metrics") })
+	r.c.HTTP = r.http
+	r.sup.onCounters = func(n int) { note("counters %d, %d loadgens started", n, loadgens()) }
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for k := 1; k <= 10; k++ {
+		want = append(want, fmt.Sprintf("counters %d, %d loadgens started", 2*k-1, k-1),
+			fmt.Sprintf("counters %d, %d loadgens started", 2*k, k), "metrics")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(events, want) {
+		t.Errorf("events\n%s\nwant\n%s", strings.Join(events, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A reading of the engine machine that cannot be had is noted and makes the
+// engine's delta unreadable as a whole; the run stays valid and this machine's
+// delta stands.
+func TestClientNotesCountersThatTheSupervisorCouldNotGive(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	// Run k asks for its readings as the (2k-1)th and 2kth.
+	r.sup.counterStatus = map[int]int{1: 500, 6: 503, 11: 500, 12: 500}
+	r.sup.counterBody = map[int]string{3: "{}", 10: "not json"}
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	records := r.records()
+	for _, c := range []struct {
+		run     int
+		reasons []string // parts of the one reason of the delta
+		notes   int
+	}{
+		{1, []string{"before: ", "500"}, 1},
+		{2, []string{"before: ", "the answer holds no counter"}, 1},
+		{3, []string{"after: ", "503"}, 1},
+		{5, []string{"after: ", "invalid character"}, 1},
+		{6, []string{"before: ", "; after: "}, 2},
+	} {
+		rec := records[c.run-1]
+		d := rec.EngineDelta
+		if d == nil || len(d.Unreadable) != 1 || len(d.Values) != 0 || d.Settings.Values != nil {
+			t.Errorf("run %d: engine delta %+v, want it unreadable as a whole", c.run, d)
+			continue
+		}
+		why := d.Unreadable[allUnreadable]
+		for _, part := range c.reasons {
+			if !strings.Contains(why, part) {
+				t.Errorf("run %d: reason %q lacks %q", c.run, why, part)
+			}
+		}
+		notes := 0
+		for _, n := range rec.Notes {
+			if strings.HasPrefix(n, "engine counters ") {
+				notes++
+			}
+		}
+		if notes != c.notes || len(rec.Notes) != c.notes {
+			t.Errorf("run %d: notes %v, want %d about the counters", c.run, rec.Notes, c.notes)
+		}
+		if !rec.Valid {
+			t.Errorf("run %d is invalid because of its counters", c.run)
+		}
+		if rec.ClientDelta == nil || len(rec.ClientDelta.Values) == 0 {
+			t.Errorf("run %d: client delta %+v, want it as read", c.run, rec.ClientDelta)
+		}
+	}
+	// Runs with both readings are as ever.
+	for _, run := range []int{4, 7, 8} {
+		if d := records[run-1].EngineDelta; d == nil || len(d.Values) == 0 || len(records[run-1].Notes) != 0 {
+			t.Errorf("run %d: engine delta %+v, notes %v", run, d, records[run-1].Notes)
+		}
+	}
+}
+
+// A run that started no engine has no readings to compare.
+func TestClientRunWithoutAnEngineHasNoCounters(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	r.sup.failStarts = failingStarts(2)
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	rec := r.records()[1]
+	if rec.Report != "" || rec.EngineDelta != nil || rec.ClientDelta != nil {
+		t.Errorf("run 2 started no engine: report %q, deltas %+v and %+v", rec.Report, rec.EngineDelta, rec.ClientDelta)
+	}
+	lines := bytes.Split(bytes.TrimSpace(r.file("runs.jsonl")), []byte("\n"))
+	if !bytes.Contains(lines[1], []byte(`"engine_delta":null,"client_delta":null`)) {
+		t.Errorf("the line of run 2 does not say that it has no counters: %s", lines[1])
+	}
+	if got := r.sup.counterReads; got != 2*8 {
+		t.Errorf("%d readings asked for, want 16: two for each of the 8 runs that had an engine, of the round's 9 (G2 fails, so there is no long run)", got)
+	}
+}
+
+func TestClientSummaryTellsWhichCountersWereRead(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	r.c.src.cpuMaxV2 = filepath.Join(filepath.Dir(r.c.src.cpuMaxV2), "no-such-file") // this machine's cgroup has no cpu.max
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	got := r.summary().CountersReadable
+	wantEngine := namesRead{
+		Readable:   []string{cpuNrPeriods, cpuNrThrottled, cpuPeriodUS, cpuQuotaUS, cpuThrottledUS, psiCPUSomeUS, schedDelayNS, schedRunNS, schedSlices, schedTasks, stealTicks},
+		Unreadable: []string{},
+	}
+	wantClient := namesRead{
+		Readable:   []string{cpuNrPeriods, cpuNrThrottled, cpuThrottledUS, psiCPUSomeUS, stealTicks},
+		Unreadable: []string{cpuPeriodUS, cpuQuotaUS},
+	}
+	if !reflect.DeepEqual(got.Engine, wantEngine) || !reflect.DeepEqual(got.Client, wantClient) {
+		t.Errorf("counters_readable\nengine %+v\nclient %+v\nwant\n%+v\n%+v", got.Engine, got.Client, wantEngine, wantClient)
+	}
+	var raw struct {
+		CountersReadable map[string]map[string][]string `json:"counters_readable"`
+	}
+	if err := json.Unmarshal(r.file("summary.json"), &raw); err != nil || !slices.Equal(raw.CountersReadable["client"]["unreadable"], wantClient.Unreadable) ||
+		!slices.Equal(raw.CountersReadable["engine"]["readable"], wantEngine.Readable) {
+		t.Errorf("summary.json holds counters_readable %v, %v", raw.CountersReadable, err)
+	}
+}
+
+// If the supervisor never gives its counters, the summary says that no
+// reading of the engine machine was had, whatever else it lacks.
+func TestClientSummaryOfAnEngineMachineWhoseCountersWereNeverGiven(t *testing.T) {
+	p := rounds(1)
+	r := newRig(t, p, nil)
+	writeMatrixScript(t, p, nil)
+	r.sup.counterAll = http.StatusNotFound // a supervisor of an older build has no such route
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	got := r.summary().CountersReadable
+	if len(got.Engine.Readable) != 0 || !slices.Equal(got.Engine.Unreadable, []string{allUnreadable}) {
+		t.Errorf("engine %+v, want nothing readable and \"*\" unreadable", got.Engine)
+	}
+	if len(got.Client.Readable) != 7 || len(got.Client.Unreadable) != 0 {
+		t.Errorf("client %+v, want its 7 counters readable", got.Client)
+	}
+	for _, rec := range r.records() {
+		if !rec.Valid {
+			t.Errorf("run %d is invalid because the counters could not be had", rec.Seq)
+		}
 	}
 }
 
