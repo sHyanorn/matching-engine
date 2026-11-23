@@ -1,0 +1,14 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkOrdersSpin-4   	  325272	      3936 ns/op	     164 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  249561	      4074 ns/op	     173 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  273180	      4058 ns/op	     164 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  280297	      3678 ns/op	     170 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  294420	      3839 ns/op	     166 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  337472	      3623 ns/op	     158 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  371454	      3436 ns/op	     162 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  347078	      4267 ns/op	     166 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  369958	      3932 ns/op	     162 B/op	       0 allocs/op
+BenchmarkOrdersSpin-4   	  325120	      3486 ns/op	     160 B/op	       0 allocs/op

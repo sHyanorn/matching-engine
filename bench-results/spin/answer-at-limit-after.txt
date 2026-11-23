@@ -1,0 +1,24 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/internal/oe
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkAnswerAtLimit/Spin=off-4         	    8328	    141778 ns/op	    105159 max-ns/answer	      7767 p50-ns/answer	     19856 p99-ns/answer	      71 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   22964	     51372 ns/op	    345984 max-ns/answer	       334.0 p50-ns/answer	       929.0 p99-ns/answer	      99 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    7584	    140603 ns/op	    171825 max-ns/answer	      7796 p50-ns/answer	     17561 p99-ns/answer	      77 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   23414	     51376 ns/op	    299999 max-ns/answer	       337.0 p50-ns/answer	       844.0 p99-ns/answer	      97 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8566	    142425 ns/op	    169376 max-ns/answer	      7849 p50-ns/answer	     17842 p99-ns/answer	      69 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   23340	     52014 ns/op	    382500 max-ns/answer	       318.0 p50-ns/answer	       862.0 p99-ns/answer	      97 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8635	    140242 ns/op	     96747 max-ns/answer	      7779 p50-ns/answer	     18517 p99-ns/answer	      68 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   23223	     51741 ns/op	    343230 max-ns/answer	       265.0 p50-ns/answer	       811.0 p99-ns/answer	      98 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8656	    143883 ns/op	    213038 max-ns/answer	      8147 p50-ns/answer	     19427 p99-ns/answer	      68 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   22305	     52417 ns/op	    338616 max-ns/answer	       372.0 p50-ns/answer	       827.0 p99-ns/answer	     101 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8152	    141000 ns/op	    123846 max-ns/answer	      7748 p50-ns/answer	     17815 p99-ns/answer	      72 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   23090	     51555 ns/op	    401593 max-ns/answer	       308.0 p50-ns/answer	       845.0 p99-ns/answer	      98 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8515	    141968 ns/op	    113713 max-ns/answer	      8015 p50-ns/answer	     17633 p99-ns/answer	      69 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   23444	     51498 ns/op	    339142 max-ns/answer	       324.0 p50-ns/answer	       889.0 p99-ns/answer	      97 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8696	    141592 ns/op	    140703 max-ns/answer	      7717 p50-ns/answer	     18514 p99-ns/answer	      68 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   22539	     52697 ns/op	    355535 max-ns/answer	       350.0 p50-ns/answer	       905.0 p99-ns/answer	     101 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8691	    141371 ns/op	    126365 max-ns/answer	      7797 p50-ns/answer	     18340 p99-ns/answer	      68 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   22597	     51353 ns/op	    330941 max-ns/answer	       344.0 p50-ns/answer	       880.0 p99-ns/answer	     101 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=off-4         	    8316	    143388 ns/op	    126876 max-ns/answer	      7905 p50-ns/answer	     20729 p99-ns/answer	      71 B/op	       0 allocs/op
+BenchmarkAnswerAtLimit/Spin=on-4          	   23458	     51242 ns/op	    364864 max-ns/answer	       312.0 p50-ns/answer	       822.0 p99-ns/answer	      97 B/op	       0 allocs/op

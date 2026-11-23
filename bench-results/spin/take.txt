@@ -1,0 +1,24 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sHyanorn/matching-engine/cmd/loadgen
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkTakeTrade-4     	23211591	        51.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	38261904	        32.68 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23815888	        50.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	39109515	        31.65 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23583414	        50.68 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	35192702	        32.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23677458	        51.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	38218982	        31.47 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23961103	        51.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	37751299	        32.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	22703887	        52.79 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	35590882	        31.81 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23689971	        51.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	36874705	        32.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23310033	        50.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	39156507	        31.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23727828	        50.36 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	38538892	        31.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeTrade-4     	23352867	        50.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTakeNoTrade-4   	35444434	        32.98 ns/op	       0 B/op	       0 allocs/op
