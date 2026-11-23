@@ -16,9 +16,9 @@ import (
 // T, the time from the due time of each order that traded to its first push.
 // The counter is read before the session starts and after it has ended, and
 // the pushes are joined with the replies once the run is over, so none of
-// that happens during the run. The stream reader does: with -push it runs
-// while the session does and decodes each push, so its CPU time is in the
-// run's latencies.
+// that happens during the run. The stream reader is the exception: with
+// -push it runs while the session does and decodes each push, so its CPU time
+// is in the run's latencies.
 //
 // A counter that cannot be read before the run stops it before anything is
 // opened. One that cannot be read after it makes the run invalid.

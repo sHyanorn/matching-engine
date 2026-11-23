@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -14,6 +15,20 @@ import (
 
 	"github.com/coder/websocket"
 )
+
+// A counter that could not be read after the run gives no rise: the report
+// keeps the metric at 0, where the rise would be minus the first read.
+func TestTradeProblemsLeavesTheMetricAtZeroWithoutTheRead(t *testing.T) {
+	var l loader
+	counts, problems := l.tradeProblems(tradeSum{n: 3}, false, 0, nil, 3, nil)
+	if counts.Metric != 3 || len(problems) != 0 {
+		t.Errorf("a counter that rose by 3 for 3 trades: metric %d, problems %q", counts.Metric, problems)
+	}
+	counts, problems = l.tradeProblems(tradeSum{n: 3}, false, 0, nil, -7, errors.New("gone"))
+	if counts.Metric != 0 || len(problems) != 1 || !strings.Contains(problems[0], "reading matching_engine_trades_total: gone") {
+		t.Errorf("a counter that could not be read: metric %d, problems %q", counts.Metric, problems)
+	}
+}
 
 // tamperProxy relays HTTP to the engine at addr unchanged, and the
 // WebSocket stream through tamper, which gets each trade push numbered from

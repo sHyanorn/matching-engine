@@ -652,6 +652,8 @@ func TestRunFlowFlagErrors(t *testing.T) {
 		{[]string{"-oe", "x:1", "-ioc", "-sd", "5"}, "-sd with -ioc"},
 		{[]string{"-oe", "x:1", "-ack-cancel", "-seed", "1"}, "-seed with -ack-cancel"},
 		{[]string{"-oe", "x:1", "-ack-cancel", "-sd", "5"}, "-sd with -ack-cancel"},
+		{[]string{"-oe", "x:1", "-seed", "1"}, "-seed with -oe"},
+		{[]string{"-oe", "x:1", "-sd", "5"}, "-sd with -oe"},
 	} {
 		err := run(context.Background(), c.args, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -660,8 +662,9 @@ func TestRunFlowFlagErrors(t *testing.T) {
 	}
 }
 
-// -seed and -sd shape the random flow of -orders, so -ioc and -ack-cancel,
-// which have none, reject them when they are given; -orders takes both.
+// -seed and -sd shape the random flow of -orders, so -ioc, -ack-cancel and
+// the Pings of a plain -oe, which have none, reject them when they are given;
+// -orders takes both, and so does the REST mode.
 func TestCheckFlowsSeedAndSD(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -673,6 +676,11 @@ func TestCheckFlowsSeedAndSD(t *testing.T) {
 		{"-ack-cancel without them", config{oeAddr: "x:1", ackCancel: true}, nil, ""},
 		{"-ioc with others", config{oeAddr: "x:1", ioc: true}, map[string]bool{"rate": true, "out": true}, ""},
 		{"-orders with both", config{oeAddr: "x:1", orders: true}, map[string]bool{"seed": true, "sd": true}, ""},
+		{"REST with both", config{}, map[string]bool{"seed": true, "sd": true}, ""},
+		{"-oe without them", config{oeAddr: "x:1"}, nil, ""},
+		{"-oe with others", config{oeAddr: "x:1"}, map[string]bool{"rate": true, "spin": true}, ""},
+		{"-oe with -seed", config{oeAddr: "x:1"}, map[string]bool{"seed": true}, "-seed with -oe"},
+		{"-oe with -sd", config{oeAddr: "x:1"}, map[string]bool{"sd": true}, "-sd with -oe"},
 		{"-ioc with -seed", config{oeAddr: "x:1", ioc: true}, map[string]bool{"seed": true}, "-seed with -ioc"},
 		{"-ack-cancel with -sd", config{oeAddr: "x:1", ackCancel: true}, map[string]bool{"sd": true}, "-sd with -ack-cancel"},
 	} {

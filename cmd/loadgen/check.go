@@ -149,7 +149,10 @@ func uintAfter(b, key []byte) (uint64, []byte, bool) {
 // counter, which metricsErr says could not be read.
 func (l *loader) tradeProblems(replied tradeSum, streamed bool, missing int, streamErr error, rose int, metricsErr error) (tradeCounts, []string) {
 	var problems []string
-	counts := tradeCounts{Replies: replied.n, Metric: rose}
+	counts := tradeCounts{Replies: replied.n}
+	if metricsErr == nil { // else rose is not a rise
+		counts.Metric = rose
+	}
 	if streamed {
 		if missing > 0 {
 			problems = append(problems, fmt.Sprintf("%d orders that traded got no trade push", missing))

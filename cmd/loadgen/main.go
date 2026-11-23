@@ -148,10 +148,14 @@ func checkFlows(cfg config, set map[string]bool) error {
 	case cfg.httpAddr != "" && len(flows) == 0:
 		return errors.New("loadgen: -http without -orders, -ioc or -ack-cancel: only an order flow over -oe has trades to check")
 	}
-	if cfg.ioc || cfg.ackCancel {
+	if cfg.oeAddr != "" && !cfg.orders {
+		with := "-oe"
+		if len(flows) == 1 {
+			with = flows[0]
+		}
 		for _, name := range []string{"seed", "sd"} {
 			if set[name] {
-				return fmt.Errorf("loadgen: -%s with %s: the flow has no random part, only -orders uses it", name, flows[0])
+				return fmt.Errorf("loadgen: -%s with %s: the flow has no random part, only -orders uses it", name, with)
 			}
 		}
 	}
