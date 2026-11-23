@@ -319,6 +319,9 @@ func TestOECounterCheck(t *testing.T) {
 		if _, ok := rep.Latency["trade_push"]; ok {
 			t.Errorf("%s: -http alone reports trade_push", c.name)
 		}
+		if !rep.CounterRead {
+			t.Errorf("%s: the report does not say that the counter was read", c.name)
+		}
 		// Before the first command, and after the last, with no session open.
 		if want := [][2]int64{{0, 0}, {0, taken.Load()}}; !slices.Equal(reads, want) || taken.Load() == 0 {
 			t.Errorf("%s: /metrics read with (sessions open, commands taken) %v, want %v", c.name, reads, want)
@@ -338,13 +341,13 @@ func TestOENoCounterWithoutHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	rateAside(t, rep)
-	if _, _, reads := s.state(); len(reads) != 0 || rep.Trades.Metric != 0 || rep.Trades.Replies == 0 {
-		t.Errorf("%d reads of /metrics, counter rise %d for %d trades; want no read and no rise", len(reads), rep.Trades.Metric, rep.Trades.Replies)
+	if _, _, reads := s.state(); len(reads) != 0 || rep.Trades.Metric != 0 || rep.CounterRead || rep.Trades.Replies == 0 {
+		t.Errorf("%d reads of /metrics, counter rise %d, counter read %v for %d trades; want no read and no rise", len(reads), rep.Trades.Metric, rep.CounterRead, rep.Trades.Replies)
 	}
 }
 
-// R1 and R2 have no trades, so a counter that rises anyway, or that cannot be
-// read, makes the run invalid.
+// R1 and R2 have no trades, so a counter that rises anyway makes the run
+// invalid.
 func TestOEFlowsCheckTheCounter(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs a load in real time")
@@ -381,37 +384,139 @@ func TestOEFlowsCheckTheCounter(t *testing.T) {
 			t.Errorf("%s: valid %v, problems %q; want invalid by %q", name, rep.Valid, rep.Problems, want)
 		}
 	}
+}
 
-	// An address that answers nothing: the run is made, and invalid for it.
+// closedAddr is a loopback address that nothing listens on.
+func closedAddr(t *testing.T) string {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr := ln.Addr().String()
-	_ = ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return addr
+}
+
+// listenCounted serves a fakeOE on a loopback port, counts the connections it
+// accepts, and returns its address.
+func listenCounted(t *testing.T, accepted *atomic.Int32) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			go fakeOE{}.serve(c)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// A counter that cannot be read before the run stops it with one error that
+// names the read, before the stream is subscribed to and before the session
+// is opened: the engine's OE1 listener accepts no connection.
+func TestOECounterReadBeforeTheRun(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		push bool
+	}{
+		{"-http", false},
+		{"-http with -push", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var accepted atomic.Int32
+			s := &fakeStream{addr: closedAddr(t)}
+			cfg := iocConfig(nil)
+			cfg.httpAddr = s.addr
+			if c.push {
+				cfg = pushConfig(nil, s)
+			}
+			cfg.oeAddr = listenCounted(t, &accepted)
+			_, err := measureOE(context.Background(), cfg)
+			if err == nil || strings.Count(err.Error(), "reading matching_engine_trades_total") != 1 {
+				t.Errorf("measureOE = %v, want an error that names the counter read once", err)
+			}
+			if n := accepted.Load(); n != 0 {
+				t.Errorf("the engine accepted %d OE1 connections, want none", n)
+			}
+		})
+	}
+}
+
+// A counter that was read before the run and cannot be read after it makes the
+// run invalid with one problem that names the read, and the report does not
+// say that the counter was read.
+func TestOECounterReadAfterTheRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a load in real time")
+	}
+	var reads atomic.Int32
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reads.Add(1) > 1 {
+			http.Error(w, "gone", http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "matching_engine_trades_total{symbol=%q} 0\n", fakeSymbol)
+	}))
+	t.Cleanup(hs.Close)
 	cfg := iocConfig(listenOE(t, fakeOE{}))
-	cfg.httpAddr = addr
+	cfg.httpAddr = strings.TrimPrefix(hs.URL, "http://")
 	rep, err := measureOE(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Valid || !problemWith(rep, "reading matching_engine_trades_total: ") || rep.Latency["reply"].Count == 0 {
-		t.Errorf("valid %v, problems %q, %d replies; want a run invalid for the counter it could not read", rep.Valid, rep.Problems, rep.Latency["reply"].Count)
+	problems := strings.Join(rep.Problems, "\n")
+	if rep.Valid || strings.Count(problems, "reading matching_engine_trades_total") != 1 || strings.Count(problems, "/metrics answered 500") != 1 {
+		t.Errorf("valid %v, problems %q; want invalid by one problem that names the counter read and its error", rep.Valid, rep.Problems)
+	}
+	if n := reads.Load(); n != 2 || rep.CounterRead {
+		t.Errorf("%d reads of /metrics, counter read %v; want 2 reads and a report that does not say the counter was read", n, rep.CounterRead)
+	}
+}
+
+// Reports without -http have no counter_read key, so that report files of
+// the other runs are as they were.
+func TestReportKeyCounterRead(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		rep  report
+		want bool
+	}{
+		{"without -http", report{}, false},
+		{"with -http", report{CounterRead: true}, true},
+	} {
+		data, err := json.Marshal(c.rep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(data), `"counter_read":true`); got != c.want || strings.Contains(string(data), `"counter_read":false`) {
+			t.Errorf("%s: report %s, want counter_read: true %v and never false", c.name, data, c.want)
+		}
 	}
 }
 
 // With -push, a stream that cannot be subscribed to stops the run before the
-// session opens.
+// session opens. The counter can be read, as it is read first.
 func TestOEPushNeedsTheStream(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-	cfg := pushConfig(nil, &fakeStream{addr: addr})
+	s := &fakeStream{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", s.metrics) // and no stream
+	hs := httptest.NewServer(mux)
+	t.Cleanup(hs.Close)
+	s.addr = strings.TrimPrefix(hs.URL, "http://")
+	cfg := pushConfig(nil, s)
 	cfg.oeDial = func() (net.Conn, error) { t.Error("the session was opened"); return nil, net.ErrClosed }
-	_, err = measureOE(context.Background(), cfg)
+	_, err := measureOE(context.Background(), cfg)
 	if err == nil || !strings.Contains(err.Error(), "subscribing to trades:"+fakeSymbol) {
 		t.Errorf("measureOE = %v, want an error about subscribing to trades:%s", err, fakeSymbol)
 	}

@@ -86,6 +86,8 @@ type report struct {
 	Cancels    int                `json:"cancels_sent,omitempty"` // oe_ack_cancel: Cancels sent for the orders of the window
 	Trades     tradeCounts        `json:"trades"`
 	Latency    map[string]summary `json:"latency_us"`
+
+	CounterRead bool `json:"counter_read,omitempty"` // OE1 with -http: the engine's trades counter was read before and after the run
 }
 
 // tradeCounts are the trades of the whole run, warmup included, as each

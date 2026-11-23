@@ -62,7 +62,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	fs.BoolVar(&cfg.ioc, "ioc", false, "with -oe: send IOC buys that cannot trade, each canceled at once (R1), instead of Pings")
 	fs.BoolVar(&cfg.ackCancel, "ack-cancel", false, "with -oe: send GTC buys that cannot trade, each canceled once its Done is in (R2), instead of Pings")
 	fs.StringVar(&cfg.httpAddr, "http", "", "with an order flow over -oe: the engine's HTTP address, to check the rise of its trades counter against the replies")
-	fs.BoolVar(&cfg.push, "push", false, "with -orders and -http: also time each order's trade push (T) and check the pushes")
+	fs.BoolVar(&cfg.push, "push", false, "with -orders and -http: also time each order's trade push (T) and check the pushes; the stream reader's CPU is then in the run's latencies")
 	fs.BoolVar(&cfg.spin, "spin", true, "with -oe: spin the pacing thread, and on Linux the reading one, pinned to CPUs, instead of sleeping")
 	fs.DurationVar(&cfg.maxSendLag, "max-send-lag", 10*time.Microsecond, "with -oe: the largest p99.9 send lag of a valid run")
 	out := fs.String("out", "", "file to write the JSON report to")
@@ -73,7 +73,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("loadgen: unexpected argument %q, want flags only", fs.Arg(0))
 	}
-	if err := checkFlows(cfg); err != nil {
+	set := map[string]bool{} // the flags given, whatever their values
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if err := checkFlows(cfg, set); err != nil {
 		return err
 	}
 	// The comparisons are written so that NaN fails them.
@@ -122,8 +124,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 // checkFlows checks the flags that choose what an OE1 session carries and
-// what is checked against the engine's HTTP side.
-func checkFlows(cfg config) error {
+// what is checked against the engine's HTTP side. set holds the names of the
+// flags that were given.
+func checkFlows(cfg config, set map[string]bool) error {
 	var flows []string
 	for _, f := range []struct {
 		name string
@@ -144,6 +147,13 @@ func checkFlows(cfg config) error {
 		return errors.New("loadgen: -push without -http: the trade stream is on the engine's HTTP address")
 	case cfg.httpAddr != "" && len(flows) == 0:
 		return errors.New("loadgen: -http without -orders, -ioc or -ack-cancel: only an order flow over -oe has trades to check")
+	}
+	if cfg.ioc || cfg.ackCancel {
+		for _, name := range []string{"seed", "sd"} {
+			if set[name] {
+				return fmt.Errorf("loadgen: -%s with %s: the flow has no random part, only -orders uses it", name, flows[0])
+			}
+		}
 	}
 	return nil
 }
@@ -194,13 +204,14 @@ func printReport(w io.Writer, r report) error {
 		fmt.Fprintf(&b, "trades: %d in replies, %d pushed, counter rose %d\n", r.Trades.Replies, r.Trades.Pushes, r.Trades.Metric)
 	case "oe_orders", "oe_ioc", "oe_ack_cancel":
 		// The pushes were read with -push, which has the row trade_push, and
-		// the counter with -http, which has a rise unless there were no trades.
+		// the counter with -http, which sets CounterRead. The line names what
+		// was read, so that a rise of 0 shows that the check ran.
 		_, pushed := r.Latency["trade_push"]
 		fmt.Fprintf(&b, "trades: %d in replies", r.Trades.Replies)
 		if pushed {
 			fmt.Fprintf(&b, ", %d pushed", r.Trades.Pushes)
 		}
-		if pushed || r.Trades.Metric != 0 {
+		if r.CounterRead {
 			fmt.Fprintf(&b, ", counter rose %d", r.Trades.Metric)
 		}
 		b.WriteString("\n")

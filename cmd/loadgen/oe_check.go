@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -15,20 +14,27 @@ import (
 // matching_engine_trades_total against the trade Events of the replies, and
 // with -push the stream of trades:SYMBOL against both, which also gives flow
 // T, the time from the due time of each order that traded to its first push.
-// The session carries none of it: the counter is read before the session
-// starts and after it has ended, and the pushes are joined with the replies
-// once the run is over, so nothing here touches the timed part.
+// The counter is read before the session starts and after it has ended, and
+// the pushes are joined with the replies once the run is over, so none of
+// that happens during the run. The stream reader does: with -push it runs
+// while the session does and decodes each push, so its CPU time is in the
+// run's latencies.
+//
+// A counter that cannot be read before the run stops it before anything is
+// opened. One that cannot be read after it makes the run invalid.
 func measureChecked(ctx context.Context, cfg config) (report, error) {
 	l := &loader{cfg: cfg, base: "http://" + cfg.httpAddr}
 	l.cfg.addr = cfg.httpAddr // where subscribe dials
 	l.join.init()
 
-	before, beforeErr := l.tradesTotal(ctx)
+	before, err := l.tradesTotal(ctx)
+	if err != nil {
+		return report{}, fmt.Errorf("reading matching_engine_trades_total before the run: %w", err)
+	}
 	var stream *websocket.Conn
 	var closing atomic.Bool
 	streamErr := make(chan error, 1)
 	if cfg.push {
-		var err error
 		if stream, err = l.subscribe(ctx); err != nil {
 			return report{}, fmt.Errorf("subscribing to trades:%s: %w", cfg.symbol, err)
 		}
@@ -54,7 +60,8 @@ func measureChecked(ctx context.Context, cfg config) (report, error) {
 	}
 	after, afterErr := l.tradesTotal(ctx)
 	var problems []string
-	rep.Trades, problems = l.tradeProblems(replied, stream != nil, missing, readErr, after-before, errors.Join(beforeErr, afterErr))
+	rep.Trades, problems = l.tradeProblems(replied, stream != nil, missing, readErr, after-before, afterErr)
+	rep.CounterRead = afterErr == nil
 	rep.Problems = append(rep.Problems, problems...)
 	rep.Valid = len(rep.Problems) == 0
 	return rep, nil

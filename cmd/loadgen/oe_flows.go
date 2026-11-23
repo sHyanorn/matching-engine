@@ -14,9 +14,11 @@ import (
 // accepts it and cancels it at once, so each request is one round trip
 // through the engine that leaves the book as it was. R2 (-ack-cancel) sends
 // a GTC buy for one lot, which rests, and, when its Done is in, a Cancel:
-// the closed loop of an exchange's own test, closed in the pacer so that the
-// orders stay open loop. Both want an engine whose ask side is empty: a
-// trade Event in a reply fails the run.
+// the closed loop of an exchange's own test. The reader never writes: it
+// queues the Cancel and the pacer writes it with the orders, so each order is
+// still due at its own time, and a slow write of a Cancel shows in the send
+// lag of the orders due meanwhile. Both want an engine whose ask side is
+// empty: a trade Event in a reply fails the run.
 const (
 	iocPrice = 6_500_000 // ticks
 	ackPrice = 6_400_000
@@ -118,13 +120,22 @@ func (r *oeRun) ackCancels(rep *report) (sent int, lag []int64, problems []strin
 	start, end := int64(cfg.warmup), int64(cfg.warmup+cfg.duration)
 	var reply, cancel, orderToCancel []int64
 	missing, failed, warmupFailed, resting := 0, 0, 0, 0
+	// Which orders had a Cancel sent, by request, from the commands: a send
+	// time of 0 does not mean none, as a coarse clock reads 0 at the start of
+	// the run.
+	canceled := make([]bool, r.total)
+	for _, c := range r.cmds[:r.nsent] {
+		if c.order == 0 {
+			canceled[c.request] = true
+		}
+	}
 	for seq, c := range r.cmds[:r.nsent] {
 		j, out := int(c.request), r.res[seq]
 		isCancel := c.order == 0
 		if out == noDone {
 			missing++
 		}
-		if out == orderRested && r.cancelAt[j] == 0 { // the warmup's too: it stays on the book
+		if out == orderRested && !canceled[j] { // the warmup's too: it stays on the book
 			resting++
 		}
 		if r.due(j) < start {

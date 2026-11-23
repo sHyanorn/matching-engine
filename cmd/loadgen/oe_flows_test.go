@@ -545,6 +545,39 @@ func TestOEAckCancelEndsWhenEverythingIsAnswered(t *testing.T) {
 	}
 }
 
+// An order that rested is reported as not canceled only if no Cancel command
+// names it, whatever time its Cancel went out at: a coarse clock, as Go's on
+// Windows, reads 0 for the sends of the first tick of a run.
+func TestOEAckCancelRestingOrdersComeFromTheCommands(t *testing.T) {
+	order := func(j int) command { return command{request: int32(j), order: int32(j + 1)} }
+	cancel := func(j int) command { return command{request: int32(j)} }
+	for _, c := range []struct {
+		name     string
+		cmds     []command
+		res      []outcome
+		cancelAt int64  // when the Cancel of the first order went out
+		want     string // in the problem; "" for none
+	}{
+		{"a Cancel sent at time 0", []command{order(0), cancel(0)}, []outcome{orderRested, cancelCanceled}, 0, ""},
+		{"a Cancel sent at time 0 for the second order", []command{order(0), order(1), cancel(0), cancel(1)},
+			[]outcome{orderRested, orderRested, cancelCanceled, cancelCanceled}, 0, ""},
+		{"a Cancel sent after time 0", []command{order(0), cancel(0)}, []outcome{orderRested, cancelCanceled}, 1234, ""},
+		{"no Cancel", []command{order(0)}, []outcome{orderRested}, 0, "orders that rested and were not canceled: 1"},
+		{"the Cancel of another order", []command{order(0), order(1), cancel(1)}, []outcome{orderRested, orderRested, cancelCanceled}, 0,
+			"orders that rested and were not canceled: 1"},
+	} {
+		r := newOERun(config{rate: 10_000, duration: time.Second, ackCancel: true}, discardConn{})
+		copy(r.cmds, c.cmds)
+		copy(r.res, c.res)
+		r.nsent = len(c.cmds)
+		r.cancelAt[0] = c.cancelAt // every other send time is 0 too
+		rep := r.report()
+		if c.want == "" && problemWith(rep, "were not canceled") || c.want != "" && !problemWith(rep, c.want) {
+			t.Errorf("%s: problems %q, want one containing %q (none if empty)", c.name, rep.Problems, c.want)
+		}
+	}
+}
+
 // A write holds at most maxBatch frames, the orders that are due first and
 // the Cancels in the room that is left.
 func TestOEAckCancelBatchIsBounded(t *testing.T) {
@@ -614,6 +647,11 @@ func TestRunFlowFlagErrors(t *testing.T) {
 		{[]string{"-push"}, "-push without -orders"},
 		{[]string{"-http", "x:2"}, "-http without -orders, -ioc or -ack-cancel"},
 		{[]string{"-oe", "x:1", "-http", "x:2"}, "-http without -orders, -ioc or -ack-cancel"},
+		// A flag given at its default value counts as given.
+		{[]string{"-oe", "x:1", "-ioc", "-seed", "1"}, "-seed with -ioc"},
+		{[]string{"-oe", "x:1", "-ioc", "-sd", "5"}, "-sd with -ioc"},
+		{[]string{"-oe", "x:1", "-ack-cancel", "-seed", "1"}, "-seed with -ack-cancel"},
+		{[]string{"-oe", "x:1", "-ack-cancel", "-sd", "5"}, "-sd with -ack-cancel"},
 	} {
 		err := run(context.Background(), c.args, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -622,8 +660,32 @@ func TestRunFlowFlagErrors(t *testing.T) {
 	}
 }
 
+// -seed and -sd shape the random flow of -orders, so -ioc and -ack-cancel,
+// which have none, reject them when they are given; -orders takes both.
+func TestCheckFlowsSeedAndSD(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		cfg  config
+		set  map[string]bool
+		want string // in the error; "" for none
+	}{
+		{"-ioc without them", config{oeAddr: "x:1", ioc: true}, nil, ""},
+		{"-ack-cancel without them", config{oeAddr: "x:1", ackCancel: true}, nil, ""},
+		{"-ioc with others", config{oeAddr: "x:1", ioc: true}, map[string]bool{"rate": true, "out": true}, ""},
+		{"-orders with both", config{oeAddr: "x:1", orders: true}, map[string]bool{"seed": true, "sd": true}, ""},
+		{"-ioc with -seed", config{oeAddr: "x:1", ioc: true}, map[string]bool{"seed": true}, "-seed with -ioc"},
+		{"-ack-cancel with -sd", config{oeAddr: "x:1", ackCancel: true}, map[string]bool{"sd": true}, "-sd with -ack-cancel"},
+	} {
+		err := checkFlows(c.cfg, c.set)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%s: checkFlows = %v, want an error containing %q", c.name, err, c.want)
+		}
+	}
+}
+
 // Each flow is reported under its own mode, with the rows it has, and the
-// trades line shows the pushes and the counter when they were read.
+// trades line shows the pushes when they were read and the counter when it
+// was.
 func TestPrintReportOEFlows(t *testing.T) {
 	rows := func(keys ...string) map[string]summary {
 		m := map[string]summary{}
@@ -642,16 +704,19 @@ func TestPrintReportOEFlows(t *testing.T) {
 			Latency: rows("reply", "service", "send_lag", "hiccup")},
 			[]string{"OE1 IOC orders on BTC-USD: ", "order_canceled 7\n", "trades: 0 in replies\n", "request to reply ", "service time ", "loadgen hiccup ", "\nvalid\n"},
 			[]string{"cancels sent", "pushed", "counter rose", "cancel to reply"}},
-		{"R1 with -http", report{Mode: "oe_ioc", Symbol: "BTC-USD", Valid: true, Trades: tradeCounts{Metric: 3},
+		{"R1 with -http", report{Mode: "oe_ioc", Symbol: "BTC-USD", Valid: true, CounterRead: true, Trades: tradeCounts{Metric: 3},
 			Latency: rows("reply")},
 			[]string{"trades: 0 in replies, counter rose 3\n"}, []string{"pushed"}},
+		{"R1 with -http, no rise", report{Mode: "oe_ioc", Symbol: "BTC-USD", Valid: true, CounterRead: true,
+			Latency: rows("reply")},
+			[]string{"trades: 0 in replies, counter rose 0\n"}, []string{"pushed"}},
 		{"R2", report{Mode: "oe_ack_cancel", Symbol: "BTC-USD", Valid: true, Cancels: 1234,
 			Outcomes: map[string]int{"order_rested": 1234, "cancel_canceled": 1234},
 			Latency:  rows("reply", "cancel", "order_to_cancel", "send_lag")},
 			[]string{"OE1 orders and their cancels on BTC-USD: ", "cancel_canceled 1234, order_rested 1234\n", "cancels sent: 1234\n", "trades: 0 in replies\n",
 				"request to reply ", "cancel to reply ", "order to canceled ", "send lag "},
 			[]string{"service time", "pushed"}},
-		{"T", report{Mode: "oe_orders", Symbol: "BTC-USD", Trades: tradeCounts{Replies: 10, Pushes: 10, Metric: 10},
+		{"T", report{Mode: "oe_orders", Symbol: "BTC-USD", CounterRead: true, Trades: tradeCounts{Replies: 10, Pushes: 10, Metric: 10},
 			Problems: []string{"x"}, Latency: rows("trade_push", "reply", "service", "send_lag")},
 			[]string{"OE1 orders on BTC-USD: ", "trades: 10 in replies, 10 pushed, counter rose 10\n", "order to trade push ", "\ninvalid: x\n"},
 			[]string{"cancels sent"}},
@@ -705,6 +770,25 @@ func TestRunOEFlowsWriteReport(t *testing.T) {
 		}
 	}
 	checkVerdict(t, stdout, r)
+}
+
+// With -http, a run of R1 or R2 prints that the counter rose, by 0 as nothing
+// trades, so that the report shows the check ran; without it the report has no
+// counter text.
+func TestRunOEFlowsPrintTheCounterRead(t *testing.T) {
+	for _, flowFlag := range []string{"-ioc", "-ack-cancel"} {
+		s := newFakeStream(t)
+		stdout, r := runOEReport(t, flowFlag, "-symbol", fakeSymbol, "-http", s.addr)
+		if !r.CounterRead || r.Trades.Metric != 0 || !strings.Contains(stdout, "trades: 0 in replies, counter rose 0\n") {
+			t.Errorf("%s -http: counter read %v, rise %d, report:\n%s", flowFlag, r.CounterRead, r.Trades.Metric, stdout)
+		}
+		checkVerdict(t, stdout, r)
+
+		stdout, r = runOEReport(t, flowFlag, "-symbol", fakeSymbol)
+		if r.CounterRead || strings.Contains(stdout, "counter") {
+			t.Errorf("%s without -http: counter read %v, report:\n%s", flowFlag, r.CounterRead, stdout)
+		}
+	}
 }
 
 // loadgen -oe -orders -push -http reads the stream and the counter of the
