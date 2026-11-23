@@ -36,11 +36,13 @@
 # run's report comes with the engine's log, which holds no network address
 # but 0.0.0.0 and 127.0.0.1, that each run's record has the difference of the
 # CPU counters of both machines and the summary says which could be read,
-# that the log copy holds the plan, the runs and the summary, and that the
-# key stays with the self-delete timer. It takes minutes; the summary of what
-# it found, the counters that were readable and the number of lines that the
-# archive's block takes in the log, are printed. Ports 8000, 8080, 9000 and
-# 9100 must be free.
+# that each run whose report has a series has the supervisor's wake meter
+# next to it, with its placement and the offset of the two clocks, that the
+# log copy holds the plan, the runs and the summary, and that the key stays
+# with the self-delete timer. It takes minutes; the summary of what it found,
+# the counters that were readable, the wake meter's placement and the number
+# of lines that the archive's block takes in the log, are printed. Ports 8000,
+# 8080, 9000 and 9100 must be free.
 #
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
@@ -493,6 +495,28 @@ for line in open(os.path.join(r, "runs.jsonl")):
         assert not missing, (run["report"], key, missing)
 assert runs, "no run has a report"
 ' "$r"
+	# The REST runs have no series, so nothing to align a wake with.
+	check "every run whose report has a series has a wake file of columns of one length, a placement with a CPU and a clock offset with an error under 50 ms, and a run that has none has neither" \
+		python3 -I -c '
+import json, os, sys
+r = sys.argv[1]
+aligned = 0
+for line in open(os.path.join(r, "runs.jsonl")):
+    run = json.loads(line)
+    if run["report"] == "":
+        continue
+    if "series" not in json.load(open(os.path.join(r, run["report"]))):
+        assert run["wake"] == "" and run["clock_offset"] is None, run["report"]
+        continue
+    aligned += 1
+    assert run["wake"] == os.path.splitext(run["report"])[0] + ".wake.json", run["report"]
+    wake = json.load(open(os.path.join(r, run["wake"])))
+    assert len(wake["n"]) == len(wake["p99"]) == len(wake["max"]) > 0, run["wake"]
+    assert wake["placement"]["cpu"] >= 0, (run["wake"], wake["placement"])
+    assert 0 <= run["clock_offset"]["error_us"] < 50000, (run["wake"], run["clock_offset"])
+    assert wake["clock"] == run["clock_offset"], run["wake"]
+assert aligned, "no run has a series"
+' "$r"
 	check "the summary has counters_readable" \
 		python3 -I -c '
 import json, sys
@@ -542,6 +566,15 @@ import json, sys
 c = json.load(open(sys.argv[1] + "/summary.json"))["counters_readable"]
 for m in ("engine", "client"):
     print("counters_readable, %s machine: readable %s; unreadable in all runs %s" % (m, " ".join(c[m]["readable"]) or "none", " ".join(c[m]["unreadable"]) or "none"))
+' "$r" || true
+	python3 -I -c '
+import json, os, sys
+r = sys.argv[1]
+for line in open(os.path.join(r, "runs.jsonl")):
+    run = json.loads(line)
+    if run["wake"]:
+        print("wake meter placement: " + json.dumps(json.load(open(os.path.join(r, run["wake"])))["placement"]))
+        break
 ' "$r" || true
 	[ -s "$r/summary.txt" ] && cat "$r/summary.txt"
 	[ "$failed" = 0 ] || {

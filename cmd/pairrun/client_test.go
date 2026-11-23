@@ -157,7 +157,7 @@ func TestClientFullMatrix(t *testing.T) {
 	}
 	for _, key := range []string{"seq", "round", "config", "flow", "engine_config", "args", "started", "ended", "report", "engine_log", "loadgen_exit",
 		"loadgen_valid", "loadgen_problems", "study", "valid", "client_host", "engine_host", "engine_metrics", "engine_delta", "client_delta",
-		"outcomes", "trades", "latency_us"} {
+		"outcomes", "trades", "latency_us", "wake", "clock_offset"} {
 		if _, ok := first[key]; !ok {
 			t.Errorf("a run record has no %q", key)
 		}

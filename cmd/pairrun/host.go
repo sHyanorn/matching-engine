@@ -21,6 +21,7 @@ type sources struct {
 	meminfo  string
 	cgroupV2 string // memory.max
 	cgroupV1 string // memory.limit_in_bytes
+	sysfs    string // where Linux describes the CPUs: cpuN/topology/thread_siblings_list
 
 	// The files of readCounters.
 	procDir        string // holds <pid>/task/<tid>/schedstat of each thread
@@ -42,6 +43,7 @@ var procSources = sources{
 	meminfo:  "/proc/meminfo",
 	cgroupV2: "/sys/fs/cgroup/memory.max",
 	cgroupV1: "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+	sysfs:    "/sys/devices/system/cpu",
 
 	procDir:        "/proc",
 	procStat:       "/proc/stat",

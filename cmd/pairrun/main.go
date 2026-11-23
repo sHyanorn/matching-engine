@@ -13,6 +13,10 @@
 // own output for it, bounded in size and without network addresses, and each
 // run's record the change in both machines' CPU scheduling counters over the
 // run (counters.go), which tells a wait for a CPU from a stall of the host.
+// Once it is ready the supervisor also times, second by second, how late a
+// thread that sleeps 1 ms is woken on its machine, and the client keeps those
+// seconds for the measured part of each run that has a loadgen series, with the
+// offset between the two clocks (wake.go).
 // `pairrun slim` copies a results directory without the parts that the Pod's
 // log has no room for (slim.go).
 //
@@ -32,6 +36,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -40,6 +45,15 @@ const usage = `usage:
   pairrun supervise -engine BIN -loadgen BIN -work DIR [-listen :9100] [-env FILE]
   pairrun client -loadgen BIN -oe HOST:PORT -http HOST:PORT -ctl HOST:PORT -out DIR [-deadline UNIXSECONDS] [-deadline-margin 10m]
   pairrun slim -in DIR -out DIR`
+
+// The main goroutine keeps the main thread for the life of the process, so that
+// no other goroutine is run there. The main thread does not end when a goroutine
+// locked to it does, and a pin put on it would show as the process's CPUs in
+// /proc/self/status, which names the main thread. A call to LockOSThread from
+// an init function locks the main goroutine to the main thread.
+func init() {
+	runtime.LockOSThread()
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

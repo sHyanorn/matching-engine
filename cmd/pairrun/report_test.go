@@ -39,6 +39,7 @@ type cannedReport struct {
 	Outcomes         map[string]int
 	Trades           tradeCounts
 	Latency          map[string]latencyRow
+	Series           any // the report's "series", if it has one
 }
 
 type rowWithCurve struct {
@@ -52,10 +53,14 @@ func (r cannedReport) JSON() []byte {
 	for k, v := range r.Latency {
 		latency[k] = rowWithCurve{v, [][2]float64{{50, v.P50}, {100, v.Max}}}
 	}
-	data, err := json.Marshal(map[string]any{
+	report := map[string]any{
 		"mode": "oe", "valid": r.Valid, "problems": r.Problems, "target_rate": r.Target, "achieved_rate": r.Achieved,
 		"outcomes": r.Outcomes, "trades": r.Trades, "latency_us": latency,
-	})
+	}
+	if r.Series != nil {
+		report["series"] = r.Series
+	}
+	data, err := json.Marshal(report)
 	if err != nil {
 		panic(err)
 	}

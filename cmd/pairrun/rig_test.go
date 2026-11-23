@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -51,6 +52,10 @@ type fakeSupervisor struct {
 	counterBody   map[int]string       // ... or this text
 	counterAll    int                  // every /counters answers this status, if not 0
 	onCounters    func(n int)          // called at each /counters, with its number
+
+	wakeReads  int                                                   // the /wake requests so far
+	wakeAsked  []url.Values                                          // the query of each
+	wakeAnswer func(n int, from, to int64) (status int, body []byte) // what the nth /wake answers; fakeWakeAnswer if nil
 }
 
 func newFakeSupervisor(t *testing.T) *fakeSupervisor {
@@ -154,9 +159,42 @@ func (f *fakeSupervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			read = f.counterAnswer(n)
 		}
 		_ = json.NewEncoder(w).Encode(read)
+	case "GET /wake":
+		f.wakeReads++
+		f.wakeAsked = append(f.wakeAsked, r.URL.Query())
+		from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+		to, _ := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
+		status, body := http.StatusOK, fakeWakeAnswer(from, to)
+		if f.wakeAnswer != nil {
+			status, body = f.wakeAnswer(f.wakeReads, from, to)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// fakeWakeAnswer is what the fake supervisor's meter answers for the seconds
+// that start from from to to, in Unix ms: 900 wakes in each, and a clock that
+// is a minute past to, so that every second is finished.
+func fakeWakeAnswer(from, to int64) []byte {
+	a := wakeAnswer{
+		NowUnixNS: (to + 60_000) * int64(time.Millisecond), TickUS: 1000,
+		Placement: wakePlacement{CPU: 7, Siblings: []int{3, 7}, Cores: 4, TopologyReadable: true, Pinned: true},
+		N:         []int{}, P99: []float64{}, Max: []float64{},
+	}
+	for sec := (from + 999) / 1000; sec*1000 <= to; sec++ {
+		if len(a.N) == 0 {
+			a.T0 = sec
+		}
+		a.N, a.P99, a.Max = append(a.N, 900), append(a.P99, 110), append(a.Max, 400+float64(len(a.N)))
+	}
+	data, err := json.Marshal(a)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 // fakeEngineCounters is the nth reading of the fake supervisor's machine, all
@@ -285,6 +323,9 @@ func editReport(r fakeRun, edit func(*cannedReport)) fakeRun {
 	rep := cannedReport{
 		Valid: base.Valid, Problems: base.Problems, Target: base.TargetRate, Achieved: base.AchievedRate,
 		Outcomes: base.Outcomes, Trades: base.Trades, Latency: base.Latency,
+	}
+	if len(base.Series) > 0 {
+		rep.Series = base.Series
 	}
 	edit(&rep)
 	r.Report = rep.JSON()

@@ -74,6 +74,9 @@ func newSupervisorTest(t *testing.T, mutate ...func(*superviseOptions)) *supervi
 		cancel()
 		t.Fatal(err)
 	}
+	// The tests that serve must not pin the test binary's threads: one test of
+	// wake_supervise_test.go does, with a meter of its own.
+	s.wake.pin = func(int) (func() error, error) { return func() error { return nil }, nil }
 	st := &supervisorTest{supervisor: s, srv: httptest.NewServer(s), out: out, cancel: cancel}
 	t.Cleanup(func() {
 		st.srv.Close()
@@ -310,6 +313,7 @@ func TestSupervisorRoutes(t *testing.T) {
 		{"GET", "/engine-env"}, {"GET", "/engine-env.txt/"}, {"POST", "/engine-env.txt"}, {"HEAD", "/engine-env.txt"},
 		{"POST", "/engine-log?start=1"}, {"HEAD", "/engine-log?start=1"}, {"GET", "/engine-log/"}, {"GET", "/engine-logs"}, {"GET", "/engine-log.txt"},
 		{"POST", "/counters"}, {"HEAD", "/counters"}, {"GET", "/counters/"}, {"GET", "/Counters"}, {"GET", "/counters.json"},
+		{"POST", "/wake?from=0&to=1"}, {"HEAD", "/wake?from=0&to=1"}, {"GET", "/wake/"}, {"GET", "/Wake"}, {"GET", "/wake.json"}, {"PUT", "/wake"},
 		{"POST", "/exec?cmd=id"}, {"OPTIONS", "/host"},
 	} {
 		if code, body := st.request(t, c.method, c.path); code != http.StatusNotFound {
@@ -326,6 +330,9 @@ func TestSupervisorRoutes(t *testing.T) {
 	}
 	if code, _ := st.request(t, http.MethodGet, "/counters"); code != http.StatusOK {
 		t.Errorf("GET /counters answered %d", code)
+	}
+	if code, _ := st.request(t, http.MethodGet, "/wake?from=0&to=1"); code != http.StatusOK {
+		t.Errorf("GET /wake answered %d", code)
 	}
 	if code, _ := st.request(t, http.MethodPost, "/stop"); code != http.StatusOK {
 		t.Errorf("POST /stop answered %d", code)

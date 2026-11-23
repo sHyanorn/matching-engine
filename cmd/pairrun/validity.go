@@ -37,6 +37,15 @@ type loadgenReport struct {
 	Outcomes     map[string]int        `json:"outcomes"`
 	Trades       tradeCounts           `json:"trades"`
 	Latency      map[string]latencyRow `json:"latency_us"`
+	Series       json.RawMessage       `json:"series"` // per second; only the OE1 modes have one. Read apart from the rest (reportSeries) so that nothing in it can fail the report
+}
+
+// reportSeries is the part of loadgen's series that the runner reads: when the
+// measured part began, in wall clock, and how many windows it has.
+type reportSeries struct {
+	WindowS float64   `json:"window_s"`
+	Start   time.Time `json:"start"`
+	N       []int     `json:"n"`
 }
 
 // readReport parses the report loadgen wrote to path.

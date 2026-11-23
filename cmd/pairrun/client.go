@@ -105,6 +105,8 @@ type runRecord struct {
 	Ended           string                `json:"ended"`        // after the engine's metrics were read
 	Report          string                `json:"report"`       // loadgen's JSON, relative to the results directory; "" if no engine was started
 	EngineLog       string                `json:"engine_log"`   // the engine's output, bounded, relative to the results directory; "" if none was fetched
+	Wake            string                `json:"wake"`         // the engine machine's wake meter over the measured part (wake.go), relative to the results directory; "" if none was fetched, and for a run whose report has no series
+	ClockOffset     *clockOffset          `json:"clock_offset"` // of the engine machine's clock, measured with the wake fetch; nil if there was none
 	LoadgenExit     int                   `json:"loadgen_exit"` // -1 if loadgen did not run or did not exit by itself
 	LoadgenValid    bool                  `json:"loadgen_valid"`
 	LoadgenProblems []string              `json:"loadgen_problems"`
@@ -367,6 +369,7 @@ func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 		rec.Notes = append(rec.Notes, "engine metrics: "+err.Error())
 	}
 	c.keepEngineLog(ctx, base, before.Starts, &rec)
+	c.keepWake(ctx, base, rep, &rec)
 
 	rec.Study = append(evaluate(cfg, rep, repErr, p.MaxSendLag), stableRule(before.Starts, afterPtr, afterErr))
 	rec.Valid = allMet(rec.Study)
@@ -592,6 +595,78 @@ func (c *client) keepEngineLog(ctx context.Context, base string, start int, rec 
 	if note, cut := engineLogCut(data); cut {
 		rec.Notes = append(rec.Notes, "engine log: "+note)
 	}
+}
+
+// keepWake saves the wake meter's seconds over the measured part of the run
+// base, in the engine machine's clock, next to the report, with the offset of
+// that clock from this one, which the same request measures. The seconds can be
+// set against the report's series only through the offset, so a run whose report
+// has no series (the REST runs) gets neither. The supervisor serves a second
+// once a later one has a wake, so if the window has only just ended the last
+// of its seconds is not served yet: the request is repeated once, after the
+// wait that wakeWait gives. Like the engine log, the wake is evidence and not a
+// rule of validity: what cannot be had is noted and the run stands.
+func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, rec *runRecord) {
+	if rep == nil || len(rep.Series) == 0 || string(rep.Series) == "null" {
+		return
+	}
+	var ser reportSeries
+	err := json.Unmarshal(rep.Series, &ser)
+	if err == nil && (ser.Start.IsZero() || len(ser.N) == 0) {
+		err = errors.New("no start or no windows")
+	}
+	if err != nil {
+		rec.Notes = append(rec.Notes, "wake: the report's series: "+err.Error())
+		return
+	}
+	window := time.Second
+	if ser.WindowS > 0 {
+		window = time.Duration(ser.WindowS * float64(time.Second))
+	}
+	end := ser.Start.Add(time.Duration(len(ser.N)) * window)
+	target := fmt.Sprintf("http://%s/wake?from=%d&to=%d", c.Ctl, ser.Start.Add(-time.Second).UnixMilli(), end.Add(time.Second).UnixMilli())
+	var a wakeAnswer
+	var off clockOffset
+	for attempt := 1; ; attempt++ {
+		send := c.now()
+		data, err := c.fetch(ctx, http.MethodGet, target, 10*time.Second)
+		recv := c.now()
+		a = wakeAnswer{}
+		if err == nil {
+			err = json.Unmarshal(data, &a)
+		}
+		if err == nil {
+			err = a.check()
+		}
+		if err != nil {
+			rec.Notes = append(rec.Notes, "wake: "+err.Error())
+			return
+		}
+		off = measureOffset(send, recv, a.NowUnixNS)
+		wait := wakeWait(a.NowUnixNS, end, off.duration())
+		if wait == 0 || attempt == 2 {
+			if wait > 0 {
+				rec.Notes = append(rec.Notes, "wake: the last second of the measured part was not finished when the supervisor answered")
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+	rec.ClockOffset = &off
+	data, err := json.Marshal(wakeFile{wakeAnswer: a, Clock: off})
+	name := path.Join("runs", base+".wake.json")
+	if err == nil {
+		err = writeFileAtomic(filepath.Join(c.Out, name), append(data, '\n'))
+	}
+	if err != nil {
+		rec.Notes = append(rec.Notes, "wake: "+err.Error())
+		return
+	}
+	rec.Wake = name
 }
 
 // parseMetrics finds go_gc_duration_seconds_count and

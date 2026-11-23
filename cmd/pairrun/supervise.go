@@ -113,7 +113,8 @@ func engineConfigs(goMemLimit int64) map[string]engineConfig {
 // the routes of ServeHTTP and nothing else, and runs only the binaries it was
 // started with in the configurations of its table. One route serves the text
 // of the -env file as it is, so that file must hold nothing that is secret;
-// /counters serves numbers only.
+// /counters and /wake serve numbers only, and /wake the wake meter's own
+// placement.
 type supervisor struct {
 	ctx        context.Context // ends with the process
 	out        io.Writer
@@ -131,6 +132,7 @@ type supervisor struct {
 	memLimit   int64
 	goMemLimit int64
 	clockNS    float64
+	wake       *wakeMeter // starts when the supervisor is ready
 	envFile    string
 	overrides  map[string]string
 	configs    map[string]engineConfig
@@ -181,6 +183,13 @@ func newSupervisor(ctx context.Context, o superviseOptions, out io.Writer) (*sup
 		read = measureClockRead
 	}
 	s.clockNS = read()
+	place := wakePlacement{CPU: -1, Siblings: []int{}}
+	if allowed, err := allowedCPUs(s.src.status); err != nil {
+		place.Note = "no meter: the CPUs this process may use are unreadable: " + err.Error()
+	} else {
+		place = placeWake(s.src.sysfs, allowed)
+	}
+	s.wake = newWakeMeter(place)
 	return s, nil
 }
 
@@ -207,8 +216,9 @@ func supervise(ctx context.Context, o superviseOptions, stdout io.Writer) error 
 	return s.serve(o.Listen)
 }
 
-// serve serves the control port on listen, makes the loopback run and then
-// serves until the supervisor's context ends, when it stops the engine.
+// serve serves the control port on listen, makes the loopback run, starts the
+// wake meter and then serves until the supervisor's context ends, when it stops
+// the engine and the meter.
 func (s *supervisor) serve(listen string) (err error) {
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -221,10 +231,16 @@ func (s *supervisor) serve(listen string) (err error) {
 	}
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(ln) }()
+	meterCtx, stopMeter := context.WithCancel(s.ctx)
+	var meterDone <-chan struct{}
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err = errors.Join(err, hs.Shutdown(shutdown), s.stopEngine())
+		stopMeter()
+		if meterDone != nil {
+			<-meterDone
+		}
 	}()
 	s.logf("listening on %s", ln.Addr())
 
@@ -237,6 +253,7 @@ func (s *supervisor) serve(listen string) (err error) {
 	s.mu.Lock()
 	s.ready = true
 	s.mu.Unlock()
+	meterDone = s.wake.start(meterCtx)
 	s.logf("ready")
 	select {
 	case <-s.ctx.Done():
@@ -254,6 +271,8 @@ func (s *supervisor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveRecord(w)
 	case "GET /counters":
 		s.serveCounters(w)
+	case "GET /wake":
+		s.serveWake(w, r)
 	case "POST /start":
 		s.serveStart(w, r)
 	case "POST /stop":
@@ -440,6 +459,20 @@ func (s *supervisor) serveCounters(w http.ResponseWriter) {
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(readCounters(s.src, pid)) // a client that has gone has no use for an error
+}
+
+// serveWake answers with the wake meter's finished seconds from the query's
+// from to its to, in Unix milliseconds (wake.go).
+func (s *supervisor) serveWake(w http.ResponseWriter, r *http.Request) {
+	from, to, err := wakeRange(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a := s.wake.answer(from, to)
+	a.NowUnixNS = s.now().UnixNano() // as late as it can be: the client puts it half way between its request and its answer
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(a) // a client that has gone has no use for an error
 }
 
 func (s *supervisor) serveRecord(w http.ResponseWriter) {

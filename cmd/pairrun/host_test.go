@@ -29,7 +29,7 @@ func fakeSources(dir string) sources {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	return sources{
 		cpuinfo: p("cpuinfo"), loadavg: p("loadavg"), bootID: p("boot_id"), status: p("status"),
-		meminfo: p("meminfo"), cgroupV2: p("memory.max"), cgroupV1: p("memory.limit_in_bytes"),
+		meminfo: p("meminfo"), cgroupV2: p("memory.max"), cgroupV1: p("memory.limit_in_bytes"), sysfs: p("sys"),
 		procDir: p("proc"), procStat: p("stat"), cpuStatV2: p("cpu.stat"), cpuMaxV2: p("cpu.max"), cpuStatV1: p("cpu.stat.v1"),
 		cfsQuotaV1: p("cpu.cfs_quota_us"), cfsPeriodV1: p("cpu.cfs_period_us"), pressureCgroup: p("cpu.pressure"), pressureProc: p("pressure.cpu"),
 	}
