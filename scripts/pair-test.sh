@@ -21,6 +21,11 @@
 #     the log needs, that it has no percentile curve and no table of a
 #     loadgen report, which the full archive still has, and that it differs
 #     from the full archive in nothing else;
+#   - the mask: that the full archive holds the Pod's masked copy of its
+#     results (scripts/pair.sh, publish; pairrun redact) and that no archive, the
+#     one fetched from port 8000 or the one decoded from the log, nor any file
+#     extracted from one, holds 127.0.0.2, the address at which the rehearsal's
+#     client reaches the engine, which the mask does not exempt;
 #   - selftest: that it prints its heartbeat;
 #   - a tarball of another commit, and one with an added file: that the
 #     start command refuses them and never runs pair.sh.
@@ -38,11 +43,12 @@
 # CPU counters of both machines and the summary says which could be read,
 # that each run whose report has a series has the supervisor's wake meter
 # next to it, with its placement and the offset of the two clocks, that the
-# log copy holds the plan, the runs and the summary, and that the key stays
-# with the self-delete timer. It takes minutes; the summary of what it found,
-# the counters that were readable, the wake meter's placement and the number
-# of lines that the archive's block takes in the log, are printed. Ports 8000,
-# 8080, 9000 and 9100 must be free.
+# log copy holds the plan, the runs and the summary, that the Pod's own
+# results quote 127.0.0.2 in runs.jsonl and plan.json, where both archives
+# hold x.x.x.x, and that the key stays with the self-delete timer. It takes
+# minutes; the summary of what it found, the counters that were readable, the
+# wake meter's placement and the number of lines that the archive's block takes
+# in the log, are printed. Ports 8000, 8080, 9000 and 9100 must be free.
 #
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
@@ -70,6 +76,10 @@ commit=$(hex 20) other=$(hex 20) added=$(hex 20)
 # Canary variables of each Pod: a name that a filter on KEY, SECRET, TOKEN
 # and PASS stops, one that it lets through, and one that only looks harmless.
 tokenx=canary-$(hex 12) jwt=canary-$(hex 12) pubip=canary-$(hex 12)
+# The address at which a client reaches its engine. The mask leaves 127.0.0.1
+# alone, so the rehearsal uses another loopback address, as all of 127/8 is
+# loopback on Linux and the engines listen on every address.
+peer=127.0.0.2
 
 # The working tree as a tree object, and tarballs of it as codeload serves
 # them: a pax global header whose comment is the commit ID, then the files
@@ -237,8 +247,11 @@ watch() {
 	pids+=($!)
 }
 if [ "${1:-}" != pilot ]; then
+	# A loadgen report does not quote the address of its engine, so these results
+	# have nothing to mask; the pilot's do. The checks that no archive holds the
+	# address guard a report that starts to.
 	pod engine engine "$commit" 40
-	pod client client "$commit" 45 ENGINE_ADDR=127.0.0.1:9000 RESULT_PATH="$path" RUNS=2 WARMUP=1s DURATION=2s
+	pod client client "$commit" 45 ENGINE_ADDR=$peer:9000 RESULT_PATH="$path" RUNS=2 WARMUP=1s DURATION=2s
 	pod selftest selftest "$commit" 10
 	pod other selftest "$other" 10
 	pod added selftest "$added" 10
@@ -395,13 +408,38 @@ keyheld() {
 	done
 }
 
+# podsrc prints the directory that the one Pod with results works in, which
+# holds the results as it wrote them and pub/results, their masked copy. The
+# start command of each Pod works in a directory of its own below $t/tmp, which
+# stays until the test ends.
+podsrc() {
+	local d=("$t"/tmp/*/src/results)
+	[ "${#d[@]}" = 1 ] && [ -d "${d[0]}" ] && dirname "${d[0]}"
+}
+# in_archive ARCHIVE WORD: the name of a file of ARCHIVE or its content holds WORD.
+# Its status is not 0 for an archive that cannot be read, so a check that WORD is
+# not there needs one that it is, in the same archive, to be worth anything.
+in_archive() { { tar -tzf "$1" && tar -xzOf "$1"; } | grep -aF -- "$2" > /dev/null; }
+# quotes WORD FILE...: each FILE holds WORD.
+quotes() {
+	local w=$1 f
+	shift
+	for f; do
+		grep -qaF -- "$w" "$f" || {
+			echo "  $f does not hold $w"
+			return 1
+		}
+	done
+}
+
 # publication LOG FILE...: what a Pod published, as its log LOG shows it, with
 # the archive fetched from its port 8000 in $t/fetched.tgz. The full archive
 # is extracted to $t/results, the log copy to $t/logcopy; FILE..., below
 # results/, are the files that the log copy must hold.
 publication() {
-	local log=$1 full logline
+	local log=$1 full logline src
 	shift
+	src=$(podsrc) || src=/no-pod-with-results
 	full=$(grep '^pair: results.tgz ' "$log" || true)
 	logline=$(grep -m 1 '^pair: results-log.tgz ' "$log" || true)
 	sed -n '/^-- begin results-log.tgz base64$/,/^-- end results-log.tgz base64$/p' "$log" | sed '1d;$d' |
@@ -419,6 +457,10 @@ publication() {
 	check "the full archive still has the curves and the tables" curves "$t/results" yes
 	check "the log copy differs from the full archive in loadgen's tables, their curves and log-copy.txt only" \
 		nothing_else "$t/results/results" "$t/logcopy/results"
+	check "the full archive holds the Pod's masked copy of its results, pub/results, as it is" diff -r "$src/pub/results" "$t/results/results"
+	check "the archive served on port 8000 does not hold $peer" not in_archive "$t/fetched.tgz" "$peer"
+	check "the log copy decoded from the log does not hold $peer" not in_archive "$t/logged.tgz" "$peer"
+	check "no file extracted from either archive holds $peer" not grep -rqaF -- "$peer" "$t/results" "$t/logcopy"
 }
 
 # pilot rehearses the pilot's two modes. The plan's durations and send lag
@@ -428,7 +470,7 @@ publication() {
 pilot() {
 	local over=("PILOT_WARMUP=${PILOT_WARMUP:-1s}" "PILOT_DURATION=${PILOT_DURATION:-3s}" "PILOT_LONG=${PILOT_LONG:-5s}" PILOT_MAX_SEND_LAG=20ms DEADLINE_MARGIN=30s)
 	pod supervise supervise "$commit" 2400 CPUS=0,1 "${over[@]}"
-	pod matrix matrix "$commit" 2400 CPUS=2,3 ENGINE_OE=127.0.0.1:9000 ENGINE_HTTP=127.0.0.1:8080 ENGINE_CTL=127.0.0.1:9100 \
+	pod matrix matrix "$commit" 2400 CPUS=2,3 ENGINE_OE=$peer:9000 ENGINE_HTTP=$peer:8080 ENGINE_CTL=$peer:9100 \
 		RESULT_PATH="$path" "${over[@]}"
 	watch
 	for _ in $(seq 1800); do
@@ -535,6 +577,17 @@ for name in logs:
     for m in quad.finditer(open(name, errors="replace").read()):
         assert m.group(0) in ("0.0.0.0", "127.0.0.1"), (name, m.group(0))
 ' "$r"
+	# The client reaches the engine at $peer, which the mask does not exempt: the
+	# Pod's own results quote it as the client wrote them, so there is an address
+	# to mask, and the archives hold x.x.x.x in its place. That no archive holds
+	# $peer is checked with the publication.
+	local src
+	src=$(podsrc) || src=/no-pod-with-results
+	check "the Pod's own results quote $peer in runs.jsonl and plan.json" quotes "$peer" "$src/results/runs.jsonl" "$src/results/plan.json"
+	check "runs.jsonl and plan.json hold x.x.x.x in the full archive and in the log copy" \
+		quotes x.x.x.x "$r/runs.jsonl" "$r/plan.json" "$t/logcopy/results/runs.jsonl" "$t/logcopy/results/plan.json"
+	check "the archive served on port 8000 holds x.x.x.x" in_archive "$t/fetched.tgz" x.x.x.x
+	check "the log copy decoded from the log holds x.x.x.x" in_archive "$t/logged.tgz" x.x.x.x
 	check "the summary says that this is a rehearsal and not publishable" \
 		python3 -I -c '
 import json, sys

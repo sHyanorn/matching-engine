@@ -17,8 +17,10 @@
 // thread that sleeps 1 ms is woken on its machine, and the client keeps those
 // seconds for the measured part of each run that has a loadgen series, with the
 // offset between the two clocks (wake.go).
-// `pairrun slim` copies a results directory without the parts that the Pod's
-// log has no room for (slim.go).
+// `pairrun redact` copies a results directory with its network addresses
+// masked, which is what scripts/pair.sh publishes (redact.go), and `pairrun
+// slim` copies a results directory without the parts that the Pod's log has no
+// room for (slim.go).
 //
 // The control port has no authentication: the supervisor serves a fixed set of
 // routes, none of which takes a path, and runs nothing the client names but a
@@ -44,6 +46,7 @@ import (
 const usage = `usage:
   pairrun supervise -engine BIN -loadgen BIN -work DIR [-listen :9100] [-env FILE]
   pairrun client -loadgen BIN -oe HOST:PORT -http HOST:PORT -ctl HOST:PORT -out DIR [-deadline UNIXSECONDS] [-deadline-margin 10m]
+  pairrun redact -in DIR -out DIR
   pairrun slim -in DIR -out DIR`
 
 // The main goroutine keeps the main thread for the life of the process, so that
@@ -74,6 +77,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return runSupervise(ctx, args[1:], stdout)
 	case "client":
 		return runClient(ctx, args[1:], stdout)
+	case "redact":
+		return runRedact(args[1:])
 	case "slim":
 		return runSlim(args[1:])
 	}

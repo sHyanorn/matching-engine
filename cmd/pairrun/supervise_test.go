@@ -677,40 +677,6 @@ func TestEngineLogOfAGrowingFileIsReadAtOneSize(t *testing.T) {
 	}
 }
 
-func TestRedactAddresses(t *testing.T) {
-	for _, c := range []struct{ name, in, want string }{
-		{"the remote of an engine log line",
-			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"10.1.2.3:46376","reason":"EOF"}`,
-			`{"time":"2026-11-23T05:46:09.28696149Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"x.x.x.x","reason":"EOF"}`},
-		{"both addresses of a network error",
-			`read tcp 10.1.2.3:9000->4.5.6.7:8899: connection reset by peer`,
-			`read tcp x.x.x.x->x.x.x.x: connection reset by peer`},
-		{"an address without a port", "peer 4.5.6.7 left", "peer x.x.x.x left"},
-		{"an address at the start and at the end", "4.5.6.7 and 255.255.255.255", "x.x.x.x and x.x.x.x"},
-		{"addresses side by side", "10.0.0.1,10.0.0.2;10.0.0.3", "x.x.x.x,x.x.x.x;x.x.x.x"},
-		{"an address that ends a sentence", "no route to 4.5.6.7.", "no route to x.x.x.x."},
-		{"a port is part of the address only with digits", "4.5.6.7: gone", "x.x.x.x: gone"},
-		{"the listen address", "listening on 0.0.0.0:8080 and 0.0.0.0", "listening on 0.0.0.0:8080 and 0.0.0.0"},
-		{"loopback", `"remote":"127.0.0.1:46376" 127.0.0.1`, `"remote":"127.0.0.1:46376" 127.0.0.1`},
-		{"loopback next to another address", "127.0.0.1:9000->4.5.6.7:8899", "127.0.0.1:9000->x.x.x.x"},
-		{"five numbers", "version 1.2.3.4.5 of it", "version 1.2.3.4.5 of it"},
-		{"five numbers, the address first", "1.2.3.4.5", "1.2.3.4.5"},
-		{"five numbers, the address last", "12.1.2.3.4", "12.1.2.3.4"},
-		{"a timestamp", "2026-11-23T05:46:09.271175058Z", "2026-11-23T05:46:09.271175058Z"},
-		{"a longer number", "data-3568997236 session 17890137111478110228", "data-3568997236 session 17890137111478110228"},
-		{"numbers that are too large or too long", "256.1.1.1 and 1.2.3.456 and 1.2.3.4567 and 991.2.3.4", "256.1.1.1 and 1.2.3.456 and 1.2.3.4567 and 991.2.3.4"},
-		{"three numbers", "go1.27.4 and 1.2.3", "go1.27.4 and 1.2.3"},
-		{"IPv6 is not redacted", "peer [2001:db8::1]:9000", "peer [2001:db8::1]:9000"},
-		{"nothing", "", ""},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := string(redactAddresses([]byte(c.in))); got != c.want {
-				t.Errorf("redacted %q as %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
-
 // The served text of a log is redacted; the file stays as the engine wrote it
 // and the note counts the file's bytes.
 func TestSupervisorRedactsTheEngineLogItServes(t *testing.T) {

@@ -36,12 +36,16 @@
 # and the supervisor serves its copy unauthenticated, so no other variable
 # goes in.
 #
-# To publish, client and matrix pack the results directory twice. The log
-# returns at most its last 5000 lines, so the log copy (results-log.tgz,
-# made by pairrun slim) leaves out what the full archive still has and the
-# log can do without: the percentile curves of the loadgen reports and
-# loadgen's text tables. It adds log-copy.txt, which says so. The log gets,
-# in this order,
+# To publish, client and matrix first copy the results with their network
+# addresses masked (pairrun redact into pub/results): every IPv4 address but
+# 0.0.0.0 and 127.0.0.1, with its port, becomes x.x.x.x, since on a rented Pod
+# the client reaches the engine at a public address, which the results quote.
+# The results on the Pod stay as they are. If pairrun redact fails, no archive
+# is printed or served. Both archives are made from the masked copy. The log
+# returns at most its last 5000 lines, so the log copy (results-log.tgz, made
+# by pairrun slim) leaves out what the full archive still has and the log can
+# do without: the percentile curves of the loadgen reports and loadgen's text
+# tables. It adds log-copy.txt, which says so. The log gets, in this order,
 #
 #   pair: results.tgz N bytes, sha256 H          the full archive
 #   pair: results-log.tgz M bytes, sha256 H2     the log copy
@@ -53,10 +57,12 @@
 # so that a log cut at either end still shows the log copy's size and hash.
 # The log copy is fetched from the log: the lines between the begin and end
 # lines, decoded with base64 -d and checked against H2. The full archive,
-# which holds every file as it is, is fetched over HTTP from
+# which holds every file of the masked copy, is fetched over HTTP from
 # /RESULT_PATH/results.tgz on port 8000, which the Pod serves from then on,
-# and checked against H. If pairrun slim fails, a line says so and the log
-# copy is a copy of the full archive: the results are printed all the same.
+# and checked against H. Both paths hold the masked results; only the full
+# archive has the curves and the tables. If pairrun slim fails, a line says so
+# and the log copy is a copy of the full archive: the results are printed all
+# the same.
 #
 # supervise and matrix are the pilot (cmd/pairrun). supervise serves the
 # control port 9100 and, with the engine's OE1 port 9000 and HTTP port
@@ -140,14 +146,20 @@ engine() {
 	exec bin/engine -addr 127.0.0.1:8080 -oe-addr 0.0.0.0:9000 -data "$(mktemp -d)"
 }
 
-# publish packs the results, prints the log copy of the archive and serves
-# the archive. The log copy is not allowed to stop the results from being
-# printed: if it cannot be made, the whole archive stands in for it.
+# publish masks the results, packs the masked copy, prints the log copy of the
+# archive and serves the archive. The log copy is not allowed to stop the
+# results from being printed: if it cannot be made, the whole archive stands in
+# for it.
 publish() {
 	local marker
-	tar -czf results.tgz results
-	mkdir -p slim
-	if ! { bin/pairrun slim -in results -out slim/results && tar -C slim -cf - results | gzip -9n > results-log.tgz; }; then
+	mkdir -p pub slim
+	# An unmasked publication cannot be taken back, so without the mask nothing is published.
+	if ! bin/pairrun redact -in results -out pub/results; then
+		echo "pair: pairrun redact failed, nothing is published"
+		exit 1
+	fi
+	tar -czf results.tgz -C pub results
+	if ! { bin/pairrun slim -in pub/results -out slim/results && tar -C slim -cf - results | gzip -9n > results-log.tgz; }; then
 		echo "pair: pairrun slim failed, results-log.tgz is a copy of results.tgz"
 		cp results.tgz results-log.tgz
 	fi
