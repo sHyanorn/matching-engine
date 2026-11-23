@@ -67,7 +67,9 @@ type summaryFile struct {
 	Configs             []configSummary   `json:"configs"`
 	Tuning              []tuning          `json:"tuning"`
 	G2                  g2Result          `json:"g2"`
-	CountersReadable    countersRead      `json:"counters_readable"` // for each machine, the CPU counters that at least one run could read and those that no run could
+	CountersReadable    countersRead      `json:"counters_readable"`    // for each machine, the CPU counters that at least one run could read and those that no run could
+	PSISource           map[string]string `json:"psi_source,omitempty"` // for each machine that read the CPU pressure, where from: "cgroup", "proc", or both joined by "+"
+	RunDetails          []runDetail       `json:"run_details"`          // one for each run, in run order
 }
 
 // maxClockReadNS is the cost of a clock read, in ns, above which a pair is
@@ -126,6 +128,8 @@ func buildSummary(in summaryInput) summaryFile {
 		Tuning:            compareVariants(in.Records, p.Rounds, "R1-gogc-off", "R1-spin-pin"),
 		G2:                in.G2,
 		CountersReadable:  readableCounters(in.Records),
+		PSISource:         psiSources(in.Records),
+		RunDetails:        detailsOf(in.Records),
 	}
 	var floor *rowStats
 	if st, ok := statsOf(in.Records, floorConfig, "pong"); ok {
@@ -215,6 +219,7 @@ func (s summaryFile) text() string {
 	for _, k := range slices.Sorted(maps.Keys(s.SupervisorOverrides)) {
 		fmt.Fprintf(&b, "Supervisor override: %s=%s\n", k, s.SupervisorOverrides[k])
 	}
+	b.WriteString(counterLine(s.CountersReadable, s.PSISource) + "\n")
 	if s.Stopped != "" {
 		fmt.Fprintf(&b, "Stopped: %s: %s\n", s.Stopped, s.StopReason)
 	}
@@ -271,6 +276,12 @@ func (s summaryFile) text() string {
 		}
 		for _, row := range sortRows(slices.Collect(maps.Keys(c.Rows))) {
 			writeRow(&b, row, c.Rows[row])
+		}
+	}
+	if len(s.RunDetails) > 0 {
+		b.WriteString("\n" + perRunHeader)
+		for _, d := range s.RunDetails {
+			b.WriteString(d.text() + "\n")
 		}
 	}
 	return b.String()

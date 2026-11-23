@@ -16,7 +16,10 @@
 // Once it is ready the supervisor also times, second by second, how late a
 // thread that sleeps 1 ms is woken on its machine, and the client keeps those
 // seconds for the measured part of each run that has a loadgen series, with the
-// offset between the two clocks (wake.go).
+// offset between the two clocks (wake.go). That run's record names the second of
+// the series with the largest p99 and what the wake meter saw then (worst.go),
+// and the summary lists every run with that second and the host differences, so
+// that a raised tail is placed in time and on a side (rundetail.go).
 // `pairrun redact` copies a results directory with its network addresses
 // masked, which is what scripts/pair.sh publishes (redact.go), and `pairrun
 // slim` copies a results directory without the parts that the Pod's log has no

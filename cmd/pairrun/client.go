@@ -107,6 +107,7 @@ type runRecord struct {
 	EngineLog       string                `json:"engine_log"`   // the engine's output, bounded, relative to the results directory; "" if none was fetched
 	Wake            string                `json:"wake"`         // the engine machine's wake meter over the measured part (wake.go), relative to the results directory; "" if none was fetched, and for a run whose report has no series
 	ClockOffset     *clockOffset          `json:"clock_offset"` // of the engine machine's clock, measured with the wake fetch; nil if there was none
+	Worst           *worstSecond          `json:"worst"`        // the window of the report's series with the largest p99 (worst.go); nil if the report has no series
 	LoadgenExit     int                   `json:"loadgen_exit"` // -1 if loadgen did not run or did not exit by itself
 	LoadgenValid    bool                  `json:"loadgen_valid"`
 	LoadgenProblems []string              `json:"loadgen_problems"`
@@ -369,7 +370,8 @@ func (c *client) runOne(ctx context.Context, round int, cfg config) error {
 		rec.Notes = append(rec.Notes, "engine metrics: "+err.Error())
 	}
 	c.keepEngineLog(ctx, base, before.Starts, &rec)
-	c.keepWake(ctx, base, rep, &rec)
+	wake := c.keepWake(ctx, base, rep, &rec)
+	rec.Worst = worstOf(rep, wake, rec.ClockOffset, &rec)
 
 	rec.Study = append(evaluate(cfg, rep, repErr, p.MaxSendLag), stableRule(before.Starts, afterPtr, afterErr))
 	rec.Valid = allMet(rec.Study)
@@ -605,24 +607,18 @@ func (c *client) keepEngineLog(ctx context.Context, base string, start int, rec 
 // once a later one has a wake, so if the window has only just ended the last
 // of its seconds is not served yet: the request is repeated once, after the
 // wait that wakeWait gives. Like the engine log, the wake is evidence and not a
-// rule of validity: what cannot be had is noted and the run stands.
-func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, rec *runRecord) {
-	if rep == nil || len(rep.Series) == 0 || string(rep.Series) == "null" {
-		return
-	}
-	var ser reportSeries
-	err := json.Unmarshal(rep.Series, &ser)
-	if err == nil && (ser.Start.IsZero() || len(ser.N) == 0) {
-		err = errors.New("no start or no windows")
-	}
+// rule of validity: what cannot be had is noted and the run stands. It returns
+// the seconds it kept, or nil if it kept no wake file.
+func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, rec *runRecord) []wakeRow {
+	ser, err := decodeSeries(rep)
 	if err != nil {
 		rec.Notes = append(rec.Notes, "wake: the report's series: "+err.Error())
-		return
+		return nil
 	}
-	window := time.Second
-	if ser.WindowS > 0 {
-		window = time.Duration(ser.WindowS * float64(time.Second))
+	if ser == nil {
+		return nil
 	}
+	window := ser.window()
 	end := ser.Start.Add(time.Duration(len(ser.N)) * window)
 	target := fmt.Sprintf("http://%s/wake?from=%d&to=%d", c.Ctl, ser.Start.Add(-time.Second).UnixMilli(), end.Add(time.Second).UnixMilli())
 	var a wakeAnswer
@@ -640,7 +636,7 @@ func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, 
 		}
 		if err != nil {
 			rec.Notes = append(rec.Notes, "wake: "+err.Error())
-			return
+			return nil
 		}
 		off = measureOffset(send, recv, a.NowUnixNS)
 		wait := wakeWait(a.NowUnixNS, end, off.duration())
@@ -652,7 +648,7 @@ func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, 
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-time.After(wait):
 		}
 	}
@@ -664,9 +660,10 @@ func (c *client) keepWake(ctx context.Context, base string, rep *loadgenReport, 
 	}
 	if err != nil {
 		rec.Notes = append(rec.Notes, "wake: "+err.Error())
-		return
+		return nil
 	}
 	rec.Wake = name
+	return a.rows()
 }
 
 // parseMetrics finds go_gc_duration_seconds_count and

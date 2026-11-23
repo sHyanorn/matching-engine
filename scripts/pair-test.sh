@@ -42,13 +42,17 @@
 # but 0.0.0.0 and 127.0.0.1, that each run's record has the difference of the
 # CPU counters of both machines and the summary says which could be read,
 # that each run whose report has a series has the supervisor's wake meter
-# next to it, with its placement and the offset of the two clocks, that the
-# log copy holds the plan, the runs and the summary, that the Pod's own
-# results quote 127.0.0.2 in runs.jsonl and plan.json, where both archives
-# hold x.x.x.x, and that the key stays with the self-delete timer. It takes
-# minutes; the summary of what it found, the counters that were readable, the
-# wake meter's placement and the number of lines that the archive's block takes
-# in the log, are printed. Ports 8000, 8080, 9000 and 9100 must be free.
+# next to it, with its placement and the offset of the two clocks, and the
+# worst second of its series, that summary.txt opens with the counters that
+# could be read on each machine and ends with a line for every run, and that
+# summary.json holds the same as run_details, that the log copy holds the plan,
+# the runs and the summary, that the Pod's own results quote 127.0.0.2 in
+# runs.jsonl and plan.json, where both archives hold x.x.x.x, and that the key
+# stays with the self-delete timer. It takes minutes; the summary of what it
+# found, the counters that were readable, the counter line and three lines of
+# runs, the wake meter's placement and the number of lines that the archive's
+# block takes in the log, are printed. Ports 8000, 8080, 9000 and 9100 must be
+# free.
 #
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
@@ -565,6 +569,51 @@ import json, sys
 c = json.load(open(sys.argv[1] + "/summary.json"))["counters_readable"]
 assert all(isinstance(c[m][k], list) for m in ("engine", "client") for k in ("readable", "unreadable"))
 ' "$r"
+	check "summary.txt has the counter line right after its title lines, and a Per run section with a line for each run of runs.jsonl, in order" \
+		python3 -I -c '
+import json, os, re, sys
+r = sys.argv[1]
+lines = open(os.path.join(r, "summary.txt")).read().splitlines()
+i = 0
+while lines[i].startswith(("REHEARSAL", "NOT PUBLISHABLE", "Pilot matrix", "Override:", "Supervisor override:")):
+    i += 1
+assert re.fullmatch("Counters read, engine: .*; client: .*; never readable: engine .*, client .*", lines[i]), lines[i]
+runs = [json.loads(line) for line in open(os.path.join(r, "runs.jsonl"))]
+start = [k for k, line in enumerate(lines) if line.startswith("Per run: ")]
+assert len(start) == 1, start
+body = [line for line in lines[start[0] + 1:] if re.match("[0-9]+ ", line)]
+assert len(body) == len(runs), (len(body), len(runs))
+for line, run in zip(body, runs):
+    assert line.split()[0] == "%02d" % run["seq"] and run["config"] in line.split(), line
+' "$r"
+	# The REST runs have no series, so no worst second. The measured part is
+	# taken from the plan, not from the series that is being checked.
+	check "summary.json has run_details of one object for each run, and every run whose report has a series has a worst second of a p99 not below the median second's, starting inside the measured part, which run_details repeats" \
+		python3 -I -c '
+import json, os, sys
+r = sys.argv[1]
+s = json.load(open(os.path.join(r, "summary.json")))
+runs = [json.loads(line) for line in open(os.path.join(r, "runs.jsonl"))]
+details = s["run_details"]
+assert len(details) == len(runs), (len(details), len(runs))
+aligned = 0
+for d, run in zip(details, runs):
+    assert (d["seq"], d["config"], d["round"], d["valid"]) == (run["seq"], run["config"], run["round"], run["valid"]), run["seq"]
+    assert d["worst"] == run["worst"] and d["clock_offset"] == run["clock_offset"], run["seq"]
+    if run["report"] == "":
+        assert run["worst"] is None, run["seq"]
+        continue
+    if "series" not in json.load(open(os.path.join(r, run["report"]))):
+        assert run["worst"] is None, run["report"]
+        continue
+    aligned += 1
+    w = run["worst"]
+    assert w is not None, run["report"]
+    assert w["p99"] >= w["median_p99"], (run["report"], w)
+    measured = s["params"]["long_s"] if run["round"] == 0 else s["params"]["duration_s"]
+    assert 0 <= w["offset_s"] < measured, (run["report"], w["offset_s"], measured)
+assert aligned, "no run has a series"
+' "$r"
 	# The rehearsal talks over loopback only: the route's tests show the
 	# redaction, and this shows that no other address reaches the archive.
 	check "no engine log holds an IPv4 address other than 0.0.0.0 and 127.0.0.1" \
@@ -628,6 +677,15 @@ for line in open(os.path.join(r, "runs.jsonl")):
     if run["wake"]:
         print("wake meter placement: " + json.dumps(json.load(open(os.path.join(r, run["wake"])))["placement"]))
         break
+' "$r" || true
+	python3 -I -c '
+import os, sys
+lines = open(os.path.join(sys.argv[1], "summary.txt")).read().splitlines()
+print(next(line for line in lines if line.startswith("Counters read, engine: ")))
+start = next(k for k, line in enumerate(lines) if line.startswith("Per run: "))
+body = [line for line in lines[start + 1:] if line[:1].isdigit()]
+for line in [body[0]] + [line for line in body if " REST-" in line][:1] + [body[-1]]:
+    print(line)
 ' "$r" || true
 	[ -s "$r/summary.txt" ] && cat "$r/summary.txt"
 	[ "$failed" = 0 ] || {

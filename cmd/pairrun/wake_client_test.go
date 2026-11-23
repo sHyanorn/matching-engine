@@ -18,13 +18,15 @@ import (
 )
 
 // wakeSeries is the series of a loadgen report whose measured part began at
-// start and has the given number of windows.
+// start and has the given number of windows, each with 10,000 samples and the
+// same latencies.
 func wakeSeries(start time.Time, windows int) map[string]any {
-	n := make([]int, windows)
+	n, flat := make([]int, windows), make([]float64, windows)
 	for i := range n {
-		n[i] = 10000
+		n[i], flat[i] = 10000, 100
 	}
-	return map[string]any{"window_s": 1, "start": start.UTC().Format(time.RFC3339Nano), "n": n}
+	row := map[string]any{"p50": flat, "p99": flat, "p99_9": flat, "max": flat}
+	return map[string]any{"window_s": 1, "start": start.UTC().Format(time.RFC3339Nano), "n": n, "rows": map[string]any{"reply": row, "send_lag": row}}
 }
 
 // scriptedNow returns a clock that gives the times in order, and fails the

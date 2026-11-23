@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -40,12 +41,39 @@ type loadgenReport struct {
 	Series       json.RawMessage       `json:"series"` // per second; only the OE1 modes have one. Read apart from the rest (reportSeries) so that nothing in it can fail the report
 }
 
-// reportSeries is the part of loadgen's series that the runner reads: when the
-// measured part began, in wall clock, and how many windows it has.
+// reportSeries is the part of loadgen's series that the runner reads to align
+// it with the engine machine's wake meter: when the measured part began, in wall
+// clock, and how many windows it has.
 type reportSeries struct {
 	WindowS float64   `json:"window_s"`
 	Start   time.Time `json:"start"`
 	N       []int     `json:"n"`
+}
+
+// window is the width of a window of the series, a second if the report does
+// not say.
+func (s reportSeries) window() time.Duration {
+	if s.WindowS > 0 {
+		return time.Duration(s.WindowS * float64(time.Second))
+	}
+	return time.Second
+}
+
+// decodeSeries reads the series of rep, or returns nil if the report has none,
+// as a REST run's has not. A series that has no start or no window is an error.
+func decodeSeries(rep *loadgenReport) (*reportSeries, error) {
+	if rep == nil || len(rep.Series) == 0 || string(rep.Series) == "null" {
+		return nil, nil
+	}
+	var ser reportSeries
+	err := json.Unmarshal(rep.Series, &ser)
+	if err == nil && (ser.Start.IsZero() || len(ser.N) == 0) {
+		err = errors.New("no start or no windows")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ser, nil
 }
 
 // readReport parses the report loadgen wrote to path.
