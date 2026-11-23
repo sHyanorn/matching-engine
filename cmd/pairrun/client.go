@@ -418,7 +418,7 @@ func (c *client) runLoadgen(ctx context.Context, cfg config, args []string, txt 
 	limit := time.Duration(cfg.Warmup) + time.Duration(cfg.Duration) + c.slack
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, c.Loadgen, args...)
+	cmd := loadgenCommand(ctx, c.Loadgen, args)
 	cmd.Stdout, cmd.Stderr = f, f
 	cmd.WaitDelay = 5 * time.Second
 	err = cmd.Run()

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -29,6 +30,8 @@ func TestMain(m *testing.M) {
 		fakeEngine(name)
 	case name == "fake-loadgen":
 		fakeLoadgen()
+	case name == "fake-loadgen-env":
+		fakeLoadgenEnv()
 	case name == "pairrun":
 		main()
 		os.Exit(0)
@@ -43,8 +46,8 @@ func TestMain(m *testing.M) {
 }
 
 // fakeBinary makes a link to the test binary that runs as kind, one of
-// "fake-engine", "fake-engine-mute", "fake-engine-deaf", "fake-loadgen" and
-// "pairrun", and returns its path.
+// "fake-engine", "fake-engine-mute", "fake-engine-deaf", "fake-loadgen",
+// "fake-loadgen-env" and "pairrun", and returns its path.
 func fakeBinary(t *testing.T, kind string) string {
 	t.Helper()
 	self, err := os.Executable()
@@ -143,13 +146,26 @@ type fakeRun struct {
 }
 
 type fakeScript struct {
-	Runs map[string]fakeRun // by the report's file name without its number and extension: "R1-gogc-off-r3"
+	Runs   map[string]fakeRun // by the report's file name without its number and extension: "R1-gogc-off-r3"
+	NoDial bool               // do not connect to -oe and -http first
 }
 
-// fakeLoadgen stands in for loadgen: it logs its arguments to
-// $FAKE_LOADGEN_LOG, looks its run up in the script at $FAKE_LOADGEN_SCRIPT by
-// the name of its -out file, and does what the script says. Where it is given
-// -oe or -http it first connects to them, as the real one does.
+// The supervisor and the client give loadgen an empty environment, so a fake
+// loadgen finds its script, and the log of its arguments, in its working
+// directory, which it inherits (writeFakeScript).
+const (
+	fakeScriptFile = "fake-loadgen-script.json"
+	fakeLogFile    = "fake-loadgen.log"
+)
+
+// exitNow ends a fake loadgen at once: it has no environment, so GORACE cannot
+// spare it the race detector's second at exit.
+func exitNow(code int) { syscall.Exit(code) }
+
+// fakeLoadgen stands in for loadgen: it logs its arguments, looks its run up
+// in the script by the name of its -out file, and does what the script says.
+// Where it is given -oe or -http it first connects to them, as the real one
+// does, unless the script says not to. Without a script it does nothing else.
 func fakeLoadgen() {
 	var out, oe, httpAddr string
 	args := os.Args[1:]
@@ -163,36 +179,36 @@ func fakeLoadgen() {
 			httpAddr = args[i+1]
 		}
 	}
-	if log := os.Getenv("FAKE_LOADGEN_LOG"); log != "" {
+	var script fakeScript
+	data, err := os.ReadFile(fakeScriptFile)
+	scripted := err == nil
+	if scripted {
+		if err := json.Unmarshal(data, &script); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitNow(4)
+		}
 		line, _ := json.Marshal(args)
-		if f, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		if f, err := os.OpenFile(fakeLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			_, _ = f.Write(append(line, '\n'))
 			_ = f.Close()
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, err)
+		exitNow(4)
 	}
 	for _, a := range []string{oe, httpAddr} {
-		if a == "" || os.Getenv("FAKE_LOADGEN_NODIAL") == "1" {
+		if a == "" || script.NoDial {
 			continue
 		}
 		c, err := net.DialTimeout("tcp", a, 2*time.Second)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "fake loadgen:", err)
-			os.Exit(3)
+			exitNow(3)
 		}
 		_ = c.Close()
 	}
 	var run fakeRun
-	if path := os.Getenv("FAKE_LOADGEN_SCRIPT"); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(4)
-		}
-		var script fakeScript
-		if err := json.Unmarshal(data, &script); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(4)
-		}
+	if scripted {
 		key := strings.TrimSuffix(filepath.Base(out), ".json")
 		if _, rest, ok := strings.Cut(key, "-"); ok && key[0] >= '0' && key[0] <= '9' {
 			key = rest
@@ -200,7 +216,7 @@ func fakeLoadgen() {
 		r, ok := script.Runs[key]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "fake loadgen: no script for %q\n", key)
-			os.Exit(4)
+			exitNow(4)
 		}
 		run = r
 	}
@@ -223,10 +239,49 @@ func fakeLoadgen() {
 		}
 		if err := os.WriteFile(out, data, 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(4)
+			exitNow(4)
 		}
 	}
-	os.Exit(run.Exit)
+	exitNow(run.Exit)
+}
+
+// fakeLoadgenEnv stands in for loadgen and writes its environment, as a JSON
+// array, to the file named by its -out with ".env" added.
+func fakeLoadgenEnv() {
+	var out string
+	args := os.Args[1:]
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-out" {
+			out = args[i+1]
+		}
+	}
+	data, _ := json.Marshal(os.Environ())
+	if err := os.WriteFile(out+".env", data, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exitNow(1)
+	}
+	exitNow(0)
+}
+
+// namesOfFakeLoadgenEnv reads what a "fake-loadgen-env" that was given -out
+// report wrote, and returns the names of its environment's variables: a
+// failing test must not print their values.
+func namesOfFakeLoadgenEnv(t *testing.T, report string) []string {
+	t.Helper()
+	data, err := os.ReadFile(report + ".env")
+	if err != nil {
+		t.Fatalf("loadgen did not write its environment: %v", err)
+	}
+	var env []string
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		names = append(names, name)
+	}
+	return names
 }
 
 // syncBuffer is a bytes.Buffer that a test may read while a goroutine

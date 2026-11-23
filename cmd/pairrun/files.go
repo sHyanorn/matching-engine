@@ -6,8 +6,8 @@ import (
 )
 
 // writeFileAtomic writes data to name so that a reader sees the old file or
-// the whole new one, never part of it: the Pod's results are fetched while the
-// matrix still runs, and a kill must leave whole files.
+// the whole new one, never part of it: a client that is killed leaves whole
+// files, which the Pod can still pack and serve.
 func writeFileAtomic(name string, data []byte) error {
 	tmp := name + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {

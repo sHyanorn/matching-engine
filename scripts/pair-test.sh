@@ -4,6 +4,8 @@
 #
 #   - that each Pod deletes itself once, with its key, at its DEADLINE and
 #     not before, and that no Pod prints the key;
+#   - that the key stays with the self-delete timer: the Pod's start shell
+#     holds RUNPOD_API_KEY, and no process below the Pod's pair.sh does;
 #   - engine and client: that the engine serves OE1 on port 9000, and
 #     that the client's archive, fetched from its port 8000, holds every
 #     run's report and has the SHA-256 that the log prints, as has the
@@ -18,9 +20,11 @@
 # supervise and matrix, cmd/pairrun): two Pods on this machine, each on
 # half of its CPUs, with the plan's durations and send lag bound
 # shortened by PILOT_* variables, and checks that the results come out
-# whole, can be fetched from port 8000 with no one logged in, and say that
-# they are a rehearsal. It takes minutes; the summary of what it found is
-# printed. Ports 8000, 8080, 9000 and 9100 must be free.
+# whole, hold the supervisor's environment text, can be fetched from port
+# 8000 with no one logged in, and say that they are a rehearsal, and that
+# the key stays with the self-delete timer. It takes minutes; the summary
+# of what it found is printed. Ports 8000, 8080, 9000 and 9100 must be
+# free.
 #
 # The tarballs hold the working tree. curl reaches the stand-in through a
 # .curlrc in CURL_HOME, so the start command runs as it is. Ports 8000,
@@ -111,6 +115,7 @@ boot=$("$repo/scripts/pair.sh" boot)
 go=$(cd "$repo" && go env GOROOT)/bin
 now=$(date +%s)
 deadline=()
+started=()
 
 # pod NAME MODE COMMIT SECONDS [VAR=VALUE...] starts a Pod that deletes
 # itself SECONDS from now, with its output in NAME.log.
@@ -129,6 +134,85 @@ pod() {
 		DEADLINE="$at" RUNPOD_POD_ID="$name" RUNPOD_API_KEY="$key" "${vars[@]}" \
 		"${pin[@]}" setsid bash -c "$boot" > "$t/$name.log" 2>&1 &
 	pids+=($!)
+	started+=("$name=$!")
+}
+
+# watch starts a process that notes, until the test ends, each Pod's start
+# shell and every process below the Pod's pair.sh in procs.log, one line each:
+#
+#   NAME PID KIND STATE COMMAND
+#
+# KIND is start, pair.sh, engine, pairrun, loadgen, serve (bin/pair serve)
+# or other. STATE is key if /proc/PID/environ has a line RUNPOD_API_KEY=,
+# else clean, or unreadable. A process keeps its PID when pair.sh executes
+# the engine, pairrun or serve, so it is noted under each of its kinds.
+watch() {
+	setsid python3 -I - "$t" "${started[@]}" <<-'EOF' &
+		import os, sys, time
+		t = sys.argv[1]
+		pods = [a.split("=") for a in sys.argv[2:]]
+		def ppid(pid):
+		    try:
+		        with open(f"/proc/{pid}/stat") as f:
+		            return int(f.read().rpartition(")")[2].split()[1])
+		    except (OSError, ValueError):
+		        return None
+		def argv(pid):
+		    try:
+		        with open(f"/proc/{pid}/cmdline", "rb") as f:
+		            return f.read().decode(errors="replace").rstrip("\0").split("\0")
+		    except OSError:
+		        return None
+		def state(pid):
+		    try:
+		        with open(f"/proc/{pid}/environ", "rb") as f:
+		            return "key" if any(v.startswith(b"RUNPOD_API_KEY=") for v in f.read().split(b"\0")) else "clean"
+		    except (FileNotFoundError, ProcessLookupError):
+		        return None
+		    except OSError:
+		        return "unreadable"
+		def kind(args):
+		    name = os.path.basename(args[0])
+		    if name == "bash" and len(args) > 1 and args[1].endswith("scripts/pair.sh"):
+		        return "pair.sh"
+		    if name in ("engine", "pairrun", "loadgen"):
+		        return name
+		    return "serve" if name == "pair" and args[1:2] == ["serve"] else "other"
+		noted = set()
+		def note(name, pid, as_kind=None):
+		    args, st = argv(pid), state(pid)
+		    if args is None or st is None:
+		        return
+		    k = as_kind or kind(args)
+		    if (name, pid, k, st) in noted:
+		        return
+		    noted.add((name, pid, k, st))
+		    text = " ".join(args).replace("\n", " ")[:100]
+		    with open(os.path.join(t, "procs.log"), "a") as f:
+		        f.write(f"{name} {pid} {k} {st} {text}\n")
+		roots = {}
+		while os.path.isdir(t):
+		    kids = {}
+		    for e in os.listdir("/proc"):
+		        parent = ppid(int(e)) if e.isdigit() else None
+		        if parent is not None:
+		            kids.setdefault(parent, []).append(int(e))
+		    for name, start in pods:
+		        note(name, int(start), "start")
+		        if name not in roots:
+		            for c in kids.get(int(start), []):
+		                args = argv(c)
+		                if args and kind(args) == "pair.sh":
+		                    roots[name] = c
+		                    break
+		        pending = [roots[name]] if name in roots else []
+		        while pending:
+		            pid = pending.pop()
+		            note(name, pid)
+		            pending += kids.get(pid, [])
+		    time.sleep(0.2)
+	EOF
+	pids+=($!)
 }
 if [ "${1:-}" != pilot ]; then
 	pod engine engine "$commit" 40
@@ -136,6 +220,7 @@ if [ "${1:-}" != pilot ]; then
 	pod selftest selftest "$commit" 10
 	pod other selftest "$other" 10
 	pod added selftest "$added" 10
+	watch
 fi
 
 failed=0
@@ -153,6 +238,8 @@ deleted() {
 }
 # summed FILE: FILE has the SHA-256 that the client printed.
 summed() { [ -n "$sum" ] && [ "$(sha256sum < "$1" | cut -d ' ' -f 1)" = "$sum" ]; }
+# logged FILE LOG: FILE is not empty and each of its lines is a line of LOG.
+logged() { [ -s "$1" ] && [ -z "$(grep -vxFf "$2" "$1")" ]; }
 reports() {
 	[ -s "$t/results/results/env.txt" ] &&
 		[ "$(grep -l '"mode": "oe"' "$t"/results/results/run-{1,2}.json | wc -l)" = 2 ]
@@ -162,6 +249,39 @@ reports() {
 refused() {
 	grep -qx "$2" "$t/$1.log" && grep -qx 'pair: stopped with status 1' "$t/$1.log" &&
 		not grep -q '^pair: alive' "$t/$1.log"
+}
+# seen NAME KIND: procs.log notes a process of KIND in Pod NAME. It waits up
+# to 30 s for the note of one that has only just come.
+seen() {
+	for _ in $(seq 30); do
+		awk -v n="$1" -v k="$2" '$1 == n && $3 == k { found = 1 } END { exit !found }' "$t/procs.log" && return 0
+		sleep 1
+	done
+	echo "  $1: no process of kind $2 was seen"
+	return 1
+}
+# keyless NAME KIND...: Pod NAME ran a process of each KIND, and no process
+# below its pair.sh has RUNPOD_API_KEY in its environment. It prints the
+# processes that have.
+keyless() {
+	local name=$1 kind
+	shift
+	for kind; do
+		seen "$name" "$kind" || return 1
+	done
+	! awk -v n="$name" '$1 == n && $3 != "start" && $4 != "clean" { print "  " $0; bad = 1 } END { exit !bad }' "$t/procs.log"
+}
+# keyheld NAME...: the start shell of each Pod has RUNPOD_API_KEY in its
+# environment, as the self-delete timer needs it to, so that a clean run of
+# keyless is no sign of a key that never reached the Pod.
+keyheld() {
+	local name
+	for name; do
+		awk -v n="$name" '$1 == n && $3 == "start" && $4 == "key" { found = 1 } END { exit !found }' "$t/procs.log" || {
+			echo "  $name: its start shell does not have the key"
+			return 1
+		}
+	done
 }
 
 # pilot rehearses the pilot's two modes. The plan's durations and send lag
@@ -173,6 +293,7 @@ pilot() {
 	pod supervise supervise "$commit" 2400 CPUS=0,1 "${over[@]}"
 	pod matrix matrix "$commit" 2400 CPUS=2,3 ENGINE_OE=127.0.0.1:9000 ENGINE_HTTP=127.0.0.1:8080 ENGINE_CTL=127.0.0.1:9100 \
 		RESULT_PATH="$path" "${over[@]}"
+	watch
 	for _ in $(seq 1800); do
 		grep -q -- '-- end results.tgz base64' "$t/matrix.log" && break
 		sleep 1
@@ -187,12 +308,18 @@ pilot() {
 	check "the base64 copy in the log has the same SHA-256" summed "$t/logged.tgz"
 	check "the archive holds the plan, the runs, the loopback run, G2 and the summary" \
 		bash -c 'cd "$0" && [ -s env.txt ] && [ -s plan.json ] && [ -s runs.jsonl ] && [ -s loopback.json ] && [ -s g2.json ] && [ -s summary.json ] && [ -s summary.txt ]' "$r"
-	check "every line of runs.jsonl is a JSON object and every run has its two report files" \
+	check "the archive holds the supervisor's environment text, engine-env.txt" [ -s "$r/engine-env.txt" ]
+	check "the supervisor logs the text that it writes to engine-env.txt" logged "$r/engine-env.txt" "$t/supervise.log"
+	# A run whose engine could not be started has "" for its report: no loadgen
+	# ran, so it has no files.
+	check "every line of runs.jsonl is a JSON object and every run that has a report has its two report files" \
 		python3 -I -c '
 import json, os, sys
 r = sys.argv[1]
 for line in open(os.path.join(r, "runs.jsonl")):
     run = json.loads(line)
+    if run["report"] == "":
+        continue
     base = os.path.splitext(os.path.join(r, run["report"]))[0]
     for ext in (".json", ".txt"):
         assert os.path.exists(base + ext), run["report"]
@@ -209,6 +336,11 @@ assert s["rehearsal"] is True and s["publishable"] is False
 	check "no response of the control port holds the environment" \
 		bash -c '! curl -s --noproxy "*" http://127.0.0.1:9100/host | grep -qE "PATH=|RUNPOD|COMMIT"'
 	check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$r"
+	check "supervise: pair.sh, pairrun and the engine and loadgen it starts run without RUNPOD_API_KEY" \
+		keyless supervise pair.sh pairrun engine loadgen
+	check "matrix: pair.sh, pairrun, loadgen and bin/pair serve run without RUNPOD_API_KEY" \
+		keyless matrix pair.sh pairrun loadgen serve
+	check "the start shell of each Pod holds RUNPOD_API_KEY for its self-delete timer" keyheld supervise matrix
 	if [ -n "${PILOT_KEEP:-}" ]; then
 		mkdir -p "$PILOT_KEEP" && cp -r "$r"/. "$PILOT_KEEP"/
 	fi
@@ -246,6 +378,10 @@ check "the selftest Pod prints its heartbeat" grep -q '^pair: alive at ' "$t/sel
 check "a tarball of another commit is refused" refused other "pair: tarball of commit $commit"
 check "a tarball with an added file is refused" refused added "pair: tree $(sed -n 's/^pair: tree //p' "$t/added.log" | grep -vx "$tree")"
 check "no output holds the key" not grep -rqF "$key" "$t"/*.log "$t/results"
+check "engine: pair.sh and the engine run without RUNPOD_API_KEY" keyless engine pair.sh engine
+check "client: pair.sh, loadgen and bin/pair serve run without RUNPOD_API_KEY" keyless client pair.sh loadgen serve
+check "selftest: pair.sh runs without RUNPOD_API_KEY" keyless selftest pair.sh
+check "the start shell of each Pod holds RUNPOD_API_KEY for its self-delete timer" keyheld engine client selftest
 
 [ "$failed" = 0 ] || {
 	tail -n 20 "$t"/*.log

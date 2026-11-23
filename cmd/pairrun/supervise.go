@@ -446,7 +446,7 @@ func (s *supervisor) runLoopbackLoadgen(jsonName, txtName string) error {
 	defer func() { _ = txt.Close() }() // loadgen's output is read back as written
 	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(r1.Warmup)+time.Duration(r1.Duration)+loadgenSlack)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.loadgenBin, loadgenArgs(r1, jsonName)...)
+	cmd := loadgenCommand(ctx, s.loadgenBin, loadgenArgs(r1, jsonName))
 	cmd.Stdout, cmd.Stderr = txt, txt
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {

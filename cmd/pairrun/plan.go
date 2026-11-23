@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
+	"os/exec"
 	"slices"
 	"strconv"
 	"time"
@@ -210,6 +212,15 @@ func loadgenArgs(c config, out string) []string {
 		"-warmup", durationFlag(time.Duration(c.Warmup)),
 		"-duration", durationFlag(time.Duration(c.Duration)),
 		"-out", out)
+}
+
+// loadgenCommand is the command of a loadgen run. Loadgen reads nothing from
+// its environment, so it gets an empty one: this process's would hand it
+// whatever the Pod's start command left here.
+func loadgenCommand(ctx context.Context, bin string, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = []string{}
+	return cmd
 }
 
 // durationFlag writes d the way loadgen's duration flags read it, in

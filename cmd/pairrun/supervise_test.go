@@ -506,23 +506,29 @@ func fakeTaskset(t *testing.T) (script, log string) {
 	return script, log
 }
 
-// writeScript tells the fake loadgen what each run does and where to log its
-// arguments, and returns the log's path.
+// writeScript tells the fake loadgen what each run does, and returns the path
+// of the log of its arguments.
 func writeScript(t *testing.T, runs map[string]fakeRun) string {
 	t.Helper()
+	return writeFakeScript(t, fakeScript{Runs: runs})
+}
+
+// writeFakeScript saves script where the fake loadgen finds it: in a new
+// directory, which becomes the working directory of the test and so of the
+// loadgens that its code starts. It returns the path of the log of their
+// arguments.
+func writeFakeScript(t *testing.T, script fakeScript) string {
+	t.Helper()
 	dir := t.TempDir()
-	data, err := json.Marshal(fakeScript{Runs: runs})
+	data, err := json.Marshal(script)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "script.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, fakeScriptFile), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	log := filepath.Join(dir, "loadgen.log")
-	t.Setenv("FAKE_LOADGEN_SCRIPT", path)
-	t.Setenv("FAKE_LOADGEN_LOG", log)
-	return log
+	t.Chdir(dir)
+	return filepath.Join(dir, fakeLogFile)
 }
 
 // serving is a supervisor serving in the background: done is closed when

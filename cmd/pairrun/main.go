@@ -11,9 +11,11 @@
 // loadgen's numbers as they came, to its results directory (plan.go,
 // validity.go, g2.go, summary.go).
 //
-// The control port has no authentication: the supervisor serves six routes,
-// runs nothing the client names but a configuration of its own table, and
-// holds no credential. It runs on Linux.
+// The control port has no authentication: the supervisor serves six routes
+// and runs nothing the client names but a configuration of its own table.
+// scripts/pair.sh starts it without the Pod's API key, and it starts the
+// engine and loadgen with environments of their own, not its own. It runs on
+// Linux.
 package main
 
 import (

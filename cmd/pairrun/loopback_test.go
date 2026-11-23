@@ -218,6 +218,20 @@ func TestLoopbackStartupFailures(t *testing.T) {
 	}
 }
 
+// The Pod's API key is in the environment of the process that starts the
+// supervisor unless the start command removes it; loadgen needs none of it.
+func TestLoopbackStartsLoadgenWithoutTheSupervisorsEnvironment(t *testing.T) {
+	t.Setenv("RUNPOD_API_KEY", "canary-supervisor")
+	st := newSupervisorTest(t, func(o *superviseOptions) { o.Loadgen = fakeBinary(t, "fake-loadgen-env") })
+	report := filepath.Join(st.work, "loopback.json")
+	if err := st.runLoopbackLoadgen(report, filepath.Join(st.work, "loopback.txt")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range namesOfFakeLoadgenEnv(t, report) {
+		t.Errorf("loadgen got %s of the supervisor's environment", name)
+	}
+}
+
 func TestLoopbackIgnoresAStaleReport(t *testing.T) {
 	// A report from an earlier supervisor in the same work directory must not pass for this run's.
 	writeScript(t, map[string]fakeRun{"loopback": {NoReport: true, Exit: 1}})

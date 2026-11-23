@@ -196,8 +196,7 @@ func writeMatrixScript(t *testing.T, p params, mod func(cfg config, round int, r
 		}
 	}
 	add(longRun(p, "oe", "http"), 0)
-	t.Setenv("FAKE_LOADGEN_NODIAL", "1")
-	return writeScript(t, runs)
+	return writeFakeScript(t, fakeScript{Runs: runs, NoDial: true})
 }
 
 // editReport changes the report of a run.

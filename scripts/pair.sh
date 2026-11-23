@@ -18,7 +18,9 @@
 # whole number deletes the Pod at once; a restarted container keeps the
 # same DEADLINE. It then fetches the tarball of COMMIT, refuses it unless
 # git get-tar-commit-id names COMMIT and its files hash to the tree TREE,
-# and runs this script from it in mode MODE. The start command does not
+# and runs this script from it in mode MODE with RUNPOD_API_KEY removed
+# from its environment, so that this script and everything it starts run
+# without the key and only the timer holds it. The start command does not
 # end on its own, so a Pod keeps its log until it is deleted.
 #
 # engine and client build engine and loadgen with the image's Go, as the
@@ -36,11 +38,19 @@
 # supervise and matrix are the pilot (cmd/pairrun). supervise serves the
 # control port 9100 and, with the engine's OE1 port 9000 and HTTP port
 # 8080, is what the client reaches: it runs one loopback R1 run, then
-# starts a fresh engine for each run the client asks for. matrix, on the
-# other machine, runs the plan against ENGINE_OE, ENGINE_HTTP and ENGINE_CTL
-# (host:port of the three), with the Pod's own DEADLINE as the end of its
-# time, and publishes its results as client does. PILOT_* variables
-# override the plan's rates and durations for a rehearsal (cmd/pairrun).
+# starts a fresh engine for each run the client asks for. It prints what
+# env.txt holds, for its own machine, to the log and writes it to
+# engine-env.txt in its work directory, which it serves to the client
+# (-env). matrix, on the other machine, runs the plan against ENGINE_OE,
+# ENGINE_HTTP and ENGINE_CTL (host:port of the three), with the Pod's own
+# DEADLINE as the end of its time, and publishes its results as client
+# does, with what the client fetched from the supervisor as engine-env.txt
+# next to env.txt. matrix passes DEADLINE_MARGIN with DEADLINE: no run
+# starts unless it would end that long before DEADLINE. It is a Go
+# duration ("600s", not "600") and 10m when unset (pairrun's
+# -deadline-margin); a value that is not one ends the client at flag
+# parsing, before any run. PILOT_* variables override the plan's rates and
+# durations for a rehearsal (cmd/pairrun).
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -60,7 +70,7 @@ boot() {
 		    mkdir src && tar -xzf src.tgz -C src --strip-components=1 &&
 		    got=$(git init -q --bare tree && git --git-dir=tree --work-tree=src add -Af && git --git-dir=tree write-tree) &&
 		    echo "pair: tree $got" && [ "$got" = "$TREE" ] &&
-		    bash src/scripts/pair.sh "$MODE"
+		    env -u RUNPOD_API_KEY bash src/scripts/pair.sh "$MODE"
 		echo "pair: stopped with status $?"
 		wait
 	EOF
@@ -126,8 +136,10 @@ client() {
 }
 
 supervise() {
-	envtxt
-	exec bin/pairrun supervise -engine bin/engine -loadgen bin/loadgen -listen :9100 -work "$(mktemp -d)"
+	local work
+	work=$(mktemp -d)
+	envtxt | tee "$work/engine-env.txt"
+	exec bin/pairrun supervise -engine bin/engine -loadgen bin/loadgen -listen :9100 -work "$work" -env "$work/engine-env.txt"
 }
 
 matrix() {

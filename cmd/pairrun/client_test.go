@@ -1020,6 +1020,21 @@ func TestClientKillsALoadgenThatOutlastsItsWindow(t *testing.T) {
 	}
 }
 
+// The Pod's API key is in the environment of the process that starts the
+// client unless the start command removes it; loadgen needs none of it.
+func TestClientStartsLoadgenWithoutItsEnvironment(t *testing.T) {
+	t.Setenv("RUNPOD_API_KEY", "canary-client")
+	c := newClient(clientOptions{Loadgen: fakeBinary(t, "fake-loadgen-env")}, io.Discard)
+	report := filepath.Join(t.TempDir(), "run.json")
+	var rec runRecord
+	if code := c.runLoadgen(context.Background(), config{}, []string{"-out", report}, filepath.Join(t.TempDir(), "run.txt"), &rec); code != 0 {
+		t.Fatalf("loadgen exited with %d, notes %v", code, rec.Notes)
+	}
+	for _, name := range namesOfFakeLoadgenEnv(t, report) {
+		t.Errorf("loadgen got %s of the client's environment", name)
+	}
+}
+
 func TestClientStopsWhenItsContextEnds(t *testing.T) {
 	p := rounds(1)
 	r := newRig(t, p, nil)
