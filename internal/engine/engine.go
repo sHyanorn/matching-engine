@@ -281,7 +281,7 @@ func New(cfg Config) (*Engine, error) {
 		return fail(err)
 	}
 	for _, m := range e.markets {
-		core := cfg.Spin.Reserve("symbol " + m.symbol) // here, so that the symbols take cores in order
+		core := reserveCore(cfg.Spin, m.symbol) // here, so that the symbols take cores in order
 		e.wg.Add(1)
 		go func() {
 			defer e.wg.Done()
@@ -289,6 +289,15 @@ func New(cfg Config) (*Engine, error) {
 		}()
 	}
 	return e, nil
+}
+
+// reserveCore takes the core of symbol's goroutine from pool. Without a pool
+// it is nil and no name is built for the log.
+func reserveCore(pool *spin.Pool, symbol string) *spin.Lease {
+	if pool == nil {
+		return nil
+	}
+	return pool.Reserve("symbol " + symbol)
 }
 
 // Close stops accepting requests, lets every symbol's goroutine finish the

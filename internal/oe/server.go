@@ -454,13 +454,10 @@ func (c *conn) bindLocked(ss *session) {
 }
 
 // start starts c's writer, once it has a session and its first output, and
-// has the reader and the writer spin if the server has cores for them. The
-// reader's core is reserved first, so the session's cores are handed out in
-// that order. It runs on the reader's goroutine.
+// has the reader and the writer spin if the server has cores for them. It
+// runs on the reader's goroutine.
 func (c *conn) start() {
-	pool := c.srv.opts.Spin
-	readerCore := pool.Reserve(fmt.Sprintf("session %d reader", c.ss.id))
-	writerCore := pool.Reserve(fmt.Sprintf("session %d writer", c.ss.id))
+	readerCore, writerCore := c.reserveCores()
 	c.writerDone = make(chan struct{})
 	go c.write(c.writerDone, writerCore)
 	c.loggedIn.Store(true)
@@ -472,6 +469,19 @@ func (c *conn) start() {
 	} else {
 		readerCore.Release()
 	}
+}
+
+// reserveCores takes the cores of c's reader and writer from the server's
+// pool, the reader's first, so the session's cores are handed out in that
+// order. Without a pool both are nil and no name is built for the log.
+func (c *conn) reserveCores() (reader, writer *spin.Lease) {
+	pool := c.srv.opts.Spin
+	if pool == nil {
+		return nil, nil
+	}
+	reader = pool.Reserve(fmt.Sprintf("session %d reader", c.ss.id))
+	writer = pool.Reserve(fmt.Sprintf("session %d writer", c.ss.id))
+	return reader, writer
 }
 
 // queue appends f to the connection's output and wakes the writer. A
@@ -516,7 +526,7 @@ func (c *conn) abortLocked(err error) {
 	}
 	c.state, c.abortErr = aborted, err
 	_ = c.nc.Close() // unblocks the reader and a write in progress
-	c.ss.room.Broadcast()
+	c.ss.wakeReaderLocked()
 }
 
 // write sends what is queued, one write at a time, and a Heartbeat after

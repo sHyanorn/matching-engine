@@ -16,6 +16,10 @@ import (
 // noDeadline is the deadline of a connection that has none.
 const noDeadline = math.MaxInt64
 
+// readFD is unix.Read; a test replaces it to make a read fail as an
+// interrupted one does, which a non-blocking socket never does by itself.
+var readFD = unix.Read
+
 // conn is a connection whose Read polls the socket once Spin is called.
 type conn struct {
 	net.Conn
@@ -61,8 +65,14 @@ func (c *conn) Close() error {
 	return c.Conn.Close()
 }
 
+// SetDeadline keeps the read deadline itself once Spin has been called, as
+// SetReadDeadline does, and sets only the socket's write deadline: a read
+// deadline that has passed on the socket would end every later read at once.
 func (c *conn) SetDeadline(t time.Time) error {
 	c.keep(t)
+	if c.spinning.Load() {
+		return c.SetWriteDeadline(t)
+	}
 	return c.Conn.SetDeadline(t)
 }
 
@@ -119,7 +129,7 @@ func (c *conn) pollFD(fd uintptr) bool {
 			c.n, c.err = 0, net.ErrClosed
 			return true
 		}
-		c.n, c.err = unix.Read(int(fd), c.buf)
+		c.n, c.err = readFD(int(fd), c.buf)
 		switch {
 		case errors.Is(c.err, unix.EINTR):
 		case !errors.Is(c.err, unix.EAGAIN):

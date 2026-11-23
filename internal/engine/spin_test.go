@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
+	"github.com/sHyanorn/matching-engine/internal/spin"
 	"github.com/sHyanorn/matching-engine/internal/spin/spintest"
 )
 
@@ -42,6 +43,19 @@ func TestSpinSymbolsTakeCoresInTheirOrder(t *testing.T) {
 	}
 	if pool.Free() != 2 {
 		t.Errorf("%d cores free after Close, want 2: it waits for every symbol's goroutine", pool.Free())
+	}
+}
+
+// TestReserveCoreWithoutAPoolAllocatesNothing: reserveCore allocates nothing
+// and returns no lease when there is no pool.
+func TestReserveCoreWithoutAPoolAllocatesNothing(t *testing.T) {
+	symbol := "BTC-USD"
+	var core *spin.Lease
+	if allocs := testing.AllocsPerRun(100, func() { core = reserveCore(nil, symbol) }); allocs != 0 {
+		t.Errorf("%v allocations to reserve the core of a symbol without a pool, want 0", allocs)
+	}
+	if core != nil {
+		t.Errorf("reserved %+v without a pool", core)
 	}
 }
 

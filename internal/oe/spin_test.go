@@ -352,6 +352,19 @@ func TestSpinCoresFollowTheConnection(t *testing.T) {
 	}
 }
 
+// TestReserveCoresWithoutAPoolAllocatesNothing: reserveCores allocates
+// nothing and returns no leases when the server has no pool.
+func TestReserveCoresWithoutAPoolAllocatesNothing(t *testing.T) {
+	c := attached(t, NewServer(ServerOptions{Symbols: testSymbols}))
+	var reader, writer *spin.Lease
+	if allocs := testing.AllocsPerRun(100, func() { reader, writer = c.reserveCores() }); allocs != 0 {
+		t.Errorf("%v allocations to reserve the cores of a session without a pool, want 0", allocs)
+	}
+	if reader != nil || writer != nil {
+		t.Errorf("reserved %+v and %+v without a pool", reader, writer)
+	}
+}
+
 // A goroutine for which the pool has no core runs as it does without one,
 // blocking and unlocked, and the session works.
 func TestSpinSessionWithoutEnoughCores(t *testing.T) {

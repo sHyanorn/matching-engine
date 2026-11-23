@@ -115,7 +115,7 @@ func openMarket(path, symbol string, index int, cfg Config) (*market, uint64, er
 func (m *market) run(core *spin.Lease) {
 	defer core.Release()
 	defer m.shutdown()
-	syncDue := m.log.start() // before the pin: the log's helper starts from a thread that is not pinned
+	syncDue := m.log.start()
 	spinning := core.Pin()
 	for {
 		r, open, tick := m.next(syncDue, spinning)

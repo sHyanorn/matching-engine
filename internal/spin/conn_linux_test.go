@@ -56,6 +56,16 @@ func TestWrapNeedsASocket(t *testing.T) {
 	}
 }
 
+// A nil pool wraps no connection, one with a socket included. A pipe has no
+// socket and is never wrapped, so it shows nothing.
+func TestNilPoolDoesNotWrapASocket(t *testing.T) {
+	var p *Pool
+	_, s := tcpPair(t)
+	if got := p.Wrap(s); got != s {
+		t.Errorf("a nil pool wrapped a TCP connection as %T", got)
+	}
+}
+
 // Until Spin, Read is the connection's own, with its own deadline.
 func TestReadBlocksUntilSpin(t *testing.T) {
 	c, s := tcpPair(t)
@@ -89,6 +99,30 @@ func TestSpinForgetsTheSocketsOwnDeadline(t *testing.T) {
 	buf := make([]byte, 8)
 	if n, err := p.Read(buf); err != nil || string(buf[:n]) != "late" {
 		t.Fatalf("Read = %q, %v, want the data sent after the socket's own deadline", buf[:n], err)
+	}
+}
+
+// SetDeadline after Spin leaves no read deadline on the socket: one in the
+// past would fail every read at once, whatever SetReadDeadline sets later.
+func TestSetDeadlineWhilePollingLeavesNoReadDeadlineOnTheSocket(t *testing.T) {
+	c, p := spinning(t)
+	_ = p.SetDeadline(time.Now().Add(-time.Second))
+	_ = p.SetReadDeadline(time.Time{})
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 8)
+	if n, err := p.Read(buf); err != nil || string(buf[:n]) != "x" {
+		t.Fatalf("Read = %q, %v, want x", buf[:n], err)
+	}
+}
+
+// SetDeadline after Spin still sets the socket's write deadline.
+func TestSetDeadlineWhilePollingSetsTheWriteDeadline(t *testing.T) {
+	_, p := spinning(t)
+	_ = p.SetDeadline(time.Now().Add(-time.Second))
+	if _, err := p.Write([]byte("x")); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("Write = %v, want a deadline error", err)
 	}
 }
 
@@ -186,6 +220,33 @@ func TestPollingReadReportsAReset(t *testing.T) {
 	var op *net.OpError
 	if !errors.Is(err, syscall.ECONNRESET) || !errors.As(err, &op) || op.Op != "read" {
 		t.Errorf("Read = %v, want a read error that is ECONNRESET", err)
+	}
+}
+
+// A read that is interrupted is read again, and its data is still delivered.
+// This test must not run in parallel with another that polls: it replaces
+// readFD for all of them.
+func TestPollingReadRetriesAnInterruptedRead(t *testing.T) {
+	c, p := spinning(t)
+	const interrupted = 3
+	calls, read := 0, readFD
+	readFD = func(fd int, b []byte) (int, error) {
+		if calls++; calls <= interrupted {
+			return -1, syscall.EINTR
+		}
+		return read(fd, b)
+	}
+	t.Cleanup(func() { readFD = read })
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	_ = p.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 8)
+	if n, err := p.Read(buf); err != nil || string(buf[:n]) != "x" {
+		t.Fatalf("Read = %q, %v, want x", buf[:n], err)
+	}
+	if calls != interrupted+1 {
+		t.Errorf("the socket was read %d times, want %d: the interrupted reads and the one that got the data", calls, interrupted+1)
 	}
 }
 

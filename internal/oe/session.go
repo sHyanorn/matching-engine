@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sHyanorn/matching-engine/internal/book"
 	"github.com/sHyanorn/matching-engine/internal/engine"
@@ -29,7 +30,7 @@ type session struct {
 	attach sync.Mutex // one Login at a time takes the session over
 
 	mu            sync.Mutex
-	room          sync.Cond // on mu: taken fell below maxTaken, or the connection is ending
+	room          sync.Cond // on mu: where a reader without a core waits for wakeReaderLocked
 	cur           *conn     // the connection it has, nil between two
 	lastClientSeq uint64    // owned by the reader of cur; it hands the session over by ending
 	nextServerSeq uint64    // of the next Event or Done
@@ -40,6 +41,8 @@ type session struct {
 	held          held        // its last Events and Dones
 	expiry        func() bool // stops the timer that drops it after its connection ended
 	scratch       [96]byte    // a frame being encoded
+
+	gen atomic.Uint64 // counts the calls of wakeReaderLocked; a spinning reader polls it, holding no lock
 }
 
 // newSession opens a session with a random number other than 0. Numbers
@@ -115,7 +118,7 @@ func (ss *session) beginDrainLocked(d drain) {
 	if ss.drain == drainNone {
 		ss.drain = d
 	}
-	ss.room.Broadcast() // a reader waiting for room answers shutting_down
+	ss.wakeReaderLocked() // a reader waiting for room answers shutting_down
 	if ss.taken == 0 {
 		ss.endLocked()
 	}
@@ -173,16 +176,29 @@ func (c *conn) admit(seq uint64, kind book.CommandKind, symbol uint8, id book.Or
 	}
 }
 
-// waitRoom waits, with ss.mu held, until a place is free or the connection
-// is ending. A spinning reader does not block: it lets the lock go and takes
-// it again.
+// waitRoom releases ss.mu, waits for a change that can end admit's wait (a
+// place given back, a drain beginning, the connection ending), takes ss.mu
+// again and returns; admit rechecks. A spinning reader polls ss.gen instead
+// of blocking, and holds no lock while it does: the symbol's goroutine needs
+// ss.mu to give a place back.
 func (c *conn) waitRoom() {
+	ss := c.ss
 	if c.lease == nil {
-		c.ss.room.Wait()
+		ss.room.Wait()
 		return
 	}
-	c.ss.mu.Unlock()
-	c.ss.mu.Lock()
+	seen := ss.gen.Load() // under ss.mu, so no change to what admit checked goes unseen
+	ss.mu.Unlock()
+	for ss.gen.Load() == seen {
+	}
+	ss.mu.Lock()
+}
+
+// wakeReaderLocked wakes the reader that waits in waitRoom, however it waits.
+// Every change that can end the wait calls it with ss.mu held.
+func (ss *session) wakeReaderLocked() {
+	ss.gen.Add(1)
+	ss.room.Broadcast()
 }
 
 // newOrder passes a NewOrder to the engine, or answers it at once.
@@ -267,7 +283,7 @@ func (s *Server) countReply(r engine.Reply) {
 // answeredLocked gives back the place of a command that has been answered.
 func (ss *session) answeredLocked() {
 	ss.taken--
-	ss.room.Signal()
+	ss.wakeReaderLocked()
 	if ss.drain != drainNone && ss.taken == 0 {
 		ss.endLocked()
 	}
