@@ -1,0 +1,7 @@
+OE1 Pings: target 10000/s, achieved 10000/s over 60s after 10s warmup, one session, spin true, reader spins true, pinned to CPUs [99 96]
+ping 600000, pong 600000
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+request to pong         600000     57.5     62.9     76.2    213.4   1513.4   2941.3
+send lag                600000      0.1      0.1      0.1      2.0      5.6     65.2
+loadgen hiccup          600000      0.1      0.2      0.2      8.6     11.9     91.1
+valid

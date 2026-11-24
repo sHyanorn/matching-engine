@@ -1,0 +1,89 @@
+{
+  "rounds": 5,
+  "min_valid": 4,
+  "complete": false,
+  "passed": false,
+  "condition_1": {
+    "status": "fail",
+    "configs": [
+      {
+        "config": "F",
+        "runs": 2,
+        "valid": 0,
+        "invalid": 2,
+        "status": "fail"
+      },
+      {
+        "config": "R1",
+        "runs": 2,
+        "valid": 2,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R1-gogc-off",
+        "runs": 2,
+        "valid": 1,
+        "invalid": 1,
+        "status": "open"
+      },
+      {
+        "config": "R1-spin-pin",
+        "runs": 2,
+        "valid": 2,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R2",
+        "runs": 2,
+        "valid": 2,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R3-10k",
+        "runs": 2,
+        "valid": 1,
+        "invalid": 1,
+        "status": "open"
+      },
+      {
+        "config": "R3-71k",
+        "runs": 2,
+        "valid": 0,
+        "invalid": 2,
+        "status": "fail"
+      },
+      {
+        "config": "T-71k",
+        "runs": 2,
+        "valid": 0,
+        "invalid": 2,
+        "status": "fail"
+      },
+      {
+        "config": "REST-10k",
+        "runs": 2,
+        "valid": 2,
+        "invalid": 0,
+        "status": "open"
+      }
+    ]
+  },
+  "condition_2": {
+    "status": "open",
+    "valid_runs": 2,
+    "min_p99": 78.946,
+    "max_p99": 86.142,
+    "ratio": 1.0911509132824968,
+    "limit": 2
+  },
+  "condition_3": {
+    "status": "fail",
+    "limit": 100,
+    "r1_reply_p50_median": 60.2775
+  },
+  "early_stop": true,
+  "early_stop_reason": "condition 1 can no longer be met for F: 2 of 2 runs invalid"
+}

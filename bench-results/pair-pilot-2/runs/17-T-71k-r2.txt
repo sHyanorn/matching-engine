@@ -1,0 +1,11 @@
+OE1 orders on BTC-USD: target 71429/s, achieved 71429/s over 60s after 10s warmup, one session, spin true, reader spins true, pinned to CPUs [42 38]
+cancel_canceled 425074, cancel_finished 83267, cancel_skipped 21, cancel_unknown 777382, order_rested 2152581, order_traded 847415
+trades: 1831665 in replies, 837756 pushed, counter rose 1831665
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+order to trade push     310893    100.3    178.1  17775.6  52681.6  59911.5  61699.3
+request to reply       4285719     86.8    114.2  12568.5  52534.1  84766.0  90638.5
+service time           4285719     78.5    105.1  12567.1  52534.0  84758.6  90635.2
+send lag               4285719      7.1     14.6     24.8     40.5    733.9   2497.9
+loadgen hiccup         3820616      0.1      0.1      0.2      0.3      5.5     78.5
+invalid: send lag p99.9 40.5 µs, over 10µs; 536522 orders that traded got no trade push; trade stream ended: failed to get reader: received close frame: status = StatusPolicyViolation and reason = "slow consumer"; 837756 trade pushes for 1831665 trades in the replies
+loadgen: invalid run: send lag p99.9 40.5 µs, over 10µs; 536522 orders that traded got no trade push; trade stream ended: failed to get reader: received close frame: status = StatusPolicyViolation and reason = "slow consumer"; 837756 trade pushes for 1831665 trades in the replies

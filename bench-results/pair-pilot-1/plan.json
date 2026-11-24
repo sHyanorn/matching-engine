@@ -1,0 +1,171 @@
+{
+  "rehearsal": false,
+  "overrides": {},
+  "supervisor_overrides": {},
+  "rounds": 5,
+  "configs": [
+    {
+      "name": "F",
+      "flow": "F",
+      "engine_config": "default",
+      "rate": 10000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "R1",
+      "flow": "R1",
+      "engine_config": "default",
+      "rate": 10000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-ioc",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "R1-gogc-off",
+      "flow": "R1",
+      "engine_config": "gogc-off",
+      "rate": 10000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-ioc",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "R1-spin-pin",
+      "flow": "R1",
+      "engine_config": "spin-pin",
+      "rate": 10000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-ioc",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "R2",
+      "flow": "R2",
+      "engine_config": "default",
+      "rate": 5000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-ack-cancel",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "R3-10k",
+      "flow": "R3",
+      "engine_config": "default",
+      "rate": 10000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-orders",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "R3-71k",
+      "flow": "R3",
+      "engine_config": "default",
+      "rate": 71429,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-orders",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "T-71k",
+      "flow": "T",
+      "engine_config": "default",
+      "rate": 71429,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-oe",
+        "x.x.x.x",
+        "-orders",
+        "-push",
+        "-http",
+        "x.x.x.x",
+        "-max-send-lag",
+        "10us"
+      ]
+    },
+    {
+      "name": "REST-10k",
+      "flow": "REST",
+      "engine_config": "default",
+      "rate": 10000,
+      "warmup_s": 10,
+      "duration_s": 60,
+      "args": [
+        "-addr",
+        "x.x.x.x"
+      ]
+    }
+  ],
+  "long_run": {
+    "name": "R1-15min",
+    "flow": "R1",
+    "engine_config": "default",
+    "rate": 10000,
+    "warmup_s": 10,
+    "duration_s": 900,
+    "args": [
+      "-oe",
+      "x.x.x.x",
+      "-ioc",
+      "-http",
+      "x.x.x.x",
+      "-max-send-lag",
+      "10us"
+    ]
+  }
+}

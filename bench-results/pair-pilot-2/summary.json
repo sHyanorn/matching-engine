@@ -1,0 +1,1534 @@
+{
+  "rehearsal": false,
+  "publishable": true,
+  "params": {
+    "rate": 10000,
+    "rate_high": 71429,
+    "warmup_s": 10,
+    "duration_s": 60,
+    "long_s": 900,
+    "max_send_lag_us": 10,
+    "rounds": 5
+  },
+  "stopped": "g2",
+  "stop_reason": "condition 1 can no longer be met for F: 2 of 2 runs invalid",
+  "runs": 18,
+  "engine": {
+    "mem_limit_bytes": 16000000000,
+    "gomemlimit_bytes": 8000000000
+  },
+  "engine_clock_read_ns": 37.229462,
+  "client_clock_read_ns": 36.53912233333333,
+  "clock_unfit": false,
+  "configs": [
+    {
+      "name": "F",
+      "flow": "F",
+      "engine_config": "default",
+      "rate": 10000,
+      "runs": 2,
+      "valid": 0,
+      "rows": {},
+      "floor": null
+    },
+    {
+      "name": "R1",
+      "flow": "R1",
+      "engine_config": "default",
+      "rate": 10000,
+      "runs": 2,
+      "valid": 2,
+      "rows": {
+        "hiccup": {
+          "p50": {
+            "min": 0.28,
+            "median": 0.28,
+            "max": 0.28
+          },
+          "p99": {
+            "min": 5.509,
+            "median": 5.569,
+            "max": 5.629
+          },
+          "p999": {
+            "min": 20.831,
+            "median": 21.2365,
+            "max": 21.642
+          }
+        },
+        "reply": {
+          "p50": {
+            "min": 58.184,
+            "median": 60.2775,
+            "max": 62.371
+          },
+          "p99": {
+            "min": 78.946,
+            "median": 82.544,
+            "max": 86.142
+          },
+          "p999": {
+            "min": 769.452,
+            "median": 2735.5235000000002,
+            "max": 4701.595
+          }
+        },
+        "send_lag": {
+          "p50": {
+            "min": 0.167,
+            "median": 0.1675,
+            "max": 0.168
+          },
+          "p99": {
+            "min": 0.189,
+            "median": 0.1955,
+            "max": 0.202
+          },
+          "p999": {
+            "min": 4.648,
+            "median": 5.2155000000000005,
+            "max": 5.783
+          }
+        },
+        "service": {
+          "p50": {
+            "min": 58.017,
+            "median": 60.11,
+            "max": 62.203
+          },
+          "p99": {
+            "min": 78.488,
+            "median": 82.20349999999999,
+            "max": 85.919
+          },
+          "p999": {
+            "min": 769.384,
+            "median": 2735.452,
+            "max": 4701.52
+          }
+        }
+      },
+      "floor": null
+    },
+    {
+      "name": "R1-gogc-off",
+      "flow": "R1",
+      "engine_config": "gogc-off",
+      "rate": 10000,
+      "runs": 2,
+      "valid": 1,
+      "rows": {
+        "hiccup": {
+          "p50": {
+            "min": 0.181,
+            "median": 0.181,
+            "max": 0.181
+          },
+          "p99": {
+            "min": 5.238,
+            "median": 5.238,
+            "max": 5.238
+          },
+          "p999": {
+            "min": 21.192,
+            "median": 21.192,
+            "max": 21.192
+          }
+        },
+        "reply": {
+          "p50": {
+            "min": 63,
+            "median": 63,
+            "max": 63
+          },
+          "p99": {
+            "min": 83.928,
+            "median": 83.928,
+            "max": 83.928
+          },
+          "p999": {
+            "min": 2372.356,
+            "median": 2372.356,
+            "max": 2372.356
+          }
+        },
+        "send_lag": {
+          "p50": {
+            "min": 0.168,
+            "median": 0.168,
+            "max": 0.168
+          },
+          "p99": {
+            "min": 0.191,
+            "median": 0.191,
+            "max": 0.191
+          },
+          "p999": {
+            "min": 7.429,
+            "median": 7.429,
+            "max": 7.429
+          }
+        },
+        "service": {
+          "p50": {
+            "min": 62.825,
+            "median": 62.825,
+            "max": 62.825
+          },
+          "p99": {
+            "min": 83.586,
+            "median": 83.586,
+            "max": 83.586
+          },
+          "p999": {
+            "min": 2372.187,
+            "median": 2372.187,
+            "max": 2372.187
+          }
+        }
+      },
+      "floor": null
+    },
+    {
+      "name": "R1-spin-pin",
+      "flow": "R1",
+      "engine_config": "spin-pin",
+      "rate": 10000,
+      "runs": 2,
+      "valid": 2,
+      "rows": {
+        "hiccup": {
+          "p50": {
+            "min": 0.17,
+            "median": 0.17,
+            "max": 0.17
+          },
+          "p99": {
+            "min": 4.237,
+            "median": 7.4715,
+            "max": 10.706
+          },
+          "p999": {
+            "min": 20.641,
+            "median": 21.351999999999997,
+            "max": 22.063
+          }
+        },
+        "reply": {
+          "p50": {
+            "min": 57.707,
+            "median": 58.0565,
+            "max": 58.406
+          },
+          "p99": {
+            "min": 73.573,
+            "median": 3707.3230000000003,
+            "max": 7341.073
+          },
+          "p999": {
+            "min": 1075.263,
+            "median": 20959.832,
+            "max": 40844.401
+          }
+        },
+        "send_lag": {
+          "p50": {
+            "min": 0.171,
+            "median": 0.175,
+            "max": 0.179
+          },
+          "p99": {
+            "min": 0.209,
+            "median": 2.0995,
+            "max": 3.99
+          },
+          "p999": {
+            "min": 8.646,
+            "median": 9.299,
+            "max": 9.952
+          }
+        },
+        "service": {
+          "p50": {
+            "min": 57.486,
+            "median": 57.857,
+            "max": 58.228
+          },
+          "p99": {
+            "min": 72.839,
+            "median": 3706.928,
+            "max": 7341.017
+          },
+          "p999": {
+            "min": 1075.102,
+            "median": 20959.7165,
+            "max": 40844.331
+          }
+        }
+      },
+      "floor": null
+    },
+    {
+      "name": "R2",
+      "flow": "R2",
+      "engine_config": "default",
+      "rate": 5000,
+      "runs": 2,
+      "valid": 2,
+      "rows": {
+        "cancel": {
+          "p50": {
+            "min": 52.729,
+            "median": 57.0955,
+            "max": 61.462
+          },
+          "p99": {
+            "min": 73.019,
+            "median": 81.822,
+            "max": 90.625
+          },
+          "p999": {
+            "min": 155.633,
+            "median": 163.34,
+            "max": 171.047
+          }
+        },
+        "hiccup": {
+          "p50": {
+            "min": 0.261,
+            "median": 0.2655,
+            "max": 0.27
+          },
+          "p99": {
+            "min": 15.743,
+            "median": 16.089,
+            "max": 16.435
+          },
+          "p999": {
+            "min": 25.288,
+            "median": 25.894,
+            "max": 26.5
+          }
+        },
+        "order_to_cancel": {
+          "p50": {
+            "min": 110.09,
+            "median": 118.1155,
+            "max": 126.141
+          },
+          "p99": {
+            "min": 147.2,
+            "median": 160.471,
+            "max": 173.742
+          },
+          "p999": {
+            "min": 2158.399,
+            "median": 3964.9759999999997,
+            "max": 5771.553
+          }
+        },
+        "reply": {
+          "p50": {
+            "min": 55.606,
+            "median": 59.328,
+            "max": 63.05
+          },
+          "p99": {
+            "min": 69.874,
+            "median": 78.55099999999999,
+            "max": 87.228
+          },
+          "p999": {
+            "min": 1942.525,
+            "median": 3787.267,
+            "max": 5632.009
+          }
+        },
+        "send_lag": {
+          "p50": {
+            "min": 0.172,
+            "median": 0.172,
+            "max": 0.172
+          },
+          "p99": {
+            "min": 0.266,
+            "median": 0.2735,
+            "max": 0.281
+          },
+          "p999": {
+            "min": 5.358,
+            "median": 6.6615,
+            "max": 7.965
+          }
+        }
+      },
+      "floor": null
+    },
+    {
+      "name": "R3-10k",
+      "flow": "R3",
+      "engine_config": "default",
+      "rate": 10000,
+      "runs": 2,
+      "valid": 1,
+      "rows": {
+        "hiccup": {
+          "p50": {
+            "min": 0.17,
+            "median": 0.17,
+            "max": 0.17
+          },
+          "p99": {
+            "min": 6.4,
+            "median": 6.4,
+            "max": 6.4
+          },
+          "p999": {
+            "min": 24.326,
+            "median": 24.326,
+            "max": 24.326
+          }
+        },
+        "reply": {
+          "p50": {
+            "min": 62.409,
+            "median": 62.409,
+            "max": 62.409
+          },
+          "p99": {
+            "min": 3228.942,
+            "median": 3228.942,
+            "max": 3228.942
+          },
+          "p999": {
+            "min": 27661.24,
+            "median": 27661.24,
+            "max": 27661.24
+          }
+        },
+        "send_lag": {
+          "p50": {
+            "min": 0.186,
+            "median": 0.186,
+            "max": 0.186
+          },
+          "p99": {
+            "min": 0.488,
+            "median": 0.488,
+            "max": 0.488
+          },
+          "p999": {
+            "min": 8.332,
+            "median": 8.332,
+            "max": 8.332
+          }
+        },
+        "service": {
+          "p50": {
+            "min": 62.193,
+            "median": 62.193,
+            "max": 62.193
+          },
+          "p99": {
+            "min": 3228.822,
+            "median": 3228.822,
+            "max": 3228.822
+          },
+          "p999": {
+            "min": 27661.144,
+            "median": 27661.144,
+            "max": 27661.144
+          }
+        }
+      },
+      "floor": null
+    },
+    {
+      "name": "R3-71k",
+      "flow": "R3",
+      "engine_config": "default",
+      "rate": 71429,
+      "runs": 2,
+      "valid": 0,
+      "rows": {},
+      "floor": null
+    },
+    {
+      "name": "T-71k",
+      "flow": "T",
+      "engine_config": "default",
+      "rate": 71429,
+      "runs": 2,
+      "valid": 0,
+      "rows": {},
+      "floor": null
+    },
+    {
+      "name": "REST-10k",
+      "flow": "REST",
+      "engine_config": "default",
+      "rate": 10000,
+      "runs": 2,
+      "valid": 2,
+      "rows": {
+        "hiccup": {
+          "p50": {
+            "min": 25.668,
+            "median": 26.924999999999997,
+            "max": 28.182
+          },
+          "p99": {
+            "min": 363.224,
+            "median": 492.6785,
+            "max": 622.133
+          },
+          "p999": {
+            "min": 1002.613,
+            "median": 1018.7725,
+            "max": 1034.932
+          }
+        },
+        "reply": {
+          "p50": {
+            "min": 163.619,
+            "median": 167.374,
+            "max": 171.129
+          },
+          "p99": {
+            "min": 968.9,
+            "median": 8474.0105,
+            "max": 15979.121
+          },
+          "p999": {
+            "min": 6684.556,
+            "median": 45458.712,
+            "max": 84232.868
+          }
+        },
+        "send_lag": {
+          "p50": {
+            "min": 36.738,
+            "median": 38.5995,
+            "max": 40.461
+          },
+          "p99": {
+            "min": 574.999,
+            "median": 5022.97,
+            "max": 9470.941
+          },
+          "p999": {
+            "min": 1115.192,
+            "median": 38931.390999999996,
+            "max": 76747.59
+          }
+        },
+        "service": {
+          "p50": {
+            "min": 124.206,
+            "median": 126.5095,
+            "max": 128.813
+          },
+          "p99": {
+            "min": 285.888,
+            "median": 4436.7065,
+            "max": 8587.525
+          },
+          "p999": {
+            "min": 6098.724,
+            "median": 16052.884000000002,
+            "max": 26007.044
+          }
+        },
+        "trade_push": {
+          "p50": {
+            "min": 179.868,
+            "median": 183.091,
+            "max": 186.314
+          },
+          "p99": {
+            "min": 1006.947,
+            "median": 8550.949499999999,
+            "max": 16094.952
+          },
+          "p999": {
+            "min": 6369.983,
+            "median": 45615.320999999996,
+            "max": 84860.659
+          }
+        }
+      },
+      "floor": null
+    },
+    {
+      "name": "R1-15min",
+      "flow": "R1",
+      "engine_config": "default",
+      "rate": 10000,
+      "runs": 0,
+      "valid": 0,
+      "rows": {},
+      "floor": null
+    }
+  ],
+  "tuning": [
+    {
+      "variant": "R1-gogc-off",
+      "r1_valid": 2,
+      "variant_valid": 1,
+      "r1_median_p99": 82.544,
+      "variant_median_p99": 83.928,
+      "gain": -1.3840000000000003,
+      "range": 7.195999999999998,
+      "adopted": false,
+      "reason": "R1 has 2 valid runs and R1-gogc-off has 1, want at least 4 of each"
+    },
+    {
+      "variant": "R1-spin-pin",
+      "r1_valid": 2,
+      "variant_valid": 2,
+      "r1_median_p99": 82.544,
+      "variant_median_p99": 3707.3230000000003,
+      "gain": -3624.7790000000005,
+      "range": 7.195999999999998,
+      "adopted": false,
+      "reason": "R1 has 2 valid runs and R1-spin-pin has 2, want at least 4 of each"
+    }
+  ],
+  "g2": {
+    "rounds": 5,
+    "min_valid": 4,
+    "complete": false,
+    "passed": false,
+    "condition_1": {
+      "status": "fail",
+      "configs": [
+        {
+          "config": "F",
+          "runs": 2,
+          "valid": 0,
+          "invalid": 2,
+          "status": "fail"
+        },
+        {
+          "config": "R1",
+          "runs": 2,
+          "valid": 2,
+          "invalid": 0,
+          "status": "open"
+        },
+        {
+          "config": "R1-gogc-off",
+          "runs": 2,
+          "valid": 1,
+          "invalid": 1,
+          "status": "open"
+        },
+        {
+          "config": "R1-spin-pin",
+          "runs": 2,
+          "valid": 2,
+          "invalid": 0,
+          "status": "open"
+        },
+        {
+          "config": "R2",
+          "runs": 2,
+          "valid": 2,
+          "invalid": 0,
+          "status": "open"
+        },
+        {
+          "config": "R3-10k",
+          "runs": 2,
+          "valid": 1,
+          "invalid": 1,
+          "status": "open"
+        },
+        {
+          "config": "R3-71k",
+          "runs": 2,
+          "valid": 0,
+          "invalid": 2,
+          "status": "fail"
+        },
+        {
+          "config": "T-71k",
+          "runs": 2,
+          "valid": 0,
+          "invalid": 2,
+          "status": "fail"
+        },
+        {
+          "config": "REST-10k",
+          "runs": 2,
+          "valid": 2,
+          "invalid": 0,
+          "status": "open"
+        }
+      ]
+    },
+    "condition_2": {
+      "status": "open",
+      "valid_runs": 2,
+      "min_p99": 78.946,
+      "max_p99": 86.142,
+      "ratio": 1.0911509132824968,
+      "limit": 2
+    },
+    "condition_3": {
+      "status": "fail",
+      "limit": 100,
+      "r1_reply_p50_median": 60.2775
+    },
+    "early_stop": true,
+    "early_stop_reason": "condition 1 can no longer be met for F: 2 of 2 runs invalid"
+  },
+  "counters_readable": {
+    "engine": {
+      "readable": [
+        "cpu_nr_periods",
+        "cpu_nr_throttled",
+        "cpu_period_us",
+        "cpu_quota_us",
+        "cpu_throttled_us",
+        "psi_cpu_some_us",
+        "sched_delay_ns",
+        "sched_run_ns",
+        "sched_slices",
+        "sched_tasks",
+        "steal_ticks"
+      ],
+      "unreadable": []
+    },
+    "client": {
+      "readable": [
+        "cpu_nr_periods",
+        "cpu_nr_throttled",
+        "cpu_period_us",
+        "cpu_quota_us",
+        "cpu_throttled_us",
+        "psi_cpu_some_us",
+        "steal_ticks"
+      ],
+      "unreadable": []
+    }
+  },
+  "psi_source": {
+    "client": "proc",
+    "engine": "proc"
+  },
+  "run_details": [
+    {
+      "seq": 1,
+      "config": "F",
+      "round": 1,
+      "valid": false,
+      "worst": {
+        "window": 33,
+        "offset_s": 33,
+        "time": "2026-11-23T23:41:40.86235611Z",
+        "n": 10000,
+        "p99": 10000,
+        "p99_9": 15000,
+        "max": 15000,
+        "median_p99": 69,
+        "wake": {
+          "n": 1881,
+          "p99": 75,
+          "max": 1200
+        }
+      },
+      "clock_offset": {
+        "offset_us": 534.867,
+        "error_us": 155.5035
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 17318977,
+          "sched_delay_ns": 871068990,
+          "sched_run_ns": 13378844889,
+          "sched_slices": 2876628,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 574326,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 2,
+      "config": "R1",
+      "round": 1,
+      "valid": true,
+      "worst": {
+        "window": 52,
+        "offset_s": 52,
+        "time": "2026-11-23T23:43:10.045529301Z",
+        "n": 10000,
+        "p99": 1800,
+        "p99_9": 2900,
+        "max": 3100,
+        "median_p99": 83,
+        "wake": {
+          "n": 1899,
+          "p99": 78,
+          "max": 410
+        }
+      },
+      "clock_offset": {
+        "offset_us": 471.977,
+        "error_us": 244.712
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2090500,
+          "sched_delay_ns": 809399479,
+          "sched_run_ns": 17320682501,
+          "sched_slices": 3635531,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1479901,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "config": "R1-gogc-off",
+      "round": 1,
+      "valid": false,
+      "worst": {
+        "window": 6,
+        "offset_s": 6,
+        "time": "2026-11-23T23:43:35.051176011Z",
+        "n": 10000,
+        "p99": 1700,
+        "p99_9": 3200,
+        "max": 3600,
+        "median_p99": 72,
+        "wake": {
+          "n": 1870,
+          "p99": 72,
+          "max": 2900
+        }
+      },
+      "clock_offset": {
+        "offset_us": 485.379,
+        "error_us": 288.918
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1300451,
+          "sched_delay_ns": 754725460,
+          "sched_run_ns": 15800566782,
+          "sched_slices": 3567508,
+          "sched_tasks": 1,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1956549,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "config": "R1-spin-pin",
+      "round": 1,
+      "valid": true,
+      "worst": {
+        "window": 59,
+        "offset_s": 59,
+        "time": "2026-11-23T23:45:39.048003287Z",
+        "n": 10000,
+        "p99": 1400,
+        "p99_9": 7500,
+        "max": 8400,
+        "median_p99": 71.5,
+        "wake": {
+          "n": 1873,
+          "p99": 240,
+          "max": 2800
+        }
+      },
+      "clock_offset": {
+        "offset_us": 430.036,
+        "error_us": 244.9325
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 3090970,
+          "sched_delay_ns": 714721720,
+          "sched_run_ns": 143782368939,
+          "sched_slices": 889667,
+          "sched_tasks": 2,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1737776,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "config": "R2",
+      "round": 1,
+      "valid": true,
+      "worst": {
+        "window": 19,
+        "offset_s": 19,
+        "time": "2026-11-23T23:46:10.046367438Z",
+        "n": 5000,
+        "p99": 15000,
+        "p99_9": 18000,
+        "max": 19000,
+        "median_p99": 65,
+        "wake": {
+          "n": 1873,
+          "p99": 120,
+          "max": 2100
+        }
+      },
+      "clock_offset": {
+        "offset_us": 358.331,
+        "error_us": 274.517
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2085538,
+          "sched_delay_ns": 816260670,
+          "sched_run_ns": 13543337748,
+          "sched_slices": 2866839,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1549021,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "config": "R3-10k",
+      "round": 1,
+      "valid": false,
+      "worst": {
+        "window": 48,
+        "offset_s": 48,
+        "time": "2026-11-23T23:47:50.047754028Z",
+        "n": 10000,
+        "p99": 77000,
+        "p99_9": 86000,
+        "max": 87000,
+        "median_p99": 80,
+        "wake": {
+          "n": 1897,
+          "p99": 75,
+          "max": 400
+        }
+      },
+      "clock_offset": {
+        "offset_us": 358.715,
+        "error_us": 224.9525
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 9232613,
+          "sched_delay_ns": 649425680,
+          "sched_run_ns": 18026864435,
+          "sched_slices": 3566429,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 716785,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 7,
+      "config": "R3-71k",
+      "round": 1,
+      "valid": false,
+      "worst": {
+        "window": 3,
+        "offset_s": 3,
+        "time": "2026-11-23T23:48:16.048511139Z",
+        "n": 71429,
+        "p99": 4000,
+        "p99_9": 11000,
+        "max": 11000,
+        "median_p99": 130,
+        "wake": {
+          "n": 1879,
+          "p99": 70,
+          "max": 250
+        }
+      },
+      "clock_offset": {
+        "offset_us": 290.323,
+        "error_us": 93.7005
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 19090102,
+          "sched_delay_ns": 12218346711,
+          "sched_run_ns": 86782643406,
+          "sched_slices": 12272663,
+          "sched_tasks": 2,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1826898,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "config": "T-71k",
+      "round": 1,
+      "valid": false,
+      "worst": {
+        "window": 21,
+        "offset_s": 21,
+        "time": "2026-11-23T23:49:45.304706575Z",
+        "n": 71426,
+        "p99": 22000,
+        "p99_9": 29000,
+        "max": 30000,
+        "median_p99": 165,
+        "wake": {
+          "n": 1880,
+          "p99": 98,
+          "max": 200
+        }
+      },
+      "clock_offset": {
+        "offset_us": 205.339,
+        "error_us": 171.0315
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 18030860,
+          "sched_delay_ns": 30508602995,
+          "sched_run_ns": 97366646068,
+          "sched_slices": 9679327,
+          "sched_tasks": 3,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 3214776,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "config": "REST-10k",
+      "round": 1,
+      "valid": true,
+      "worst": null,
+      "clock_offset": null,
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 15702938,
+          "sched_delay_ns": 8269123205,
+          "sched_run_ns": 39729196962,
+          "sched_slices": 3293448,
+          "sched_tasks": 4,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2576128,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 10,
+      "config": "F",
+      "round": 2,
+      "valid": false,
+      "worst": {
+        "window": 48,
+        "offset_s": 48,
+        "time": "2026-11-23T23:52:34.139853704Z",
+        "n": 10000,
+        "p99": 140,
+        "p99_9": 2500,
+        "max": 3000,
+        "median_p99": 63,
+        "wake": {
+          "n": 1879,
+          "p99": 70,
+          "max": 1500
+        }
+      },
+      "clock_offset": {
+        "offset_us": 110.378,
+        "error_us": 218.628
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 13447805,
+          "sched_delay_ns": 1711360996,
+          "sched_run_ns": 10363699374,
+          "sched_slices": 2930774,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1228935,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "config": "R1",
+      "round": 2,
+      "valid": true,
+      "worst": {
+        "window": 52,
+        "offset_s": 52,
+        "time": "2026-11-23T23:53:49.04387941Z",
+        "n": 10000,
+        "p99": 8600,
+        "p99_9": 12000,
+        "max": 12000,
+        "median_p99": 71,
+        "wake": {
+          "n": 1878,
+          "p99": 69,
+          "max": 1100
+        }
+      },
+      "clock_offset": {
+        "offset_us": 61.332,
+        "error_us": 217.0555
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 14102160,
+          "sched_delay_ns": 2532183398,
+          "sched_run_ns": 14113405160,
+          "sched_slices": 3444523,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 516701,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "config": "R1-gogc-off",
+      "round": 2,
+      "valid": true,
+      "worst": {
+        "window": 1,
+        "offset_s": 1,
+        "time": "2026-11-23T23:54:09.048273985Z",
+        "n": 10000,
+        "p99": 46000,
+        "p99_9": 55000,
+        "max": 56000,
+        "median_p99": 79,
+        "wake": {
+          "n": 1877,
+          "p99": 76,
+          "max": 410
+        }
+      },
+      "clock_offset": {
+        "offset_us": -35.968,
+        "error_us": 230.3505
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 11410698,
+          "sched_delay_ns": 676284910,
+          "sched_run_ns": 17347207373,
+          "sched_slices": 3591604,
+          "sched_tasks": 1,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 494142,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "config": "R1-spin-pin",
+      "round": 2,
+      "valid": true,
+      "worst": {
+        "window": 55,
+        "offset_s": 55,
+        "time": "2026-11-23T23:56:14.048851397Z",
+        "n": 10000,
+        "p99": 73000,
+        "p99_9": 81000,
+        "max": 82000,
+        "median_p99": 77.5,
+        "wake": {
+          "n": 1888,
+          "p99": 71,
+          "max": 91
+        }
+      },
+      "clock_offset": {
+        "offset_us": -114.073,
+        "error_us": 280.631
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 11514368,
+          "sched_delay_ns": 688687378,
+          "sched_run_ns": 141536098842,
+          "sched_slices": 907626,
+          "sched_tasks": 4,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2179404,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "config": "R2",
+      "round": 2,
+      "valid": true,
+      "worst": {
+        "window": 57,
+        "offset_s": 57,
+        "time": "2026-11-23T23:57:27.112328048Z",
+        "n": 5000,
+        "p99": 7000,
+        "p99_9": 16000,
+        "max": 17000,
+        "median_p99": 77,
+        "wake": {
+          "n": 1864,
+          "p99": 760,
+          "max": 3200
+        }
+      },
+      "clock_offset": {
+        "offset_us": -168.19,
+        "error_us": 252.3585
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 12096286,
+          "sched_delay_ns": 1452699650,
+          "sched_run_ns": 17422107808,
+          "sched_slices": 3198326,
+          "sched_tasks": 0,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 502071,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "config": "R3-10k",
+      "round": 2,
+      "valid": true,
+      "worst": {
+        "window": 42,
+        "offset_s": 42,
+        "time": "2026-11-23T23:58:23.049187113Z",
+        "n": 10000,
+        "p99": 36000,
+        "p99_9": 45000,
+        "max": 46000,
+        "median_p99": 98,
+        "wake": {
+          "n": 1888,
+          "p99": 83,
+          "max": 2000
+        }
+      },
+      "clock_offset": {
+        "offset_us": -191.938,
+        "error_us": 193.7905
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2692126,
+          "sched_delay_ns": 658617156,
+          "sched_run_ns": 19531301248,
+          "sched_slices": 3560353,
+          "sched_tasks": 1,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1430942,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "config": "R3-71k",
+      "round": 2,
+      "valid": false,
+      "worst": {
+        "window": 53,
+        "offset_s": 53,
+        "time": "2026-11-23T23:59:45.050010003Z",
+        "n": 71426,
+        "p99": 78000,
+        "p99_9": 85000,
+        "max": 86000,
+        "median_p99": 135,
+        "wake": {
+          "n": 1881,
+          "p99": 69,
+          "max": 78
+        }
+      },
+      "clock_offset": {
+        "offset_us": -224.934,
+        "error_us": 102.399
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 12076066,
+          "sched_delay_ns": 10775184449,
+          "sched_run_ns": 86077055502,
+          "sched_slices": 11912653,
+          "sched_tasks": 2,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2099774,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 17,
+      "config": "T-71k",
+      "round": 2,
+      "valid": false,
+      "worst": {
+        "window": 26,
+        "offset_s": 26,
+        "time": "2026-11-24T00:00:29.315693685Z",
+        "n": 71423,
+        "p99": 81000,
+        "p99_9": 90000,
+        "max": 91000,
+        "median_p99": 285,
+        "wake": {
+          "n": 1872,
+          "p99": 290,
+          "max": 2700
+        }
+      },
+      "clock_offset": {
+        "offset_us": -300.326,
+        "error_us": 100.5855
+      },
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 12862235,
+          "sched_delay_ns": 22640753594,
+          "sched_run_ns": 90573922897,
+          "sched_slices": 10676683,
+          "sched_tasks": 3,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 2564659,
+          "steal_ticks": 0
+        }
+      }
+    },
+    {
+      "seq": 18,
+      "config": "REST-10k",
+      "round": 2,
+      "valid": true,
+      "worst": null,
+      "clock_offset": null,
+      "engine_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 6848928,
+          "sched_delay_ns": 4319372396,
+          "sched_run_ns": 39976271392,
+          "sched_slices": 3691083,
+          "sched_tasks": 4,
+          "steal_ticks": 0
+        }
+      },
+      "client_delta": {
+        "values": {
+          "cpu_nr_periods": 0,
+          "cpu_nr_throttled": 0,
+          "cpu_throttled_us": 0,
+          "psi_cpu_some_us": 1968900,
+          "steal_ticks": 0
+        }
+      }
+    }
+  ]
+}

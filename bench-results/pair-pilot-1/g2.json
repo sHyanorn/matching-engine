@@ -1,0 +1,91 @@
+{
+  "rounds": 5,
+  "min_valid": 4,
+  "complete": false,
+  "passed": false,
+  "condition_1": {
+    "status": "open",
+    "configs": [
+      {
+        "config": "F",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R1",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R1-gogc-off",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R1-spin-pin",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R2",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R3-10k",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "R3-71k",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      },
+      {
+        "config": "T-71k",
+        "runs": 3,
+        "valid": 2,
+        "invalid": 1,
+        "status": "open"
+      },
+      {
+        "config": "REST-10k",
+        "runs": 3,
+        "valid": 3,
+        "invalid": 0,
+        "status": "open"
+      }
+    ]
+  },
+  "condition_2": {
+    "status": "fail",
+    "valid_runs": 3,
+    "min_p99": 86.956,
+    "max_p99": 317.442,
+    "ratio": 3.650604903629422,
+    "limit": 2
+  },
+  "condition_3": {
+    "status": "pass",
+    "limit": 100,
+    "r1_reply_p50_median": 68.305,
+    "floor_pong_p50_median": 59.035,
+    "difference": 9.27000000000001
+  },
+  "early_stop": true,
+  "early_stop_reason": "condition 2 failed: R1 p99 of 86.956 and 317.442 us are more than 2x apart"
+}

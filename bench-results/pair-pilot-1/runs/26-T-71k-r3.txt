@@ -1,0 +1,11 @@
+OE1 orders on BTC-USD: target 71429/s, achieved 71429/s over 60s after 10s warmup, one session, spin true, reader spins true, pinned to CPUs [99 96]
+cancel_canceled 425081, cancel_finished 83272, cancel_skipped 7, cancel_unknown 777384, order_rested 2152581, order_traded 847415
+trades: 1831669 in replies, 1831669 pushed, counter rose 1831669
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+order to trade push     847415    109.9    148.3    306.6   7681.0  22133.2  24928.6
+request to reply       4285733     92.6    121.1    298.3   5997.3  22558.7  28500.2
+service time           4285733     92.4    120.9    293.2   5997.1  22558.6  28500.1
+send lag               4285733      0.1      0.2      0.5     10.4   1286.5   3324.2
+loadgen hiccup         4281985      0.0      0.1      0.3      3.7     12.3    404.4
+invalid: send lag p99.9 10.4 µs, over 10µs
+loadgen: invalid run: send lag p99.9 10.4 µs, over 10µs

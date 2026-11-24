@@ -1,0 +1,107 @@
+Pilot matrix: 5 rounds, 10000/s and 71429/s, 10s warmup and 60s measured (900s for the long run), send lag p99.9 at most 10 us
+Counters read, engine: sched throttle quota psi(proc) steal; client: throttle quota psi(proc) steal; never readable: engine none, client none
+Stopped: g2: condition 1 can no longer be met for F: 2 of 2 runs invalid
+Runs: 18. Engine memory limit 16000000000 bytes, GOMEMLIMIT of gogc-off 8000000000 bytes
+Clock read, mean per call: engine 37.2 ns, client 36.5 ns, unfit above 100 ns: fit
+
+G2 not passed, matrix incomplete
+  1. at least 4 of 5 runs valid in every configuration: fail
+       F: fail, 0 of 2 runs valid
+       R1: open, 2 of 2 runs valid
+       R1-gogc-off: open, 1 of 2 runs valid
+       R1-spin-pin: open, 2 of 2 runs valid
+       R2: open, 2 of 2 runs valid
+       R3-10k: open, 1 of 2 runs valid
+       R3-71k: fail, 0 of 2 runs valid
+       T-71k: fail, 0 of 2 runs valid
+       REST-10k: open, 2 of 2 runs valid
+  2. R1 p99 of the reply row, largest over smallest at most 2: open (1.09)
+  3. R1 p50 of the reply row, median, at most 100 us over the floor's: fail
+  early stop: condition 1 can no longer be met for F: 2 of 2 runs invalid
+
+Tuning against R1, by p99 of the reply row: gain over range, in us
+  R1-gogc-off: not adopted, R1 has 2 valid runs and R1-gogc-off has 1, want at least 4 of each
+  R1-spin-pin: not adopted, R1 has 2 valid runs and R1-spin-pin has 2, want at least 4 of each
+
+Latency in us, min/median/max over the valid runs; every configuration with its pair's floor
+The median of an even number of valid runs is the mean of the two middle ones, so it may be the number of no run.
+
+F: F, engine default, 10000/s, 0 of 2 runs valid
+  floor (F pong): no valid F run
+
+R1: R1, engine default, 10000/s, 2 of 2 runs valid
+  floor (F pong): no valid F run
+  reply            p50 58.2/60.3/62.4  p99 78.9/82.5/86.1  p99.9 769.5/2735.5/4701.6
+  service          p50 58.0/60.1/62.2  p99 78.5/82.2/85.9  p99.9 769.4/2735.5/4701.5
+  send_lag         p50 0.2/0.2/0.2  p99 0.2/0.2/0.2  p99.9 4.6/5.2/5.8
+  hiccup           p50 0.3/0.3/0.3  p99 5.5/5.6/5.6  p99.9 20.8/21.2/21.6
+
+R1-gogc-off: R1, engine gogc-off, 10000/s, 1 of 2 runs valid
+  floor (F pong): no valid F run
+  reply            p50 63.0/63.0/63.0  p99 83.9/83.9/83.9  p99.9 2372.4/2372.4/2372.4
+  service          p50 62.8/62.8/62.8  p99 83.6/83.6/83.6  p99.9 2372.2/2372.2/2372.2
+  send_lag         p50 0.2/0.2/0.2  p99 0.2/0.2/0.2  p99.9 7.4/7.4/7.4
+  hiccup           p50 0.2/0.2/0.2  p99 5.2/5.2/5.2  p99.9 21.2/21.2/21.2
+
+R1-spin-pin: R1, engine spin-pin, 10000/s, 2 of 2 runs valid
+  floor (F pong): no valid F run
+  reply            p50 57.7/58.1/58.4  p99 73.6/3707.3/7341.1  p99.9 1075.3/20959.8/40844.4
+  service          p50 57.5/57.9/58.2  p99 72.8/3706.9/7341.0  p99.9 1075.1/20959.7/40844.3
+  send_lag         p50 0.2/0.2/0.2  p99 0.2/2.1/4.0  p99.9 8.6/9.3/10.0
+  hiccup           p50 0.2/0.2/0.2  p99 4.2/7.5/10.7  p99.9 20.6/21.4/22.1
+
+R2: R2, engine default, 5000/s, 2 of 2 runs valid
+  floor (F pong): no valid F run
+  reply            p50 55.6/59.3/63.0  p99 69.9/78.6/87.2  p99.9 1942.5/3787.3/5632.0
+  cancel           p50 52.7/57.1/61.5  p99 73.0/81.8/90.6  p99.9 155.6/163.3/171.0
+  order_to_cancel  p50 110.1/118.1/126.1  p99 147.2/160.5/173.7  p99.9 2158.4/3965.0/5771.6
+  send_lag         p50 0.2/0.2/0.2  p99 0.3/0.3/0.3  p99.9 5.4/6.7/8.0
+  hiccup           p50 0.3/0.3/0.3  p99 15.7/16.1/16.4  p99.9 25.3/25.9/26.5
+
+R3-10k: R3, engine default, 10000/s, 1 of 2 runs valid
+  floor (F pong): no valid F run
+  reply            p50 62.4/62.4/62.4  p99 3228.9/3228.9/3228.9  p99.9 27661.2/27661.2/27661.2
+  service          p50 62.2/62.2/62.2  p99 3228.8/3228.8/3228.8  p99.9 27661.1/27661.1/27661.1
+  send_lag         p50 0.2/0.2/0.2  p99 0.5/0.5/0.5  p99.9 8.3/8.3/8.3
+  hiccup           p50 0.2/0.2/0.2  p99 6.4/6.4/6.4  p99.9 24.3/24.3/24.3
+
+R3-71k: R3, engine default, 71429/s, 0 of 2 runs valid
+  floor (F pong): no valid F run
+
+T-71k: T, engine default, 71429/s, 0 of 2 runs valid
+  floor (F pong): no valid F run
+
+REST-10k: REST, engine default, 10000/s, 2 of 2 runs valid
+  floor (F pong): no valid F run
+  trade_push       p50 179.9/183.1/186.3  p99 1006.9/8550.9/16095.0  p99.9 6370.0/45615.3/84860.7
+  reply            p50 163.6/167.4/171.1  p99 968.9/8474.0/15979.1  p99.9 6684.6/45458.7/84232.9
+  service          p50 124.2/126.5/128.8  p99 285.9/4436.7/8587.5  p99.9 6098.7/16052.9/26007.0
+  send_lag         p50 36.7/38.6/40.5  p99 575.0/5023.0/9470.9  p99.9 1115.2/38931.4/76747.6
+  hiccup           p50 25.7/26.9/28.2  p99 363.2/492.7/622.1  p99.9 1002.6/1018.8/1034.9
+
+R1-15min: R1, engine default, 10000/s, 0 of 0 runs valid
+  floor (F pong): no valid F run
+
+Per run: number, configuration, round, validity; worst second of the main row; wake meter and clock of the engine machine; CPU counters
+  worst: start after the measured part began and in UTC on the client's clock, samples, p99, p99.9 and max in us, and the median second's p99
+  wake: the meter's largest p99 and max over that second. clock: the engine machine's clock minus the client's, with its error bound
+  engine and client: whole run, warmup included: scheduler delay over run time, throttled periods over periods, psi in us, steal in ticks
+  n/r: could not be read. partial: the engine's threads fell in number, so its share is a lower bound. A run with no series has no worst, wake or clock
+01 F            r1 INVALID  worst +33s 23:41:40Z n 10000 p99 10000.0 (median second 69.0) p99.9 15000.0 max 15000.0  wake p99 0.1ms max 1.2ms  clock +0.5ms±0.2ms  engine sched-delay 6.5% throttled 0/0 psi 17318977us steal 0  client throttled 0/0 psi 574326us steal 0
+02 R1           r1 valid    worst +52s 23:43:10Z n 10000 p99 1800.0 (median second 83.0) p99.9 2900.0 max 3100.0  wake p99 0.1ms max 0.4ms  clock +0.5ms±0.2ms  engine sched-delay 4.7% throttled 0/0 psi 2090500us steal 0  client throttled 0/0 psi 1479901us steal 0
+03 R1-gogc-off  r1 INVALID  worst +6s 23:43:35Z n 10000 p99 1700.0 (median second 72.0) p99.9 3200.0 max 3600.0  wake p99 0.1ms max 2.9ms  clock +0.5ms±0.3ms  engine sched-delay 4.8% throttled 0/0 psi 1300451us steal 0  client throttled 0/0 psi 1956549us steal 0
+04 R1-spin-pin  r1 valid    worst +59s 23:45:39Z n 10000 p99 1400.0 (median second 71.5) p99.9 7500.0 max 8400.0  wake p99 0.2ms max 2.8ms  clock +0.4ms±0.2ms  engine sched-delay 0.5% throttled 0/0 psi 3090970us steal 0  client throttled 0/0 psi 1737776us steal 0
+05 R2           r1 valid    worst +19s 23:46:10Z n 5000 p99 15000.0 (median second 65.0) p99.9 18000.0 max 19000.0  wake p99 0.1ms max 2.1ms  clock +0.4ms±0.3ms  engine sched-delay 6.0% throttled 0/0 psi 2085538us steal 0  client throttled 0/0 psi 1549021us steal 0
+06 R3-10k       r1 INVALID  worst +48s 23:47:50Z n 10000 p99 77000.0 (median second 80.0) p99.9 86000.0 max 87000.0  wake p99 0.1ms max 0.4ms  clock +0.4ms±0.2ms  engine sched-delay 3.6% throttled 0/0 psi 9232613us steal 0  client throttled 0/0 psi 716785us steal 0
+07 R3-71k       r1 INVALID  worst +3s 23:48:16Z n 71429 p99 4000.0 (median second 130.0) p99.9 11000.0 max 11000.0  wake p99 0.1ms max 0.2ms  clock +0.3ms±0.1ms  engine sched-delay 14.1% throttled 0/0 psi 19090102us steal 0  client throttled 0/0 psi 1826898us steal 0
+08 T-71k        r1 INVALID  worst +21s 23:49:45Z n 71426 p99 22000.0 (median second 165.0) p99.9 29000.0 max 30000.0  wake p99 0.1ms max 0.2ms  clock +0.2ms±0.2ms  engine sched-delay 31.3% throttled 0/0 psi 18030860us steal 0  client throttled 0/0 psi 3214776us steal 0
+09 REST-10k     r1 valid    worst -  wake -  clock -  engine sched-delay 20.8% throttled 0/0 psi 15702938us steal 0  client throttled 0/0 psi 2576128us steal 0
+10 F            r2 INVALID  worst +48s 23:52:34Z n 10000 p99 140.0 (median second 63.0) p99.9 2500.0 max 3000.0  wake p99 0.1ms max 1.5ms  clock +0.1ms±0.2ms  engine sched-delay 16.5% throttled 0/0 psi 13447805us steal 0  client throttled 0/0 psi 1228935us steal 0
+11 R1           r2 valid    worst +52s 23:53:49Z n 10000 p99 8600.0 (median second 71.0) p99.9 12000.0 max 12000.0  wake p99 0.1ms max 1.1ms  clock +0.1ms±0.2ms  engine sched-delay 17.9% throttled 0/0 psi 14102160us steal 0  client throttled 0/0 psi 516701us steal 0
+12 R1-gogc-off  r2 valid    worst +1s 23:54:09Z n 10000 p99 46000.0 (median second 79.0) p99.9 55000.0 max 56000.0  wake p99 0.1ms max 0.4ms  clock +0.0ms±0.2ms  engine sched-delay 3.9% throttled 0/0 psi 11410698us steal 0  client throttled 0/0 psi 494142us steal 0
+13 R1-spin-pin  r2 valid    worst +55s 23:56:14Z n 10000 p99 73000.0 (median second 77.5) p99.9 81000.0 max 82000.0  wake p99 0.1ms max 0.1ms  clock -0.1ms±0.3ms  engine sched-delay 0.5% throttled 0/0 psi 11514368us steal 0  client throttled 0/0 psi 2179404us steal 0
+14 R2           r2 valid    worst +57s 23:57:27Z n 5000 p99 7000.0 (median second 77.0) p99.9 16000.0 max 17000.0  wake p99 0.8ms max 3.2ms  clock -0.2ms±0.3ms  engine sched-delay 8.3% throttled 0/0 psi 12096286us steal 0  client throttled 0/0 psi 502071us steal 0
+15 R3-10k       r2 valid    worst +42s 23:58:23Z n 10000 p99 36000.0 (median second 98.0) p99.9 45000.0 max 46000.0  wake p99 0.1ms max 2.0ms  clock -0.2ms±0.2ms  engine sched-delay 3.4% throttled 0/0 psi 2692126us steal 0  client throttled 0/0 psi 1430942us steal 0
+16 R3-71k       r2 INVALID  worst +53s 23:59:45Z n 71426 p99 78000.0 (median second 135.0) p99.9 85000.0 max 86000.0  wake p99 0.1ms max 0.1ms  clock -0.2ms±0.1ms  engine sched-delay 12.5% throttled 0/0 psi 12076066us steal 0  client throttled 0/0 psi 2099774us steal 0
+17 T-71k        r2 INVALID  worst +26s 00:00:29Z n 71423 p99 81000.0 (median second 285.0) p99.9 90000.0 max 91000.0  wake p99 0.3ms max 2.7ms  clock -0.3ms±0.1ms  engine sched-delay 25.0% throttled 0/0 psi 12862235us steal 0  client throttled 0/0 psi 2564659us steal 0
+18 REST-10k     r2 valid    worst -  wake -  clock -  engine sched-delay 10.8% throttled 0/0 psi 6848928us steal 0  client throttled 0/0 psi 1968900us steal 0

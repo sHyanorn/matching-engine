@@ -1,0 +1,56 @@
+commit: cdb6a0f0ef84b653be7481996466ec566b97991e, tree b109dc5c811e58bfa1b7c485c1fd7bac4f425d72
+go: go version go1.27.4 linux/amd64
+os: Linux 6.8.0-147-generic x86_64, 8 CPUs allowed, cgroup cpu.max: unreadable
+kernel boot id: 6efc30d2-9790-4f4b-8094-2e0c550f42f6
+clock source: tsc
+net.core.busy_read: unreadable, net.core.busy_poll: unreadable
+empty timed region over 1000000 samples: p50 20ns, p99 30ns, max 33.87µs
+setsockopt(SO_BUSY_POLL, 50 µs): ok
+thread siblings: cpu0=0,64 cpu1=1,65 cpu10=10,74 cpu100=36,100 cpu101=37,101 cpu102=38,102 cpu103=39,103 cpu104=40,104 cpu105=41,105 cpu106=42,106 cpu107=43,107 cpu108=44,108 cpu109=45,109 cpu11=11,75 cpu110=46,110 cpu111=47,111 cpu112=48,112 cpu113=49,113 cpu114=50,114 cpu115=51,115 cpu116=52,116 cpu117=53,117 cpu118=54,118 cpu119=55,119 cpu12=12,76 cpu120=56,120 cpu121=57,121 cpu122=58,122 cpu123=59,123 cpu124=60,124 cpu125=61,125 cpu126=62,126 cpu127=63,127 cpu13=13,77 cpu14=14,78 cpu15=15,79 cpu16=16,80 cpu17=17,81 cpu18=18,82 cpu19=19,83 cpu2=2,66 cpu20=20,84 cpu21=21,85 cpu22=22,86 cpu23=23,87 cpu24=24,88 cpu25=25,89 cpu26=26,90 cpu27=27,91 cpu28=28,92 cpu29=29,93 cpu3=3,67 cpu30=30,94 cpu31=31,95 cpu32=32,96 cpu33=33,97 cpu34=34,98 cpu35=35,99 cpu36=36,100 cpu37=37,101 cpu38=38,102 cpu39=39,103 cpu4=4,68 cpu40=40,104 cpu41=41,105 cpu42=42,106 cpu43=43,107 cpu44=44,108 cpu45=45,109 cpu46=46,110 cpu47=47,111 cpu48=48,112 cpu49=49,113 cpu5=5,69 cpu50=50,114 cpu51=51,115 cpu52=52,116 cpu53=53,117 cpu54=54,118 cpu55=55,119 cpu56=56,120 cpu57=57,121 cpu58=58,122 cpu59=59,123 cpu6=6,70 cpu60=60,124 cpu61=61,125 cpu62=62,126 cpu63=63,127 cpu64=0,64 cpu65=1,65 cpu66=2,66 cpu67=3,67 cpu68=4,68 cpu69=5,69 cpu7=7,71 cpu70=6,70 cpu71=7,71 cpu72=8,72 cpu73=9,73 cpu74=10,74 cpu75=11,75 cpu76=12,76 cpu77=13,77 cpu78=14,78 cpu79=15,79 cpu8=8,72 cpu80=16,80 cpu81=17,81 cpu82=18,82 cpu83=19,83 cpu84=20,84 cpu85=21,85 cpu86=22,86 cpu87=23,87 cpu88=24,88 cpu89=25,89 cpu9=9,73 cpu90=26,90 cpu91=27,91 cpu92=28,92 cpu93=29,93 cpu94=30,94 cpu95=31,95 cpu96=32,96 cpu97=33,97 cpu98=34,98 cpu99=35,99 
+cgroup memory.max: unreadable, taskset: taskset from util-linux 2.41.5
+RUNPOD_CPU_COUNT=8
+RUNPOD_DC_ID=EU-RO-1
+RUNPOD_POD_ID=epj8roc6r5msmg
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           52 bits physical, 57 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  128
+On-line CPU(s) list:                     0-127
+Vendor ID:                               AuthenticAMD
+Model name:                              AMD EPYC 9575F 64-Core Processor
+CPU family:                              26
+Model:                                   2
+Thread(s) per core:                      2
+Core(s) per socket:                      64
+Socket(s):                               1
+Stepping:                                1
+CPU(s) scaling MHz:                      64%
+CPU max MHz:                             5008.0000
+CPU min MHz:                             1200.0000
+BogoMIPS:                                6600.13
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc amd_ibpb_ret arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d debug_swap srso_user_kernel_no
+Virtualization:                          AMD-V
+L1d cache:                               3 MiB (64 instances)
+L1i cache:                               2 MiB (64 instances)
+L2 cache:                                64 MiB (64 instances)
+L3 cache:                                256 MiB (8 instances)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-127
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Not affected
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Not affected

@@ -1,0 +1,8 @@
+{"time":"2026-11-23T23:52:47.018555742Z","level":"INFO","msg":"command log not found; starting with an empty book","symbol":"BTC-USD","path":"/tmp/tmp.O3Gp3DqRNI/data-2722012590/BTC-USD.log"}
+{"time":"2026-11-23T23:52:47.020086911Z","level":"INFO","msg":"command log not found; starting with an empty book","symbol":"ETH-USD","path":"/tmp/tmp.O3Gp3DqRNI/data-2722012590/ETH-USD.log"}
+listening on [::]:8080
+oe listening on [::]:9000
+{"time":"2026-11-23T23:52:47.020978056Z","level":"INFO","msg":"serving oe","addr":"[::]:9000"}
+{"time":"2026-11-23T23:52:47.020984037Z","level":"INFO","msg":"listening","addr":"[::]:8080","symbols":"BTC-USD,ETH-USD","data":"/tmp/tmp.O3Gp3DqRNI/data-2722012590"}
+{"time":"2026-11-23T23:52:47.034991562Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"127.0.0.1:54310","reason":"EOF"}
+{"time":"2026-11-23T23:53:57.043919275Z","level":"INFO","msg":"oe connection closed","session":1793517814557736952,"remote":"x.x.x.x","reason":"oe: logout"}

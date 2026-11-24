@@ -1,0 +1,13 @@
+{"time":"2026-11-23T23:44:30.019998111Z","level":"INFO","msg":"spin mode on","cores":4,"pool":[9,19,46,49],"gomaxprocs":8}
+{"time":"2026-11-23T23:44:30.022306336Z","level":"INFO","msg":"command log not found; starting with an empty book","symbol":"BTC-USD","path":"/tmp/tmp.O3Gp3DqRNI/data-1579998704/BTC-USD.log"}
+{"time":"2026-11-23T23:44:30.023943556Z","level":"INFO","msg":"command log not found; starting with an empty book","symbol":"ETH-USD","path":"/tmp/tmp.O3Gp3DqRNI/data-1579998704/ETH-USD.log"}
+{"time":"2026-11-23T23:44:30.024308698Z","level":"INFO","msg":"spin: pinned","cpu":9,"for":"symbol BTC-USD"}
+{"time":"2026-11-23T23:44:30.024367429Z","level":"INFO","msg":"spin: pinned","cpu":19,"for":"symbol ETH-USD"}
+listening on [::]:8080
+oe listening on [::]:9000
+{"time":"2026-11-23T23:44:30.024647891Z","level":"INFO","msg":"serving oe","addr":"[::]:9000"}
+{"time":"2026-11-23T23:44:30.024654061Z","level":"INFO","msg":"listening","addr":"[::]:8080","symbols":"BTC-USD,ETH-USD","data":"/tmp/tmp.O3Gp3DqRNI/data-1579998704"}
+{"time":"2026-11-23T23:44:30.03877616Z","level":"INFO","msg":"oe connection closed","session":0,"remote":"127.0.0.1:53208","reason":"EOF"}
+{"time":"2026-11-23T23:44:30.0483143Z","level":"INFO","msg":"spin: pinned","cpu":46,"for":"session 4709755064911216222 reader"}
+{"time":"2026-11-23T23:44:30.048384321Z","level":"INFO","msg":"spin: pinned","cpu":49,"for":"session 4709755064911216222 writer"}
+{"time":"2026-11-23T23:45:40.048472525Z","level":"INFO","msg":"oe connection closed","session":4709755064911216222,"remote":"x.x.x.x","reason":"oe: logout"}

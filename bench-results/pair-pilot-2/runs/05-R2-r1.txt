@@ -1,0 +1,11 @@
+OE1 orders and their cancels on BTC-USD: target 5000/s, achieved 5000/s over 60s after 10s warmup, one session, spin true, reader spins true, pinned to CPUs [42 38]
+cancel_canceled 300000, order_rested 300000
+cancels sent: 300000
+trades: 0 in replies, counter rose 0
+latency (µs)             count      p50      p90      p99    p99.9   p99.99      max
+request to reply        300000     55.6     60.5     69.9   5632.0  15949.0  19475.1
+cancel to reply         300000     52.7     56.0     73.0    171.0    895.7   8926.8
+order to canceled       300000    110.1    117.4    147.2   5771.6  16136.5  19534.1
+send lag                300000      0.2      0.2      0.3      8.0     21.1     58.1
+loadgen hiccup          300000      0.3      3.6     16.4     26.5     37.8    171.9
+valid
