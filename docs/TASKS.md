@@ -79,7 +79,8 @@ Check off each item when it is done. All tests must pass at the end of every mil
 - [x] Spin benchmarks: a reader at the session limit, and the mode against blocking (bench-results/spin)
 - [x] Pilot runner and engine supervisor (`cmd/pairrun`, `scripts/pair.sh supervise` and `matrix`); `scripts/pair-test.sh pilot` rehearses them on one machine (D050)
 - [x] Diagnostics for the pilot runner: a per-second series in loadgen's report, CPU counters, a wake meter, the engine's output, a masked log copy of the results (D051)
-- [ ] Pilot pair: every flow five times, and the tuning comparisons
-- [ ] Four more pairs with the configuration fixed
-- [ ] Publish every run, each latency with its pair's floor and as a range over pairs
+- Not done, closed by D052: Pilot pair: every flow five times, and the tuning comparisons (`bench-results/pair-pilot-1`, `bench-results/pair-pilot-2`)
+- Not done, closed by D052: Four more pairs with the configuration fixed
+- Not done, closed by D052: Publish every run, each latency with its pair's floor and as a range over pairs
 - [x] Count OE1 commands in the orders, cancels and trades metrics
+- [x] Publish both pilots' results and close the measurement between two machines (D052)
